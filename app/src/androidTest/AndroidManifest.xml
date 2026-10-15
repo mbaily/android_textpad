@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider android:name="org.hopto.git23069.textpad.TestDocumentsProvider"
+            android:authorities="org.hopto.git23069.textpad.test.documents"
+            android:exported="true" android:grantUriPermissions="true">
+        </provider>
+    </application>
+</manifest>

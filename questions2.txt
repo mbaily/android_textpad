@@ -1,0 +1,38 @@
+- APK signing: Android requires signed APKs to install. A debug-signed APK fits your homelab approach and requires no Play Store setup. Android documentation
+
+debug-signed APK is OK then.
+
+- Closing the app: Save/Discard/Cancel prompts can cover closing tabs and leaving through Back or an explicit Exit action. Android can kill the process without an opportunity to prompt, so unsaved edits will then be lost under your chosen policy. Rotation should preserve the current session. Activity lifecycle
+
+* save/discard/cancel prompts can cover closing tabs
+* i'm not sure where there is a back. An explicit application quit is unusual for android. You can close via the task manager in android (push it up).
+* android can kill process - policy of this app is to lose the unsaved edits.
+* what is rotation? Do you mean android task switching? Yes for android task switching - no special preservation required. The app just keeps running in the background with no extra code, correct?
+
+- Matching synced files: I recommend using identical names and content similarity to suggest a match, then asking you to confirm it once. Afterward, use a permanent document ID. Automatically linking similar files could incorrectly combine separate documents.
+
+* ok
+
+- “Last write wins”: Define whether “last” means device modification time or server acceptance order. I recommend server acceptance order to avoid device clock differences, with the displaced revision backed up before replacement. An offline edit uploaded later would therefore win.
+
+* server acceptance order
+
+
+- Unsaved edits during sync: A remote update must not silently replace an unsaved editor buffer. I recommend deferring that update until you save or discard your edits. Only saved contents participate in sync.
+
+* ok use recommended
+
+- Certificate trust and authentication: If your CA is installed in Android’s user certificate store, the app needs explicit configuration to trust it. The server certificate also leaves client authentication undecided; a shared API token would be a simple single-user option. Android trust configuration
+
+* ok is this in the app code or text files for configuration files? If so, that is OK to put the explicit configuration there. If the user has to do it later, that is also what we will do. The server certificates are in the director I mentioned before on the server.
+
+
+The remaining small policy choices are autosave timing, sync timing, deletion propagation, and backup retention. My suggested starting defaults are: autosave disabled; sync on save, returning to the app, and manual request; local deletion does not delete the server copy; revisions retained until manually removed.
+
+* suggested defaults ok
+* autosave timing is configurable, 30s, 1, 2, 3, 5, 8, 10, 15 minutes
+
+
+For duplicate tabs, one shared document buffer with separate cursor and scroll positions would directly satisfy your requested behavior.
+
+* yes

@@ -1,0 +1,79 @@
+I’d add or clarify these:
+
+1. Saving and recovery. Manual save, autosave, or both? Define unsaved-change indicators, prompts when closing tabs, recovery after crashes/restarts, and behavior when saving fails or storage is full. Autosaving a recovery draft can be separate from overwriting the original file.
+
+- Manual save supported
+- autosave an option in settings
+- unsaved change indicators - yes a dot next to tab name
+- yes prompts when closing unsaved tabs
+- no recovery after crashes
+
+2. File access and ownership. Decide whether opening a file edits the original or imports a copy. Include New, Save, Save As, recent files, and read-only handling. Android’s Storage Access Framework supports user-selected files and folders, with restrictions on some locations; “access to the Android file system” needs a more precise scope. Android documentation
+
+
+- opening a file located on the android filesystem edits the original
+- New, Save, Save As, recent files, read-only all good.
+- generally access should be as per android allows by default to start with by default
+
+
+3. Encoding and line endings. “Unicode support” should specify UTF-8 as the default, whether UTF-16 is supported, and preservation of existing encoding, byte-order marks, and LF/CRLF line endings. Unsupported encodings should produce a clear message. Include emoji, combining characters, and right-to-left text in verification.
+
+- unicode is supported, also ascii is possible. UTF-8 is the default, UTF-16 is supported.
+- emoji as per unicode
+
+
+4. Basic editor functions. Explicitly include undo/redo, find/replace, selection and clipboard actions. Decide whether word wrap, line numbers, adjustable font size, indentation, and hardware-keyboard shortcuts belong in the first release. Syntax highlighting can be a separate scope choice.
+
+- undo/redo, find/replace, selection and clipboard all good.
+- word wrap a toggle
+- line numbers a toggle
+- font and font size customizable
+- indentation on the toolbar
+- leave syntax highlighting till later.
+
+
+5. Tab behavior. Specify whether tabs, unsaved drafts, cursor positions, and scroll positions survive restarting. Define what happens when the same file is opened twice or when multiple files have identical names.
+
+- no tabs survive restart
+- no drafts that survive restart (just the 90's windows unsaved dialog box if you close a tab or the app without saving)
+- you can open the same file twice in a different tab. the app does it best to recognize this and keep the tabs synced (but not the scroll positions).
+- multiple files with identical name - the saving is like 90's saving in windows - it always overwrites if you save. With an additional check like vim to see if it has been written since you opened it.
+
+
+
+6. Sync scope and offline operation. Decide whether sync means backup to the server or two-way synchronization across devices. Specify which files participate, manual versus automatic sync, whether drafts sync, and visible pending/error status. Editing should remain fully usable offline.
+
+- sync is two-way synchronization across devices. 
+- only selected files are flagged as synced. if a client doesn't flag a file as synced, it doens't participate in the overwriting of the latest data to it's local storage or filesystem.
+- find a clever way to determine that two files that are flabed to be synced are the same file and will be synced together:
+  - file contents are similar
+  - file names are identical (but the full path doesn't have to be identical)
+- also can browser on server to sync from server to local storage
+- syncing only works from local storage, no cloud-style editing supported.
+- no drafts
+- editing should remain fully usable offline.
+
+7. Conflicts and changes elsewhere. Define behavior when another app or device edits, renames, or deletes a file. My suggested default is to preserve both versions when changes conflict, then let the user resolve them.
+
+- conflicts are last-write wins with a fallback of a backups directory
+
+8. Server security and recovery. Specify HTTPS, authentication, single-user versus multiple-user support, credential storage, and server backups. Clarify whether SQLite stores document contents as well as metadata, and whether previous revisions can be restored.
+
+- server uses a root ca certficiate in /etc/ssl/nucbox3/nucbox3-ca. make a server app certifcate signed by this root ca.
+- the client devices all have this root ca installed
+- single-user for now
+- sqlite stores both document contents and metadata
+- previous revisions can be restored. 
+
+9. Practical limits and delivery. Set a supported file-size target, handle binary files gracefully, and decide how the app will be installed and updated—for example, a signed APK.
+
+- file size target say about 10MB
+- binary files are not supported
+- non-signed apk for now - homelab style.
+
+Your Android-first order makes sense. I would still settle document identity and conflict rules early, because they influence local storage before the server exists.
+
+One useful acceptance requirement would be: opening and saving an unchanged supported text file preserves its contents exactly; a failed save or interrupted sync never silently discards edits.
+
+- yes idempotent opening and saving is good.
+- failed save or interrupted sync never silently discards edits is good.

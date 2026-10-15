@@ -1,0 +1,9 @@
+I want to make an android text editor with:
+  - tabs
+  - access to the android file system to edit files and open them and save them
+  - sync to a server on my server git23069.hopto.org which runs debian 13 using sqlite as storage
+  - unicode support
+  - android app to run on at least android 16 or higher
+  - dark mode by default
+
+Start with the android app first before the server app to sync to on debian 13. 
