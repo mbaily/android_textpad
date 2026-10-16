@@ -17,7 +17,10 @@ import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.Layout;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
 import android.text.TextWatcher;
+import android.text.style.ForegroundColorSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -39,6 +42,7 @@ import android.widget.Toast;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
 import org.hopto.git23069.textpad.core.TextCodec;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
@@ -50,6 +54,7 @@ import java.util.regex.Pattern;
 public final class MainActivity extends Activity implements TextpadApplication.Listener {
     private static final int OPEN = 10, CREATE = 11, EXISTING = 12;
     private static final int BG = 0xff101313, SURFACE = 0xff19201d, TEXT = 0xffe3e8df, MUTED = 0xff94a298, ACCENT = 0xffa9d98b;
+    static final int SYNC_DOT_SYNCED = ACCENT, SYNC_DOT_SYNCING = 0xff7bb8d9, SYNC_DOT_PENDING = 0xffd9a57b;
     private TextpadApplication app;
     private LinearLayout root, tabBar, findPanel, empty;
     private HorizontalScrollView tabScroll;
@@ -279,10 +284,18 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         location.setText(doc.uri == null ? "NEW DOCUMENT · NOT SAVED" : app.store.location(doc.uri, doc.name));
         int offset = Math.max(0, editor.getSelectionStart()), line = doc.buffer.lineAt(offset);
         int column = offset - doc.buffer.lineStart(line) + 1;
-        status.setText(String.format(Locale.ROOT, "Ln %d, Col %d  ·  %s%s  ·  %s%s%s", line + 1, column,
+        String baseStatus = String.format(Locale.ROOT, "Ln %d, Col %d  ·  %s%s  ·  %s%s", line + 1, column,
                 doc.buffer.encoding().label, doc.buffer.bom() ? " BOM" : "", doc.buffer.endingLabel(),
-                !doc.writable ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED",
-                doc.syncEnabled ? (app.sync.busy ? "  ·  SYNCING" : "  ·  SYNC") : ""));
+                !doc.writable ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED");
+        if (doc.syncEnabled) {
+            SpannableStringBuilder sb = new SpannableStringBuilder(baseStatus).append("  ·  ●");
+            boolean synced = !doc.buffer.dirty() && doc.savedHash != null && doc.syncedHash != null && Arrays.equals(doc.savedHash, doc.syncedHash);
+            int dotColor = app.sync.busy ? SYNC_DOT_SYNCING : synced ? SYNC_DOT_SYNCED : SYNC_DOT_PENDING;
+            sb.setSpan(new ForegroundColorSpan(dotColor), sb.length() - 1, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            status.setText(sb);
+        } else {
+            status.setText(baseStatus);
+        }
     }
 
     private void saveViewState() {

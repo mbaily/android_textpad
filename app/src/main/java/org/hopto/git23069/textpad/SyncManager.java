@@ -122,7 +122,7 @@ final class SyncManager {
             throw new IOException("Could not store the sync receipt. The saved file is intact; retry sync.");
         app.main.post(() -> {
             EditorDocument doc=openDocument(binding.uri);
-            if (doc != null) { doc.serverRevision=remote.revision(); doc.syncedHash=HexFormat.of().parseHex(remote.hash()); }
+            if (doc != null) { doc.serverRevision=remote.revision(); doc.syncedHash=HexFormat.of().parseHex(remote.hash()); app.refresh(); }
         });
     }
     private String requestId(Binding binding, String hash) throws IOException {

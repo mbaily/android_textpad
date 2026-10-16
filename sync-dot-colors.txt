@@ -1,0 +1,16 @@
+Android Sync Status Dot Colors
+==============================
+
+When synchronization is enabled for the current file in the Android editor, a colored dot (●) appears at the end of the bottom status bar:
+
+- Green (#a9d98b) — Synced:
+  The file is saved locally (no unsaved edits) and its local SHA-256 checksum matches the last server-acknowledged SHA-256 checksum.
+
+- Blue (#7bb8d9) — Syncing:
+  A synchronization pass with the server is currently in progress.
+
+- Amber / Orange (#d9a57b) — Sync pending:
+  Sync is enabled for this file, but either there are unsaved edits in the editor or the saved local file has not yet been uploaded and acknowledged by the server (for example, when edited offline).
+
+- No dot:
+  Synchronization is not enabled for this file.
