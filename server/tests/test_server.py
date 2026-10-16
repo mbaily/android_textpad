@@ -240,6 +240,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(200,sw.status_code)
         self.assertIn("javascript",sw.mimetype)
         self.assertEqual("/editor/",sw.headers.get("Service-Worker-Allowed"))
+        self.assertNotIn("'nonce-'",sw.headers.get("Content-Security-Policy",""))
         icon=self.client.get("/editor/static/apple-touch-icon.png")
         self.assertEqual(200,icon.status_code)
         self.assertTrue(icon.data.startswith(b"\x89PNG\r\n\x1a\n"))

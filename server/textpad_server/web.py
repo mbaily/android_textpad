@@ -109,9 +109,10 @@ def create_app(test_config=None):
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"
         nonce = getattr(request, "csp_nonce", "")
+        style_src = f"style-src 'self' 'nonce-{nonce}'" if nonce else "style-src 'self'"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; "
-            "style-src 'self' 'nonce-" + nonce + "'; "
+            f"{style_src}; "
             f"connect-src 'self' {'wss' if url.scheme == 'https' else 'ws'}://{url.netloc}; "
             "img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
         return response
