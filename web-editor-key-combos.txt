@@ -8,7 +8,7 @@ Application Shortcuts (App.svelte)
 - Ctrl+S (Cmd+S)         : Save the active document (works anywhere in the window or editor)
 - Ctrl+F (Cmd+F)         : Open "Find in file" dialog for the active document
 - Ctrl+Shift+F (Cmd+Shift+F) : Open "Find in open files" dialog
-- Alt+Shift+R            : Toggle read-only mode on and off
+- Ctrl+Alt+R (Cmd+Alt+R) : Toggle read-only mode on and off
 
 Find Dialog Shortcuts (when Find input is focused)
 --------------------------------------------------

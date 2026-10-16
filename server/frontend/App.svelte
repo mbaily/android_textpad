@@ -491,7 +491,7 @@
             },
           },
           {
-            key: "Shift-Alt-r",
+            key: "Mod-Alt-r",
             run: () => {
               toggleReadOnly();
               return true;
@@ -1545,7 +1545,7 @@
           event.preventDefault();
           openFind(event.shiftKey);
         }
-      } else if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === "KeyR") {
+      } else if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey && (event.code === "KeyR" || event.key.toLowerCase() === "r")) {
         if (activeDoc) {
           event.preventDefault();
           toggleReadOnly();
@@ -1714,7 +1714,7 @@
       <button id="go-bottom" class="icon-button" title="Go to bottom of file" aria-label="Go to bottom of file" disabled={!activeDoc} onclick={goToBottom}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>
       </button>
-      <button id="toggle-readonly" class="icon-button" class:active={readOnly} aria-pressed={String(readOnly)} title={readOnly ? "Disable read-only mode (Alt+Shift+R)" : "Enable read-only mode (Alt+Shift+R)"} aria-label="Toggle read-only mode" disabled={!activeDoc} onclick={toggleReadOnly}>
+      <button id="toggle-readonly" class="icon-button" class:active={readOnly} aria-pressed={String(readOnly)} title={readOnly ? "Disable read-only mode (Ctrl+Alt+R)" : "Enable read-only mode (Ctrl+Alt+R)"} aria-label="Toggle read-only mode" disabled={!activeDoc} onclick={toggleReadOnly}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
       </button>
       <button id="find" class="icon-button" title="Find in file (Ctrl+F)" aria-label="Find in file" disabled={!activeDoc} onclick={() => openFind(false)}>
