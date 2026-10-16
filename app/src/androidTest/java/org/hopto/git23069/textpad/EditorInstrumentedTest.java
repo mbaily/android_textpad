@@ -123,6 +123,18 @@ public class EditorInstrumentedTest {
                 assertTrue(editor.getText().toString().endsWith("\n[X] task item"));
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
                 assertTrue(editor.getText().toString().endsWith("\ntask item"));
+                editor.getText().replace(0, editor.length(), "line1\nline2\nline3");
+                editor.setSelection(6); // cursor on line2
+                button(activity.getWindow().getDecorView(),"Move line up").performClick();
+                assertEquals("line2\nline1\nline3", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Move line down").performClick();
+                assertEquals("line1\nline2\nline3", editor.getText().toString());
+                editor.setSelection(0, 8); // select line1 and line2
+                button(activity.getWindow().getDecorView(),"Move line down").performClick();
+                assertEquals("line3\nline1\nline2", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Move line up").performClick();
+                assertEquals("line1\nline2\nline3", editor.getText().toString());
+                editor.getText().append("\ntask item");
                 // Find in open files cycles through matches in current file and switches tabs when reaching the end.
                 app.newDocument();
                 editor.getText().append("alpha task\nbeta task");

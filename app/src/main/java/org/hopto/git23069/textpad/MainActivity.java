@@ -62,7 +62,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, bottomButton;
+    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, moveUpButton, moveDownButton, bottomButton;
     private EditorTab shownTab;
     private long shownState = -1;
     private boolean changing, started, dialogVisible, findAllFiles;
@@ -182,11 +182,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
         dateButton = iconButton(Icon.DATE, TEXT, "Insert date", v -> insertSnippet(LocalDate.now().toString()));
         dividerButton = iconButton(Icon.DIVIDER, TEXT, "Insert dividing line", v -> insertDivider());
+        moveUpButton = iconButton(Icon.MOVE_LINE_UP, TEXT, "Move line up", v -> moveLines(true));
+        moveDownButton = iconButton(Icon.MOVE_LINE_DOWN, TEXT, "Move line down", v -> moveLines(false));
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
         toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
-        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton); toolbar.addView(saveButton);
+        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton);
+        toolbar.addView(moveUpButton); toolbar.addView(moveDownButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
         root.addView(status);
@@ -271,6 +274,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         EditorDocument doc = app.current();
         setButtonEnabled(undoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canUndo());
         setButtonEnabled(todoButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(moveUpButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(moveDownButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(redoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canRedo());
         setButtonEnabled(dateButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(dividerButton, doc != null && doc.writable && !doc.replacing);
@@ -494,6 +499,40 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void insertDivider() {
         insertSnippet("-".repeat(app.settings.dividerDashes()));
+    }
+
+    private void moveLines(boolean up) {
+        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
+        String text = editor.getText().toString();
+        int blockStart = text.lastIndexOf('\n', Math.max(-1, selStart - 1)) + 1;
+        int effectiveEnd = selEnd > selStart && text.charAt(selEnd - 1) == '\n' ? selEnd - 1 : selEnd;
+        int blockEnd = text.indexOf('\n', effectiveEnd);
+        if (blockEnd < 0) blockEnd = text.length();
+        editor.requestFocus();
+        if (up) {
+            if (blockStart == 0) return;
+            int prevEnd = blockStart - 1;
+            int prevStart = text.lastIndexOf('\n', Math.max(-1, prevEnd - 1)) + 1;
+            String prevLine = text.substring(prevStart, prevEnd);
+            String block = text.substring(blockStart, blockEnd);
+            int delta = -(prevLine.length() + 1);
+            editor.getText().replace(prevStart, blockEnd, block + "\n" + prevLine);
+            editor.setSelection(Math.max(0, selStart + delta), Math.max(0, selEnd + delta));
+        } else {
+            if (blockEnd >= text.length()) return;
+            int nextStart = blockEnd + 1;
+            int nextEnd = text.indexOf('\n', nextStart);
+            if (nextEnd < 0) nextEnd = text.length();
+            String nextLine = text.substring(nextStart, nextEnd);
+            String block = text.substring(blockStart, blockEnd);
+            int delta = nextLine.length() + 1;
+            editor.getText().replace(blockStart, nextEnd, nextLine + "\n" + block);
+            int len = editor.length();
+            editor.setSelection(Math.min(len, selStart + delta), Math.min(len, selEnd + delta));
+        }
+        scrollToOffset(editor.getSelectionStart());
+        saveViewState(); updateStatus();
     }
 
     private void toggleTodo() {
@@ -772,7 +811,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, BOTTOM, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -878,6 +917,20 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         p.moveTo(ox + 3 * s, oy + 12 * s); p.lineTo(ox + 7 * s, oy + 12 * s);
                         p.moveTo(ox + 10 * s, oy + 12 * s); p.lineTo(ox + 14 * s, oy + 12 * s);
                         p.moveTo(ox + 17 * s, oy + 12 * s); p.lineTo(ox + 21 * s, oy + 12 * s);
+                    }
+                    case MOVE_LINE_UP -> {
+                        p.moveTo(ox + 4 * s, oy + 7 * s); p.lineTo(ox + 11 * s, oy + 7 * s);
+                        p.moveTo(ox + 4 * s, oy + 12 * s); p.lineTo(ox + 11 * s, oy + 12 * s);
+                        p.moveTo(ox + 4 * s, oy + 17 * s); p.lineTo(ox + 11 * s, oy + 17 * s);
+                        p.moveTo(ox + 17 * s, oy + 19 * s); p.lineTo(ox + 17 * s, oy + 5 * s);
+                        p.moveTo(ox + 13.5f * s, oy + 8.5f * s); p.lineTo(ox + 17 * s, oy + 5 * s); p.lineTo(ox + 20.5f * s, oy + 8.5f * s);
+                    }
+                    case MOVE_LINE_DOWN -> {
+                        p.moveTo(ox + 4 * s, oy + 7 * s); p.lineTo(ox + 11 * s, oy + 7 * s);
+                        p.moveTo(ox + 4 * s, oy + 12 * s); p.lineTo(ox + 11 * s, oy + 12 * s);
+                        p.moveTo(ox + 4 * s, oy + 17 * s); p.lineTo(ox + 11 * s, oy + 17 * s);
+                        p.moveTo(ox + 17 * s, oy + 5 * s); p.lineTo(ox + 17 * s, oy + 19 * s);
+                        p.moveTo(ox + 13.5f * s, oy + 15.5f * s); p.lineTo(ox + 17 * s, oy + 19 * s); p.lineTo(ox + 20.5f * s, oy + 15.5f * s);
                     }
                     case BOTTOM -> {
                         p.moveTo(ox + 12 * s, oy + 4 * s); p.lineTo(ox + 12 * s, oy + 16 * s);

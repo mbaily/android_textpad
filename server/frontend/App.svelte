@@ -3,7 +3,7 @@
   import { SvelteMap } from "svelte/reactivity";
   import { EditorState, Compartment, EditorSelection } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
-  import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth, indentMore, indentLess, indentWithTab } from "@codemirror/commands";
+  import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
 
   const prefix = document.body.dataset.prefix || "";
@@ -1215,6 +1215,12 @@
       </button>
       <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="3" y1="12" x2="7" y2="12"/><line x1="10" y1="12" x2="14" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/></svg>
+      </button>
+      <button id="move-line-up" class="icon-button" title="Move line up (Alt+ArrowUp)" aria-label="Move line up" disabled={!activeDoc} onclick={() => { moveLineUp(view); view.focus(); }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="7" x2="11" y2="7"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/><line x1="17" y1="19" x2="17" y2="5"/><polyline points="13.5 8.5 17 5 20.5 8.5"/></svg>
+      </button>
+      <button id="move-line-down" class="icon-button" title="Move line down (Alt+ArrowDown)" aria-label="Move line down" disabled={!activeDoc} onclick={() => { moveLineDown(view); view.focus(); }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="7" x2="11" y2="7"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/><line x1="17" y1="5" x2="17" y2="19"/><polyline points="13.5 15.5 17 19 20.5 15.5"/></svg>
       </button>
       <span class="toolbar-spacer"></span>
       <button id="reload" class="icon-button" title="Reload from server" aria-label="Reload" disabled={!activeDoc || activeDoc.revision === null || activeDoc.saving} onclick={() => reloadFile().catch(failure)}>
