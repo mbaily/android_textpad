@@ -3,6 +3,7 @@ package org.hopto.git23069.textpad;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -13,14 +14,19 @@ import android.view.Gravity;
 import android.widget.EditText;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
 import org.hopto.git23069.textpad.core.TextCodec;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 final class CodeEditor extends EditText {
     private final Paint gutter = new Paint(), numbers = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint matchPaint = new Paint(Paint.ANTI_ALIAS_FLAG), selectedMatchPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path highlightPath = new Path();
     private final KeyListener editingKeys;
     DocumentBuffer buffer;
     Runnable selectionChanged, scrolled;
     private boolean lineNumbers = true;
     private int gutterWidth;
+    private Pattern searchPattern;
 
     CodeEditor(Context context) {
         super(context);
@@ -28,6 +34,7 @@ final class CodeEditor extends EditText {
         setGravity(Gravity.TOP | Gravity.START);
         setBackgroundColor(0xff101313);
         setTextColor(0xffe3e8df);
+        setHighlightColor(0x66a9d98b);
         setHintTextColor(0xff65736b);
         setHint("Start writing…");
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
@@ -44,11 +51,22 @@ final class CodeEditor extends EditText {
         setHorizontalScrollBarEnabled(true);
         gutter.setColor(0xff141918); numbers.setColor(0xff758477);
         numbers.setTextAlign(Paint.Align.RIGHT); numbers.setTypeface(Typeface.MONOSPACE);
+        matchPaint.setColor(0x668c7031); matchPaint.setStyle(Paint.Style.FILL);
+        selectedMatchPaint.setColor(0xaa8c7031); selectedMatchPaint.setStyle(Paint.Style.FILL);
         setFilters(new InputFilter[]{(source, start, end, dest, dstart, dend) -> {
             if (dest.length() - (dend - dstart) + (end - start) > TextCodec.MAX_BYTES) return "";
             for (int i = start; i < end; i++) if (source.charAt(i) == '\r') return TextCodec.normalize(source.subSequence(start, end).toString());
             return null;
         }});
+    }
+
+    void setSearchPattern(Pattern pattern) {
+        searchPattern = pattern;
+        invalidate();
+    }
+
+    Pattern getSearchPattern() {
+        return searchPattern;
     }
 
     void configure(EditorSettings settings, boolean writable) {
@@ -74,8 +92,34 @@ final class CodeEditor extends EditText {
     }
 
     @Override protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
         Layout layout = getLayout();
+        if (layout != null) {
+            int first = layout.getLineForVertical(Math.max(0, getScrollY() - getTotalPaddingTop()));
+            int last = layout.getLineForVertical(getScrollY() + getHeight());
+            int minOffset = Math.max(0, layout.getLineStart(first) - 256);
+            int maxOffset = Math.min(length(), layout.getLineEnd(last) + 256);
+            int selStart = Math.max(0, getSelectionStart()), selEnd = Math.max(selStart, getSelectionEnd());
+            canvas.save();
+            canvas.translate(getTotalPaddingLeft(), getTotalPaddingTop());
+            if (searchPattern != null && maxOffset > minOffset) {
+                Matcher matcher = searchPattern.matcher(getText());
+                matcher.region(minOffset, maxOffset);
+                while (matcher.find()) {
+                    int mStart = matcher.start(), mEnd = matcher.end();
+                    if (mEnd > mStart) {
+                        highlightPath.reset();
+                        layout.getSelectionPath(mStart, mEnd, highlightPath);
+                        canvas.drawPath(highlightPath, mStart == selStart && mEnd == selEnd ? selectedMatchPaint : matchPaint);
+                    }
+                }
+            } else if (!isFocused() && selEnd > selStart && selStart <= maxOffset && selEnd >= minOffset) {
+                highlightPath.reset();
+                layout.getSelectionPath(selStart, selEnd, highlightPath);
+                canvas.drawPath(highlightPath, selectedMatchPaint);
+            }
+            canvas.restore();
+        }
+        super.onDraw(canvas);
         if (!lineNumbers || layout == null || buffer == null) return;
         canvas.drawRect(getScrollX(), getScrollY(), getScrollX() + gutterWidth, getScrollY() + getHeight(), gutter);
         int first = layout.getLineForVertical(Math.max(0, getScrollY() - getTotalPaddingTop()));
@@ -92,6 +136,7 @@ final class CodeEditor extends EditText {
     @Override protected void onSelectionChanged(int start, int end) {
         super.onSelectionChanged(start, end);
         if (selectionChanged != null) selectionChanged.run();
+        if (searchPattern != null) invalidate();
     }
     @Override protected void onScrollChanged(int x, int y, int oldX, int oldY) {
         super.onScrollChanged(x, y, oldX, oldY);

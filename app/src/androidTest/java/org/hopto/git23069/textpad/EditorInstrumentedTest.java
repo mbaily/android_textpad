@@ -133,8 +133,10 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(),"Find in open files").performClick();
                 android.widget.EditText findInput = (android.widget.EditText) findViewWithHint(activity.getWindow().getDecorView(),"Find text");
                 findInput.setText("task");
+                assertNotNull(editor.getSearchPattern());
                 button(activity.getWindow().getDecorView(),"Next match").performClick();
                 assertEquals(firstTab,app.selectedTab);
+                assertFalse(editor.isFocused());
                 button(activity.getWindow().getDecorView(),"Next match").performClick();
                 assertEquals(secondTab,app.selectedTab);
                 assertEquals(6,editor.getSelectionStart()); assertEquals(10,editor.getSelectionEnd());
@@ -143,6 +145,8 @@ public class EditorInstrumentedTest {
                 assertEquals(16,editor.getSelectionStart()); assertEquals(20,editor.getSelectionEnd());
                 button(activity.getWindow().getDecorView(),"Next match").performClick();
                 assertEquals(firstTab,app.selectedTab);
+                button(activity.getWindow().getDecorView(),"Close find").performClick();
+                assertNull(editor.getSearchPattern());
             });
         }
     }

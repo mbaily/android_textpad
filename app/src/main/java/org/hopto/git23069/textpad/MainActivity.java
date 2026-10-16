@@ -16,6 +16,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.text.Editable;
+import android.text.Layout;
 import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -127,9 +128,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         LinearLayout findHeader = row();
         findTitle = label("Find in file", 13, ACCENT); findTitle.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         findHeader.addView(findTitle, new LinearLayout.LayoutParams(0, -2, 1));
-        findHeader.addView(iconButton(Icon.CLOSE, TEXT, "Close find", v -> { findPanel.setVisibility(View.GONE); editor.requestFocus(); }));
+        findHeader.addView(iconButton(Icon.CLOSE, TEXT, "Close find", v -> closeFind()));
         findPanel.addView(findHeader);
         LinearLayout queryRow = row(); find = field("Find text");
+        find.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            public void afterTextChanged(Editable s) { updateSearchHighlight(); }
+        });
         find.setOnKeyListener((v, keyCode, event) -> {
             if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) { findNext(!event.isShiftPressed()); return true; }
             return false;
@@ -143,6 +149,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         replaceRow.addView(iconButton(Icon.REPLACE, TEXT, "Replace selection", v -> replaceOne()));
         replaceRow.addView(iconButton(Icon.REPLACE_ALL, TEXT, "Replace all matches", v -> replaceAll())); findPanel.addView(replaceRow);
         LinearLayout findOptions = row(); matchCase = new CheckBox(this); matchCase.setText("Match case"); matchCase.setTextSize(12);
+        matchCase.setOnCheckedChangeListener((buttonView, isChecked) -> updateSearchHighlight());
         findOptions.addView(matchCase); findResult = label("", 11, MUTED); findOptions.addView(findResult); findPanel.addView(findOptions);
         findPanel.setVisibility(View.GONE); root.addView(findPanel);
 
@@ -475,23 +482,58 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         findAllFiles = allFiles;
         findTitle.setText(allFiles ? "Find in open files" : "Find in file");
         findPanel.setVisibility(View.VISIBLE);
+        updateSearchHighlight();
         find.requestFocus();
+    }
+    private void closeFind() {
+        findPanel.setVisibility(View.GONE);
+        editor.setSearchPattern(null);
+        editor.requestFocus();
+    }
+    private void updateSearchHighlight() {
+        if (editor == null) return;
+        editor.setSearchPattern(findPanel != null && findPanel.getVisibility() == View.VISIBLE ? query() : null);
     }
     private Pattern query() {
         String needle = find.getText().toString(); if (needle.isEmpty()) return null;
         return Pattern.compile(Pattern.quote(needle), matchCase.isChecked() ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     }
+    private void scrollToOffset(int offset) {
+        Layout layout = editor.getLayout();
+        if (layout == null) return;
+        editor.bringPointIntoView(offset);
+        int line = layout.getLineForOffset(Math.min(editor.length(), Math.max(0, offset)));
+        int top = layout.getLineTop(line) + editor.getTotalPaddingTop();
+        int bottom = layout.getLineBottom(line) + editor.getTotalPaddingTop();
+        int visibleHeight = editor.getHeight();
+        if (visibleHeight > 0 && (top < editor.getScrollY() || bottom > editor.getScrollY() + visibleHeight)) {
+            int targetY = Math.max(0, top - Math.max(0, (visibleHeight - (bottom - top)) / 2));
+            editor.scrollTo(editor.getScrollX(), targetY);
+        }
+        saveViewState();
+        editor.invalidate();
+    }
     private void selectFoundMatch(EditorTab targetTab, int start, int end) {
-        if (targetTab != shownTab) {
+        boolean switched = targetTab != shownTab;
+        if (switched) {
             saveViewState();
             targetTab.selectionStart = start;
             targetTab.selectionEnd = end;
             app.selectedTab = targetTab.id;
             app.refresh();
         }
+        updateSearchHighlight();
         editor.setSelection(start, end);
-        if (editor.getLayout() != null) editor.bringPointIntoView(start);
-        saveViewState();
+        scrollToOffset(start);
+        if (switched) {
+            final long tabId = targetTab.id;
+            editor.post(() -> {
+                if (shownTab != null && shownTab.id == tabId) {
+                    editor.setSelection(Math.min(editor.length(), start), Math.min(editor.length(), end));
+                    scrollToOffset(start);
+                }
+            });
+        }
         updateStatus();
         findResult.setText(findAllFiles ? "Match · " + targetTab.document.name : "Match selected");
     }
