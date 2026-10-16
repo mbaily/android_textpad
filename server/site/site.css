@@ -12,6 +12,7 @@ main { width: min(100% - 48px, 720px); margin: 0 auto; }
 header { display: flex; align-items: center; gap: 12px; padding: 32px 0; border-bottom: 1px solid #2b332e; }
 .mark { color: #a9d98b; font: 600 28px ui-monospace, monospace; }
 .wordmark { font-size: 19px; font-weight: 600; letter-spacing: -.5px; }
+.header-link { font-size: 13px; margin-left: 8px; }
 .platform { margin-left: auto; font-size: 10px; letter-spacing: 1.6px; color: #a1ada4; }
 .download { padding: 70px 0 43px; }
 .eyebrow { margin: 0 0 22px; color: #a9d98b; font: 11px ui-monospace, monospace; letter-spacing: 1.4px; }
