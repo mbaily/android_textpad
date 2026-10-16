@@ -88,6 +88,9 @@ def main():
         page.locator('#save').click();expect(page.locator('#save-status')).to_have_text('Saved')
         page.locator('#history').click();page.locator('.history-row').last.click()
         expect(page.locator('#preview-text')).to_contain_text('Textpad desktop editor')
+        with page.expect_download() as rev_event:page.locator('#download-revision').click()
+        rev_download=rev_event.value;assert rev_download.suggested_filename=='Notes.txt'
+        assert b'Textpad desktop editor\r\n' in Path(rev_download.path()).read_bytes()
         page.locator('#restore-revision').click();page.locator('#modal-actions').get_by_role('button',name='Restore',exact=True).click()
         expect(editor).to_contain_text('Textpad desktop editor');expect(editor).not_to_contain_text('Unsaved browser edit')
         page.locator('#prune-history').click()

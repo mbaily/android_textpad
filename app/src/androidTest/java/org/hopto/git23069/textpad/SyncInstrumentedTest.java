@@ -229,4 +229,23 @@ public class SyncInstrumentedTest {
         assertTrue(app.store.recents().stream().anyMatch(r -> DocumentStore.same(r.uri(),newUri)));
         app.sync.testApi=null;
     }
+
+    @Test public void downloadingHistoricalRevisionSavesLocalFileWithoutLinkingSync() throws Exception {
+        RemoteApi.Remote first=api.remoteEdit("rev-doc","first revision");
+        api.remoteEdit("rev-doc","second revision");
+        Uri target=seed("revision-copy.txt","");
+        RemoteApi.Remote oldRev=api.revision("rev-doc",first.revision());
+        EditorDocument doc=new EditorDocument(oldRev.name(),new DocumentBuffer(TextCodec.decode(oldRev.content())));
+        main(() -> {
+            app.pendingSave=new TextpadApplication.PendingSave(doc,null,false);
+            app.saveAsResult(target);
+        });
+        waitFor(() -> !doc.saving && doc.uri != null && app.current() == doc);
+        assertEquals("first revision",read(target));
+        assertFalse(doc.syncEnabled);
+        assertTrue(app.sync.bindings().isEmpty());
+        sync();
+        assertEquals("first revision",read(target));
+        app.sync.testApi=null;
+    }
 }

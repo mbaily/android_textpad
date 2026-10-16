@@ -1007,6 +1007,15 @@
     }
   }
 
+  function downloadRevision() {
+    const doc = activeDoc;
+    const revision = selectedRevision;
+    if (!doc || !revision) return;
+    window.location.assign(
+      `${apiBase}/documents/${encodeURIComponent(doc.id)}/download?revision=${encodeURIComponent(revision.revision)}`
+    );
+  }
+
   async function restoreRevision() {
     let doc = activeDoc;
     const revision = selectedRevision;
@@ -1867,16 +1876,28 @@
     <div id="revision-preview" class="revision-preview" class:hidden={!selectedRevision}>
       <div class="revision-actions">
         <span id="preview-label">{selectedRevision ? `Revision ${selectedRevision.revision}` : ""}</span>
-        <button
-          id="restore-revision"
-          class="primary icon-button"
-          title="Restore revision"
-          aria-label="Restore"
-          disabled={!selectedRevision || selectedRevision.revision === activeDoc?.revision}
-          onclick={() => restoreRevision().catch(failure)}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/></svg>
-        </button>
+        <div>
+          <button
+            id="download-revision"
+            class="icon-button"
+            title="Download revision"
+            aria-label="Download revision"
+            disabled={!selectedRevision}
+            onclick={downloadRevision}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+          <button
+            id="restore-revision"
+            class="primary icon-button"
+            title="Restore revision"
+            aria-label="Restore"
+            disabled={!selectedRevision || selectedRevision.revision === activeDoc?.revision}
+            onclick={() => restoreRevision().catch(failure)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/></svg>
+          </button>
+        </div>
       </div>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <pre id="preview-text" tabindex="0">{previewText}</pre>

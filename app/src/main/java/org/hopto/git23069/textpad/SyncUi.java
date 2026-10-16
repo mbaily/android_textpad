@@ -131,9 +131,12 @@ final class SyncUi {
     }
 
     private void download(RemoteApi.Remote remote) {
+        download(remote,true);
+    }
+    private void download(RemoteApi.Remote remote,boolean linkSync) {
         try {
             EditorDocument doc=new EditorDocument(remote.name(),new DocumentBuffer(TextCodec.decode(remote.content())));
-            doc.pendingDownload=remote;
+            if(linkSync) doc.pendingDownload=remote;
             app.pendingSave=new TextpadApplication.PendingSave(doc,null,false); activity.launchSavePicker();
         } catch(Exception e) { app.notice("Could not download",SyncManager.message(e)); }
     }
@@ -144,12 +147,13 @@ final class SyncUi {
         new AlertDialog.Builder(activity).setTitle("Revisions · "+document.name()).setItems(revisions.stream()
                 .map(r -> "Revision "+r.revision()+" · "+r.size()+" bytes").toArray(String[]::new),(d,i) -> {
             RemoteApi.Remote revision=revisions.get(i);
-            new AlertDialog.Builder(activity).setTitle("Restore revision "+revision.revision()+"?")
-                    .setMessage("This creates a new server revision containing the older text. The current version remains in history.")
+            new AlertDialog.Builder(activity).setTitle("Revision "+revision.revision())
+                    .setMessage("Download this revision to a local file, or restore it as the latest server revision while keeping the current version in history.")
                     .setPositiveButton("Restore on server",(dialog,w) -> request(api -> {
                         var old=api.revision(document.id(),revision.revision());
                         return api.put(document.id(),old.name(),old.content(),document.revision(),UUID.randomUUID().toString());
                     },restored -> app.sync.syncAll(true)))
+                    .setNeutralButton("Download…",(dialog,w) -> request(api -> api.revision(document.id(),revision.revision()),r -> download(r,false)))
                     .setNegativeButton("Cancel",null).show();
         }).setNeutralButton("Prune",(d,w) -> request(api -> api.prune(document.id()),remaining -> {
             int removed=Math.max(0,revisions.size()-remaining.size());

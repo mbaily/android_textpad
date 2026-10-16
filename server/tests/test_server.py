@@ -201,7 +201,10 @@ class ApiTests(unittest.TestCase):
 
     def test_restore_and_download_keep_exact_original_bytes(self):
         raw="first\r\n😀".encode();first=self.upload(raw).json;second=self.upload(b"second","request-2",first["revision"]).json
-        self.login();restored=self.client.post("/editor/api/documents/test-file/restore",headers={"X-CSRF-Token":self.csrf},
+        self.login()
+        rev_download=self.client.get("/editor/api/documents/test-file/download?revision="+first["revision"])
+        self.assertEqual(raw,rev_download.data);self.assertIn("attachment",rev_download.headers["Content-Disposition"])
+        restored=self.client.post("/editor/api/documents/test-file/restore",headers={"X-CSRF-Token":self.csrf},
                 json={"revision":first["revision"],"base_revision":second["revision"],"request_id":"restore-1"})
         self.assertEqual(200,restored.status_code)
         download=self.client.get("/editor/api/documents/test-file/download")

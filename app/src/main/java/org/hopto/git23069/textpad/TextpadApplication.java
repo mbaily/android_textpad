@@ -178,8 +178,8 @@ public final class TextpadApplication extends Application {
                     if (doc.pendingDownload != null) {
                         RemoteApi.Remote remote = doc.pendingDownload; doc.pendingDownload = null;
                         sync.link(doc, remote.id(), remote.revision(), remote.hash());
-                        if (tabs.stream().noneMatch(tab -> tab.document == doc)) addTab(doc);
                     }
+                    if (tabs.stream().noneMatch(tab -> tab.document == doc)) addTab(doc);
                     if (moving && !deletedOld) {
                         notice("Moved with warning", "Saved to the new location, but the document provider did not allow deleting the previous file.");
                     }
