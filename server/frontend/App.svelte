@@ -836,27 +836,84 @@
   function toggleTodo() {
     if (!activeDoc || !view) return;
     const sel = view.state.selection.main;
-    const line = view.state.doc.lineAt(sel.head);
-    const text = line.text;
-    let from = line.from;
-    let to = line.from;
-    let insert = "";
+    const doc = view.state.doc;
+    const startLine = doc.lineAt(sel.from);
+    const effectiveTo = sel.to > sel.from && doc.sliceString(sel.to - 1, sel.to) === "\n" ? sel.to - 1 : sel.to;
+    const endLine = doc.lineAt(effectiveTo);
+    const lines = [];
+    for (let n = startLine.number; n <= endLine.number; n++) {
+      const line = doc.line(n);
+      const match = line.text.match(/^[ \t]*/);
+      const indentEnd = match ? match[0].length : 0;
+      const rest = line.text.slice(indentEnd);
+      const blank = indentEnd === line.text.length;
+      const state = rest.startsWith("[ ]")
+        ? "unchecked"
+        : rest.startsWith("[X]") || rest.startsWith("[x]")
+          ? "checked"
+          : "plain";
+      lines.push({ line, indentEnd, rest, blank, state });
+    }
+    const hasNonBlank = lines.some((l) => !l.blank);
+    const targets = hasNonBlank ? lines.filter((l) => !l.blank) : lines;
+    const action = targets.some((l) => l.state === "plain")
+      ? "add"
+      : targets.some((l) => l.state === "unchecked")
+        ? "check"
+        : "remove";
+    const changes = [];
+    for (const item of targets) {
+      const pos = item.line.from + item.indentEnd;
+      if (action === "add" && item.state === "plain") {
+        changes.push({ from: pos, to: pos, insert: "[ ] " });
+      } else if (action === "check" && item.state === "unchecked") {
+        changes.push({ from: pos, to: pos + 3, insert: "[X]" });
+      } else if (action === "remove" && item.state === "checked") {
+        const removeLen = item.rest.startsWith("[X] ") || item.rest.startsWith("[x] ") ? 4 : 3;
+        changes.push({ from: pos, to: pos + removeLen, insert: "" });
+      }
+    }
+    if (!changes.length) {
+      view.focus();
+      return;
+    }
+    let nextAnchor = sel.anchor;
     let nextHead = sel.head;
-    if (text.startsWith("[ ]")) {
-      to = line.from + 3;
-      insert = "[X]";
-      nextHead = Math.max(line.from + 3, sel.head);
-    } else if (text.startsWith("[X]") || text.startsWith("[x]")) {
-      const removeLen = text.startsWith("[X] ") || text.startsWith("[x] ") ? 4 : 3;
-      to = line.from + removeLen;
-      nextHead = Math.max(line.from, sel.head - removeLen);
+    if (sel.empty) {
+      const ch = changes[0];
+      const delta = ch.insert.length - (ch.to - ch.from);
+      if (action === "add") {
+        nextHead = Math.max(ch.from + 4, sel.head + 4);
+      } else if (action === "check") {
+        nextHead = Math.max(ch.from + 3, sel.head);
+      } else {
+        nextHead = sel.head <= ch.from ? sel.head : Math.max(ch.from, sel.head + delta);
+      }
+      nextAnchor = nextHead;
     } else {
-      insert = "[ ] ";
-      nextHead = sel.head + 4;
+      let newFrom = sel.from;
+      let newTo = sel.to;
+      for (const ch of changes) {
+        const removed = ch.to - ch.from;
+        const delta = ch.insert.length - removed;
+        if (ch.from < sel.from) {
+          newFrom += ch.to <= sel.from ? delta : ch.insert.length - (sel.from - ch.from);
+        }
+        if (ch.from <= sel.to) {
+          newTo += ch.to <= sel.to ? delta : ch.insert.length - (sel.to - ch.from);
+        }
+      }
+      if (sel.anchor <= sel.head) {
+        nextAnchor = newFrom;
+        nextHead = newTo;
+      } else {
+        nextAnchor = newTo;
+        nextHead = newFrom;
+      }
     }
     view.dispatch({
-      changes: { from, to, insert },
-      selection: { anchor: nextHead, head: nextHead },
+      changes,
+      selection: { anchor: nextAnchor, head: nextHead },
       scrollIntoView: true,
     });
     view.focus();

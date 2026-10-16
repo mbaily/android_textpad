@@ -123,6 +123,19 @@ public class EditorInstrumentedTest {
                 assertTrue(editor.getText().toString().endsWith("\n[X] task item"));
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
                 assertTrue(editor.getText().toString().endsWith("\ntask item"));
+                editor.getText().replace(0, editor.length(), "    indented\n  [ ] open\n\t[X] done");
+                editor.setSelection(4); // cursor on indented line
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("    [ ] indented\n  [ ] open\n\t[X] done", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Undo").performClick();
+                assertEquals("    indented\n  [ ] open\n\t[X] done", editor.getText().toString());
+                editor.setSelection(0, editor.length()); // select all 3 mixed lines
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("    [ ] indented\n  [ ] open\n\t[X] done", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("    [X] indented\n  [X] open\n\t[X] done", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("    indented\n  open\n\tdone", editor.getText().toString());
                 editor.getText().replace(0, editor.length(), "line1\nline2\nline3");
                 editor.setSelection(6); // cursor on line2
                 button(activity.getWindow().getDecorView(),"Move line up").performClick();

@@ -537,25 +537,98 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void toggleTodo() {
         EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
-        int cursor = Math.max(0, editor.getSelectionStart());
+        int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
         String text = editor.getText().toString();
-        int lineStart = text.lastIndexOf('\n', Math.max(-1, cursor - 1)) + 1;
-        int lineEnd = text.indexOf('\n', lineStart);
-        if (lineEnd < 0) lineEnd = text.length();
-        if (lineEnd > lineStart && text.charAt(lineEnd - 1) == '\r') lineEnd--;
-        String line = text.substring(lineStart, lineEnd);
+        int blockStart = text.lastIndexOf('\n', Math.max(-1, selStart - 1)) + 1;
+        int effectiveEnd = selEnd > selStart && text.charAt(selEnd - 1) == '\n' ? selEnd - 1 : selEnd;
+        int blockEnd = text.indexOf('\n', effectiveEnd);
+        if (blockEnd < 0) blockEnd = text.length();
+        String block = text.substring(blockStart, blockEnd);
+        String[] rawLines = block.split("\n", -1);
+        int n = rawLines.length;
+        int[] indentEnds = new int[n];
+        int[] states = new int[n];
+        boolean[] blanks = new boolean[n];
+        boolean hasNonBlank = false;
+        for (int i = 0; i < n; i++) {
+            String raw = rawLines[i];
+            int len = raw.endsWith("\r") ? raw.length() - 1 : raw.length();
+            int ie = 0;
+            while (ie < len && (raw.charAt(ie) == ' ' || raw.charAt(ie) == '\t')) ie++;
+            indentEnds[i] = ie;
+            blanks[i] = ie == len;
+            if (!blanks[i]) hasNonBlank = true;
+            String rest = raw.substring(ie, len);
+            if (rest.startsWith("[ ]")) states[i] = 1;
+            else if (rest.startsWith("[X]") || rest.startsWith("[x]")) states[i] = 2;
+            else states[i] = 0;
+        }
+        boolean anyPlain = false, anyUnchecked = false;
+        for (int i = 0; i < n; i++) {
+            if (hasNonBlank && blanks[i]) continue;
+            if (states[i] == 0) anyPlain = true;
+            else if (states[i] == 1) anyUnchecked = true;
+        }
+        int action = anyPlain ? 0 : anyUnchecked ? 1 : 2;
+        StringBuilder out = new StringBuilder(block.length() + n * 4);
+        int lineOffset = blockStart;
+        int newSelStart = selStart, newSelEnd = selEnd, singleCursor = selStart;
+        for (int i = 0; i < n; i++) {
+            String raw = rawLines[i];
+            int len = raw.endsWith("\r") ? raw.length() - 1 : raw.length();
+            String cr = raw.substring(len);
+            String line = raw.substring(0, len);
+            int ie = indentEnds[i];
+            String rest = line.substring(ie);
+            boolean target = !hasNonBlank || !blanks[i];
+            int editFrom = lineOffset + ie, editTo = editFrom, insertLen = 0;
+            String modified = line;
+            if (target) {
+                if (action == 0 && states[i] == 0) {
+                    modified = line.substring(0, ie) + "[ ] " + rest;
+                    insertLen = 4;
+                } else if (action == 1 && states[i] == 1) {
+                    modified = line.substring(0, ie) + "[X]" + rest.substring(3);
+                    editTo = editFrom + 3;
+                    insertLen = 3;
+                } else if (action == 2 && states[i] == 2) {
+                    int removeLen = rest.startsWith("[X] ") || rest.startsWith("[x] ") ? 4 : 3;
+                    modified = line.substring(0, ie) + rest.substring(removeLen);
+                    editTo = editFrom + removeLen;
+                    insertLen = 0;
+                }
+            }
+            if (insertLen > 0 || editTo > editFrom) {
+                int removed = editTo - editFrom;
+                int delta = insertLen - removed;
+                if (selStart == selEnd) {
+                    if (action == 0) singleCursor = Math.max(editFrom + 4, selStart + 4);
+                    else if (action == 1) singleCursor = Math.max(editFrom + 3, selStart);
+                    else singleCursor = selStart <= editFrom ? selStart : Math.max(editFrom, selStart + delta);
+                } else {
+                    if (editFrom < selStart) newSelStart += editTo <= selStart ? delta : insertLen - (selStart - editFrom);
+                    if (editFrom <= selEnd) newSelEnd += editTo <= selEnd ? delta : insertLen - (selEnd - editFrom);
+                }
+            }
+            if (i > 0) out.append('\n');
+            out.append(modified).append(cr);
+            lineOffset += raw.length() + 1;
+        }
+        String changed = out.toString();
+        if (editor.length() - (blockEnd - blockStart) + changed.length() > TextCodec.MAX_BYTES) {
+            toast("Insertion would exceed the editor size limit."); return;
+        }
         editor.requestFocus();
-        if (line.startsWith("[ ]")) {
-            editor.getText().replace(lineStart, lineStart + 3, "[X]");
-            editor.setSelection(Math.min(editor.length(), Math.max(lineStart + 3, cursor)));
-        } else if (line.startsWith("[X]") || line.startsWith("[x]")) {
-            int removeLen = line.length() > 3 && line.charAt(3) == ' ' ? 4 : 3;
-            editor.getText().replace(lineStart, lineStart + removeLen, "");
-            editor.setSelection(Math.min(editor.length(), Math.max(lineStart, cursor - removeLen)));
+        if (!changed.equals(block)) {
+            editor.getText().replace(blockStart, blockEnd, changed);
+        }
+        int maxLen = editor.length();
+        if (selStart == selEnd) {
+            editor.setSelection(Math.min(maxLen, Math.max(0, singleCursor)));
         } else {
-            if (editor.length() + 4 > TextCodec.MAX_BYTES) { toast("Insertion would exceed the editor size limit."); return; }
-            editor.getText().insert(lineStart, "[ ] ");
-            editor.setSelection(Math.min(editor.length(), cursor + 4));
+            int s = Math.min(maxLen, Math.max(0, newSelStart));
+            int e = Math.min(maxLen, Math.max(s, newSelEnd));
+            editor.setSelection(s, e);
         }
         saveViewState(); updateStatus();
     }
