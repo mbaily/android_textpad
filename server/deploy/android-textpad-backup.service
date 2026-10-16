@@ -1,0 +1,17 @@
+[Unit]
+Description=Back up the Textpad SQLite database
+
+[Service]
+Type=oneshot
+User=textpad
+Group=textpad
+WorkingDirectory=/opt/android_textpad/server
+EnvironmentFile=/etc/android-textpad/server.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/android_textpad/server/.venv/bin/python -m textpad_server backup
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/android-textpad

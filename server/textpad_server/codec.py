@@ -1,0 +1,108 @@
+"""Strict supported text encodings and preservation of existing file formatting."""
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+import re
+
+MAX_BYTES = 10 * 1024 * 1024
+
+
+class InvalidText(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Decoded:
+    raw: bytes
+    text: str
+    encoding: str
+    bom: bool
+    endings: tuple[str, ...]
+
+    @property
+    def preferred(self):
+        return max(dict.fromkeys(self.endings), key=self.endings.count) if self.endings else "\n"
+
+    @property
+    def ending_label(self):
+        if len(set(self.endings)) > 1:
+            return "Mixed"
+        return {"\n": "LF", "\r\n": "CRLF", "\r": "CR"}[self.preferred]
+
+
+def validate(text):
+    if re.search(r"[\x00-\x08\x0b\x0e-\x1f\x7f]", text):
+        raise InvalidText("Binary files and non-text control characters are not supported.")
+    if any(0xD800 <= ord(char) <= 0xDFFF for char in text):
+        raise InvalidText("The text contains an incomplete Unicode character.")
+
+
+def decode(raw, hint=None):
+    if len(raw) > MAX_BYTES:
+        raise InvalidText("Files must be no larger than 10 MiB.")
+    encoding, bom, skip = hint or "utf-8", False, 0
+    if raw.startswith((b"\xff\xfe\0\0", b"\0\0\xfe\xff")):
+        raise InvalidText("UTF-32 is not supported. Use UTF-8 or UTF-16.")
+    for prefix, name in [(b"\xef\xbb\xbf", "utf-8"), (b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")]:
+        if raw.startswith(prefix):
+            encoding, bom, skip = name, True, len(prefix)
+            break
+    else:
+        if hint is None and len(raw) >= 4 and len(raw) % 2 == 0:
+            sample = raw[:1024]
+            even, odd = sample[::2].count(0), sample[1::2].count(0)
+            if odd > len(sample) // 4 and even == 0:
+                encoding = "utf-16-le"
+            elif even > len(sample) // 4 and odd == 0:
+                encoding = "utf-16-be"
+    if not isinstance(encoding, str) or encoding not in {"utf-8", "utf-16-le", "utf-16-be", "ascii"}:
+        raise InvalidText("Choose UTF-8, UTF-16 LE/BE, or ASCII.")
+    try:
+        original = raw[skip:].decode(encoding, errors="strict")
+    except UnicodeError as error:
+        raise InvalidText("Invalid or unsupported text encoding. Use UTF-8 or UTF-16 with a BOM.") from error
+    validate(original)
+    endings = tuple(re.findall(r"\r\n|\r|\n", original))
+    return Decoded(raw, re.sub(r"\r\n|\r", "\n", original), encoding, bom, endings)
+
+
+def edited(base, text, encoding=None, bom=None):
+    if not isinstance(text, str):
+        raise InvalidText("Document text must be a string.")
+    text = re.sub(r"\r\n|\r", "\n", text)
+    validate(text)
+    encoding = base.encoding if encoding is None else encoding
+    bom = base.bom if bom is None else bom
+    if not isinstance(encoding, str) or encoding not in {"utf-8", "utf-16-le", "utf-16-be", "ascii"}:
+        raise InvalidText("Choose UTF-8, UTF-16 LE/BE, or ASCII.")
+    if not isinstance(bom, bool):
+        raise InvalidText("The byte-order mark setting must be true or false.")
+    if text == base.text and encoding == base.encoding and bom == base.bom:
+        return base.raw
+    old_lines, new_lines = base.text.split("\n"), text.split("\n")
+    preferred = base.preferred
+    endings = []
+    for operation, first, last, new_first, new_last in SequenceMatcher(None, old_lines, new_lines, autojunk=True).get_opcodes():
+        if operation == "delete":
+            continue
+        for index in range(new_first, new_last):
+            if index == len(new_lines) - 1:
+                continue
+            original_index = first + index - new_first
+            endings.append(base.endings[original_index] if operation != "insert" and original_index < last
+                           and original_index < len(base.endings) else preferred)
+    pieces = []
+    for index, line in enumerate(new_lines):
+        pieces.append(line)
+        if index < len(endings):
+            ending = endings[index]
+            if not line and index > 0 and endings[index - 1] == "\r" and ending == "\n":
+                ending = "\r\n"
+            pieces.append(ending)
+    prefix = {"utf-8": b"\xef\xbb\xbf", "utf-16-le": b"\xff\xfe", "utf-16-be": b"\xfe\xff", "ascii": b""}[encoding] if bom else b""
+    try:
+        raw = prefix + "".join(pieces).encode(encoding, errors="strict")
+    except UnicodeError as error:
+        raise InvalidText("The selected encoding cannot represent this text. Choose UTF-8 or UTF-16.") from error
+    if len(raw) > MAX_BYTES:
+        raise InvalidText("The saved file would exceed 10 MiB.")
+    return raw

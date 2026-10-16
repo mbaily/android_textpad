@@ -37,7 +37,10 @@ public final class TextpadApplication extends Application {
     PendingSave pendingSave;
     TextCodec.Encoding nextOpenEncoding;
 
-    @Override public void onCreate() { super.onCreate(); store = new DocumentStore(this); settings = new EditorSettings(this); sync = new SyncManager(this); }
+    @Override public void onCreate() {
+        super.onCreate(); store = new DocumentStore(this); settings = new EditorSettings(this); sync = new SyncManager(this);
+        main.post(sync::initialize);
+    }
     EditorTab currentTab() { return tabs.stream().filter(t -> t.id == selectedTab).findFirst().orElse(null); }
     EditorDocument current() { EditorTab tab = currentTab(); return tab == null ? null : tab.document; }
     void attach(Listener next) {
@@ -159,7 +162,10 @@ public final class TextpadApplication extends Application {
                     }
                     if (closeTab != null && !doc.buffer.dirty()) close(closeTab);
                     refresh();
-                    if (doc.syncEnabled) sync.syncAll(false);
+                    if (doc.syncEnabled) {
+                        if(sync.testApi==null) SyncScheduler.retry(this);
+                        sync.syncAll(false);
+                    }
                 });
             } catch (SaveTransaction.Changed e) {
                 final DocumentBuffer.Snapshot captured = snapshot;

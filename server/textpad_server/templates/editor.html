@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101313">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <meta name="csp-nonce" content="{{ nonce }}">
+  <title>Textpad · Synced files</title>
+  <link rel="icon" href="{{ prefix }}/editor/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ prefix }}/editor/static/editor.css">
+  <script type="module" src="{{ prefix }}/editor/static/editor.js"></script>
+</head>
+<body data-prefix="{{ prefix }}">
+  <div class="workspace">
+    <aside id="file-sidebar" class="sidebar" aria-label="Synced files">
+      <a class="brand" href="{{ prefix }}/"><span class="brand-mark" aria-hidden="true">T_</span> Textpad <span class="edition">WEB</span></a>
+      <div class="sidebar-heading"><h1>Synced files <span id="file-count">0</span></h1><button id="new-file" class="icon-button" title="New server file" aria-label="New server file">+</button></div>
+      <label for="file-filter" class="sr-only">Filter synced files</label>
+      <input id="file-filter" class="file-filter" type="search" placeholder="Find a file…" autocomplete="off">
+      <div id="file-list" class="file-list" aria-live="polite"><p class="muted small">Loading files…</p></div>
+      <div class="sidebar-footer">
+        <div class="connection"><span id="connection-dot" class="connection-dot"></span><span id="connection-label">Connecting</span><button id="refresh" class="icon-button" title="Refresh files" aria-label="Refresh files">↻</button></div>
+        <button id="connect-android" class="quiet-button">Connect Android ↗</button>
+        <div class="sidebar-links"><button id="settings" class="text-button">Editor settings</button><button id="sign-out" class="text-button">Sign out</button></div>
+      </div>
+    </aside>
+    <main class="main-editor">
+      <div class="editor-heading">
+        <button id="sidebar-toggle" class="icon-button sidebar-toggle" aria-controls="file-sidebar" aria-expanded="true" aria-label="Hide sidebar" title="Hide sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        </button>
+        <div id="tabs" class="tabs" role="tablist" aria-label="Open files"><span class="tabs-placeholder">A little space to write.</span></div>
+      </div>
+      <div class="toolbar">
+        <button id="save" class="primary compact" disabled>Save <kbd>Ctrl S</kbd></button>
+        <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button><button id="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+        <span class="toolbar-divider"></span>
+        <button id="find" disabled>Find / Replace</button><button id="indent-less" title="Decrease indentation" disabled>←|</button><button id="indent-more" title="Increase indentation" disabled>|→</button>
+        <span class="toolbar-spacer"></span>
+        <button id="reload" disabled>Reload</button><button id="download" disabled>Download</button><button id="history" disabled>History</button>
+      </div>
+      <div id="notice" class="notice hidden" role="status"><span id="notice-text"></span><button id="notice-dismiss" class="text-button" aria-label="Dismiss message">×</button></div>
+      <div id="remote-notice" class="remote-notice hidden" role="status">A newer server revision is available. Your unsaved edits are kept. Saving makes them the latest revision. <button id="reload-remote" class="text-button">Reload server version</button></div>
+      <div class="editor-body">
+        <div id="welcome" class="welcome"><span class="welcome-mark" aria-hidden="true">T_</span><h2>Your synced files,<br>ready to edit.</h2><p>Choose a document from the sidebar,<br>or start a new file on your server.</p><button id="welcome-new" class="primary">New server file</button><p class="small muted">Files saved here are available to your synced devices.</p></div>
+        <div id="editor-host" class="editor-host hidden" aria-label="Document editor"></div>
+      </div>
+      <footer class="editor-status"><span id="cursor-status">No document open</span><div><button id="encoding-status" class="text-button" disabled>UTF-8</button><span id="revision-status"></span><span id="save-status">Ready</span></div></footer>
+    </main>
+    <aside id="history-panel" class="history-panel hidden" aria-label="Revision history">
+      <div class="history-heading"><h2>History</h2><button id="close-history" class="icon-button" aria-label="Close history">×</button></div>
+      <p class="small muted">Older saved versions stay here.</p><div id="history-list" class="history-list"></div>
+      <div id="revision-preview" class="revision-preview hidden"><div class="revision-actions"><span id="preview-label"></span><button id="restore-revision" class="primary compact">Restore</button></div><pre id="preview-text" tabindex="0"></pre></div>
+    </aside>
+  </div>
+  <dialog id="modal"><form id="modal-form"><h2 id="modal-title"></h2><div id="modal-body"></div><div id="modal-actions" class="modal-actions"></div></form></dialog>
+  <noscript><div class="noscript">Enable JavaScript to use the browser editor.</div></noscript>
+</body>
+</html>

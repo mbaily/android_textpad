@@ -14,8 +14,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /** Saved, opted-in local files only. All file and network operations share the I/O queue. */
 final class SyncManager {
@@ -23,10 +25,38 @@ final class SyncManager {
     private final TextpadApplication app;
     final SharedPreferences prefs;
     boolean busy, rerun;
+    private boolean foreground;
+    private CompletableFuture<Boolean> running;
+    private SyncEvents events;
+    private final SharedPreferences.OnSharedPreferenceChangeListener configurationListener=(preferences,key) -> {
+        if(key==null || key.equals("endpoint") || key.equals("token") || key.endsWith(".enabled")) configurationChanged();
+    };
     String status = "Sync not configured";
     RemoteApi testApi;
 
-    SyncManager(TextpadApplication app) { this.app=app; prefs=app.getSharedPreferences("sync",0); }
+    SyncManager(TextpadApplication app) {
+        this.app=app; prefs=app.getSharedPreferences("sync",0);
+        String endpoint=prefs.getString("endpoint","").trim().replaceAll("/+$","");
+        if(endpoint.equalsIgnoreCase("https://git23069.hopto.org:8443")) {
+            prefs.edit().putString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT).apply();
+            status="Server address updated. Ready to sync";
+        }
+    }
+    void initialize() {
+        prefs.registerOnSharedPreferenceChangeListener(configurationListener);
+        configurationChanged();
+    }
+    boolean configured() { return !prefs.getString("token","").isBlank() && !bindings().isEmpty(); }
+    void configurationChanged() {
+        boolean enabled=testApi==null && configured();
+        SyncScheduler.configure(app,enabled);
+        if(events==null) events=new SyncEvents(app);
+        if(foreground && enabled) {
+            try { events.start(prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT),TokenVault.read(prefs)); }
+            catch(Exception ignored) { events.stop(); }
+        } else events.stop();
+    }
+    void setForeground(boolean value) { foreground=value; configurationChanged(); }
     RemoteApi api() throws Exception {
         if (testApi != null) return testApi;
         String token = TokenVault.read(prefs);
@@ -84,13 +114,16 @@ final class SyncManager {
         return request;
     }
 
-    void syncAll(boolean report) {
-        if (busy) { rerun=true; if (report) app.notice("Sync", "A sync is already running. Another pass is queued."); return; }
+    CompletableFuture<Boolean> syncAll(boolean report) { return syncAll(report,()->false,false); }
+    CompletableFuture<Boolean> syncFromWorker(BooleanSupplier stopped) { return syncAll(false,stopped,true); }
+    private CompletableFuture<Boolean> syncAll(boolean report,BooleanSupplier stopped,boolean fromWorker) {
+        if (busy) { rerun=true; if (report) app.notice("Sync", "A sync is already running. Another pass is queued."); return running!=null&&!running.isDone()?running:CompletableFuture.completedFuture(true); }
         List<Binding> bindings=bindings();
-        if (bindings.isEmpty()) { if (report) app.notice("Sync", "No local files are marked for sync."); return; }
+        if (bindings.isEmpty()) { if (report) app.notice("Sync", "No local files are marked for sync."); return CompletableFuture.completedFuture(false); }
         final RemoteApi remoteApi;
         try { remoteApi=api(); }
-        catch (Exception e) { status=e.getMessage(); if (report) app.notice("Sync settings",status); return; }
+        catch (Exception e) { status=e.getMessage(); if (report) app.notice("Sync settings",status); return CompletableFuture.completedFuture(false); }
+        CompletableFuture<Boolean> completion=new CompletableFuture<>(); running=completion;
         busy=true; status="Syncing…"; app.refresh();
         app.io.execute(() -> {
             int uploaded=0, downloaded=0, deferred=0; List<String> errors=new ArrayList<>();
@@ -98,6 +131,7 @@ final class SyncManager {
                 Map<String,RemoteApi.Remote> remoteById=new LinkedHashMap<>();
                 for (var remote : remoteApi.list()) remoteById.put(remote.id(),remote);
                 for (Binding binding : bindings) {
+                    if(stopped.getAsBoolean()) { errors.add("Background sync paused; it will retry."); break; }
                     if (!enabled(binding)) continue;
                     try {
                         boolean dirty=onMain(() -> { EditorDocument doc=openDocument(binding.uri); return doc != null && (doc.buffer.dirty() || doc.saving); });
@@ -108,7 +142,7 @@ final class SyncManager {
                         if (external) throw new IOException("changed outside Textpad; reload it before syncing");
                         if (!localHex.equals(binding.hash)) {
                             TextCodec.decode(local); // Never upload binary or invalid text.
-                            if (!enabled(binding)) continue;
+                            if (!enabled(binding) || stopped.getAsBoolean()) continue;
                             RemoteApi.Remote uploadedFile=remoteApi.put(binding.id,binding.name,local,binding.revision,requestId(binding,localHex));
                             if (!localHex.equals(uploadedFile.hash())) throw new IOException("server did not acknowledge the uploaded checksum");
                             record(binding,uploadedFile); remoteById.put(binding.id, uploadedFile); uploaded++;
@@ -120,13 +154,13 @@ final class SyncManager {
                             DocumentBuffer nextBuffer=new DocumentBuffer(TextCodec.decode(remote.content()));
                             EditorDocument locked=onMain(() -> {
                                 EditorDocument doc=openDocument(binding.uri);
-                                if (!enabled(binding) || (doc != null && (doc.buffer.dirty() || doc.saving))) return null;
+                                if (!enabled(binding) || stopped.getAsBoolean() || (doc != null && (doc.buffer.dirty() || doc.saving))) return null;
                                 if (doc != null) { doc.saving=true; doc.replacing=true; app.refresh(); }
                                 return doc == null ? new EditorDocument("closed",DocumentBuffer.empty()) : doc;
                             });
                             if (locked == null) { deferred++; continue; }
                             try {
-                                if (!enabled(binding)) { deferred++; continue; }
+                                if (!enabled(binding) || stopped.getAsBoolean()) { deferred++; continue; }
                                 SaveTransaction.save(app.store.target(binding.uri),localHash,remote.content(),old -> app.store.backup(binding.uri,binding.name,old));
                                 record(binding,remote); downloaded++;
                                 onMain(() -> {
@@ -145,11 +179,15 @@ final class SyncManager {
             String summary=uploaded+" uploaded · "+downloaded+" downloaded · "+deferred+" pending";
             if (!errors.isEmpty()) summary+="\n"+String.join("\n",errors);
             String result=summary;
+            boolean retry=!errors.isEmpty();
             app.main.post(() -> {
                 busy=false; status=result; app.refresh(); if (report) app.notice("Sync",result);
+                completion.complete(retry);
+                if(retry && !fromWorker && testApi==null && configured()) SyncScheduler.retry(app);
                 if (rerun) { rerun=false; syncAll(false); }
             });
         });
+        return completion;
     }
     static String message(Exception e) { return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(); }
 }

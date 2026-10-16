@@ -26,7 +26,8 @@ final class SyncUi {
         EditorDocument doc=app.current();
         String toggle=doc != null && doc.syncEnabled ? "Disable sync for this file" : "Enable sync for this file…";
         String[] choices={"Sync now",toggle,"Browse server files…","Manage synced local files…","Server settings…"};
-        new AlertDialog.Builder(activity).setTitle("Sync").setMessage(app.sync.status)
+        new AlertDialog.Builder(activity).setTitle("Sync").setMessage(app.sync.status
+                +"\n\nEnabled files sync on save and receive live updates while the app is open. Background checks run about every 15 minutes when Android allows. Unsaved edits stay protected.")
                 .setPositiveButton("Actions…",(d,w) -> new AlertDialog.Builder(activity).setTitle("Sync actions")
                         .setItems(choices,(dialog,which) -> {
                             switch(which) {
@@ -40,12 +41,13 @@ final class SyncUi {
 
     private void settings() {
         LinearLayout fields=fields(); fields.addView(label("Server address"));
-        EditText endpoint=input("https://server:8443",false);
+        EditText endpoint=input(SyncHttpClient.DEFAULT_ENDPOINT,false);
         endpoint.setText(app.sync.prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT)); fields.addView(endpoint);
         fields.addView(label("API token")); EditText token=input("Server API token",true);
         try { token.setText(TokenVault.read(app.sync.prefs)); }
         catch(Exception e) { app.notice("Token",SyncManager.message(e)); }
         fields.addView(token);
+        fields.addView(label("Use the sync server address, without /editor/ or /api/v1. For this server: "+SyncHttpClient.DEFAULT_ENDPOINT));
         fields.addView(label("For git23069.hopto.org, Textpad trusts Android's installed system and user CA certificates. Local files and editing work without a connection."));
         AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Sync server").setView(fields)
                 .setPositiveButton("Save",null).setNegativeButton("Cancel",null).create();

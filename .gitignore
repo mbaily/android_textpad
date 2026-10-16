@@ -8,3 +8,13 @@ local.properties
 .tools/
 *.jks
 *.keystore
+deployment/
+__pycache__/
+*.py[cod]
+node_modules/
+server/textpad_server/static/editor.js
+server/textpad_server/static/editor.js.LEGAL.txt
+.server-package/
+*.sqlite3
+*.sqlite3-*
+.venv/

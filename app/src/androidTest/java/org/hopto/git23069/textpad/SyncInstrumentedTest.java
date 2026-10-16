@@ -5,6 +5,10 @@ import android.net.Uri;
 import android.provider.DocumentsContract;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.work.ListenableWorker;
+import androidx.work.WorkInfo;
+import androidx.work.WorkManager;
+import androidx.work.testing.TestWorkerBuilder;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
 import org.hopto.git23069.textpad.core.SaveTransaction;
 import org.hopto.git23069.textpad.core.TextCodec;
@@ -19,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import static org.junit.Assert.*;
 
 public class SyncInstrumentedTest {
@@ -70,6 +76,85 @@ public class SyncInstrumentedTest {
         fail("Timed out waiting for sync");
     }
     private void sync() throws Exception { main(() -> app.sync.syncAll(false)); waitFor(() -> !app.sync.busy); }
+
+    private ListenableWorker.Result worker() {
+        var executor=Executors.newSingleThreadExecutor();
+        try { return TestWorkerBuilder.from(app,SyncWorker.class,executor).build().doWork(); }
+        finally { executor.shutdownNow(); }
+    }
+
+    @Test public void backgroundWorkerRetriesTheOriginalUploadReceipt() throws Exception {
+        Uri uri=seed("sync-worker.txt","worker saved text");
+        EditorDocument doc=new EditorDocument("sync-worker.txt",new DocumentBuffer(TextCodec.decode(bytes("worker saved text"))));
+        doc.uri=uri;doc.savedHash=SaveTransaction.hash(bytes("worker saved text"));
+        main(() -> app.sync.link(doc,"worker-file",null,null));api.loseNextReceipt=true;
+        assertEquals(ListenableWorker.Result.retry(),worker());
+        assertEquals(1,api.accepted);
+        assertEquals(ListenableWorker.Result.success(),worker());
+        assertEquals(1,api.accepted);assertEquals(2,api.uploads);
+        assertEquals("worker saved text",new String(api.get("worker-file").content(),StandardCharsets.UTF_8));
+    }
+
+    @Test public void backgroundWorkerKeepsDirtyBuffersAndBacksUpACleanPull() throws Exception {
+        Uri uri=seed("sync-worker-dirty.txt","saved");var remote=api.remoteEdit("worker-dirty","saved");
+        EditorDocument doc=new EditorDocument("sync-worker-dirty.txt",new DocumentBuffer(TextCodec.decode(bytes("saved"))));
+        doc.uri=uri;doc.savedHash=SaveTransaction.hash(bytes("saved"));
+        main(() -> { app.sync.link(doc,remote.id(),remote.revision(),remote.hash());app.addTab(doc);doc.buffer.edit(doc.buffer.length(),doc.buffer.length()," unsaved"); });
+        api.remoteEdit(remote.id(),"new remote");
+        assertEquals(ListenableWorker.Result.success(),worker());
+        assertEquals("saved",read(uri));assertEquals("saved unsaved",doc.buffer.text());
+        main(() -> doc.buffer.undo());
+        assertEquals(ListenableWorker.Result.success(),worker());
+        assertEquals("new remote",read(uri));assertEquals("new remote",doc.buffer.text());
+        assertTrue(app.store.backups().stream().anyMatch(backup -> backup.originalUri().equals(uri.toString())));
+    }
+
+    @Test public void periodicWorkIsPersistedDeduplicatedAndCancelledWhenDisabled() throws Exception {
+        try {
+            SyncScheduler.configure(app,true).getResult().get(10,TimeUnit.SECONDS);
+            SyncScheduler.configure(app,true).getResult().get(10,TimeUnit.SECONDS);
+            var infos=WorkManager.getInstance(app).getWorkInfosForUniqueWork(SyncScheduler.PERIODIC).get(10,TimeUnit.SECONDS);
+            assertEquals(1,infos.stream().filter(info -> !info.getState().isFinished()).count());
+            assertEquals(androidx.work.NetworkType.CONNECTED,infos.stream().filter(info -> !info.getState().isFinished()).findFirst().orElseThrow().getConstraints().getRequiredNetworkType());
+        } finally { SyncScheduler.configure(app,false).getResult().get(10,TimeUnit.SECONDS); }
+        assertTrue(WorkManager.getInstance(app).getWorkInfosForUniqueWork(SyncScheduler.PERIODIC).get(10,TimeUnit.SECONDS)
+                .stream().allMatch(info -> info.getState().isFinished()));
+    }
+
+    @Test public void upgradeMigratesLegacyEndpointWithoutChangingCredentialsOrFileLinks() throws Exception {
+        Uri uri=seed("sync-upgrade.txt","saved local text");
+        EditorDocument doc=new EditorDocument("sync-upgrade.txt",new DocumentBuffer(TextCodec.decode(bytes("saved local text"))));
+        doc.uri=uri; doc.savedHash=SaveTransaction.hash(bytes("saved local text"));
+        main(() -> {
+            app.sync.link(doc,"upgrade-file","42",hash(bytes("saved local text")));
+            List<SyncManager.Binding> before=app.sync.bindings();
+            String key=app.store.key(uri);
+            app.sync.prefs.edit().putString("endpoint","https://git23069.hopto.org:8443/")
+                    .putString("token","existing encrypted token").putString(key+".pendingHash","pending hash")
+                    .putString(key+".request","pending request").commit();
+            SyncManager upgraded=new SyncManager(app);
+            assertEquals(SyncHttpClient.DEFAULT_ENDPOINT,upgraded.prefs.getString("endpoint",null));
+            assertEquals("existing encrypted token",upgraded.prefs.getString("token",null));
+            assertEquals("pending hash",upgraded.prefs.getString(key+".pendingHash",null));
+            assertEquals("pending request",upgraded.prefs.getString(key+".request",null));
+            assertEquals(before,upgraded.bindings());
+            assertEquals("upgrade-file",upgraded.bindings().get(0).id());
+            assertEquals("42",upgraded.bindings().get(0).revision());
+            assertEquals(SyncHttpClient.DEFAULT_ENDPOINT,new SyncManager(app).prefs.getString("endpoint",null));
+        });
+        assertEquals("saved local text",read(uri));
+    }
+
+    @Test public void upgradePreservesCustomEndpoints() {
+        main(() -> {
+            for(String endpoint:List.of("https://example.com:8443", "https://git23069.hopto.org:8443/custom", SyncHttpClient.DEFAULT_ENDPOINT)) {
+                app.sync.prefs.edit().putString("endpoint",endpoint).commit();
+                assertEquals(endpoint,new SyncManager(app).prefs.getString("endpoint",null));
+            }
+            app.sync.prefs.edit().remove("endpoint").commit();
+            assertFalse(new SyncManager(app).prefs.contains("endpoint"));
+        });
+    }
 
     @Test public void optedInClosedFilesUploadDownloadAndKeepBackups() throws Exception {
         Uri uri=seed("sync-closed.txt","first");

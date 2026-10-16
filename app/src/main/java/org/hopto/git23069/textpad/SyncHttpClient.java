@@ -17,7 +17,7 @@ import java.util.List;
 import javax.net.ssl.HttpsURLConnection;
 
 final class SyncHttpClient implements RemoteApi {
-    static final String DEFAULT_ENDPOINT = "https://git23069.hopto.org:8443";
+    static final String DEFAULT_ENDPOINT = "https://git23069.hopto.org/android_textpad";
     private final String endpoint, token;
     SyncHttpClient(String endpoint, String token) {
         URI uri = URI.create(endpoint);
@@ -74,6 +74,9 @@ final class SyncHttpClient implements RemoteApi {
             }
             int status = connection.getResponseCode();
             if (status == 401 || status == 403) throw new IOException("The server rejected the API token. Check Sync settings.");
+            if (status == 404 && path.equals("/api/v1/documents"))
+                throw new IOException("No Textpad sync API was found at "+endpoint+" (HTTP 404). Check Sync → Actions → Server settings. "
+                        +"For git23069.hopto.org, use "+DEFAULT_ENDPOINT+".");
             if (status < 200 || status >= 300) throw new IOException("Sync server returned HTTP "+status+".");
             try (InputStream in = connection.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
                 byte[] block = new byte[32768]; int n;

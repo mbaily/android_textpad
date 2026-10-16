@@ -7,3 +7,21 @@ I want to make an android text editor with:
   - dark mode by default
 
 Start with the android app first before the server app to sync to on debian 13. 
+
+Server application requirements:
+  - a browser-based editor primarily for desktop and laptop browsers such as Chrome
+  - browse, view, and edit the synced documents stored on the server
+  - the browser does not browse or edit local storage on an Android device
+  - browser edits participate in synchronization and retain previous revisions
+
+Automatic synchronization:
+  - WebSocket change notifications while Android or the desktop editor is open
+  - Android WorkManager checks in the background on a 15-minute schedule, subject to Android power/network constraints
+  - persist offline retries and keep using HTTPS for file transfers
+  - preserve explicit per-file opt-in, unsaved buffers, backups, and idempotent upload receipts
+  - self-hosted notifications; no Firebase/Google push service dependency
+
+Server notification refinement:
+  - eliminate the one-second SQLite polling; signal WebSocket clients after successful commits
+  - coalesce notifications so clients retrieve the latest saved state
+  - retain existing Android behavior, background scheduling, sync API, and revision history

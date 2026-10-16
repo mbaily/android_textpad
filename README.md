@@ -1,8 +1,14 @@
 # Textpad for Android
 
-A native, dark-by-default text editor for **Android 16 / API 36 and later**. The Android application is implemented first; the Debian sync service is the next component. No service has been deployed or certificates generated on your server.
+A native, dark-by-default text editor for **Android 16 / API 36 and later**. The Debian server hosts APK downloads, the sync API, and a desktop browser editor for synced files.
 
 <img src="docs/screenshots/home.png" width="260" alt="Textpad empty state on Android 16"> <img src="docs/screenshots/editor.png" width="260" alt="Textpad editing a Unicode text file">
+
+## Download
+
+[Download page](https://git23069.hopto.org/android_textpad/) · [Latest APK](https://git23069.hopto.org/android_textpad/textpad-latest.apk) · [Desktop editor](https://git23069.hopto.org/android_textpad/editor/)
+
+The site uses the server's existing HTTPS certificate and is served from `/opt/android_textpad/deployment/`. Publish an updated APK with `./scripts/deploy-downloads.sh` after building it. See [server deployment instructions](server/README.md).
 
 ## Build and install
 
@@ -41,13 +47,15 @@ Backups live in the app-private `files/backups/` directory, remain until manuall
 
 ## Sync client
 
-**More → Sync → Actions** contains settings, opt-in file linking, server browsing, manual sync, and a list of opted-in local files. Set an HTTPS endpoint and API token after the server is available. The initial endpoint is `https://git23069.hopto.org:8443`; the port is configurable. The token is encrypted with an Android Keystore key. App configuration trusts user-installed CA certificates for `git23069.hopto.org` while retaining normal TLS hostname verification.
+**More → Sync → Actions** contains settings, opt-in file linking, server browsing, manual sync, and a list of opted-in local files. Use endpoint `https://git23069.hopto.org/android_textpad` and the server API token. Version 0.1.2 and later also migrate a saved `https://git23069.hopto.org:8443` address automatically, preserving the token and file links. That old port serves a different application and returns HTTP 404 for sync requests. In older versions, correct the address under **Server settings** before enabling sync. Custom endpoints are preserved. The token is encrypted with an Android Keystore key. App configuration trusts user-installed CA certificates for `git23069.hopto.org` while retaining normal TLS hostname verification.
 
 Only saved local files that are individually opted in participate. Links survive process restarts independently of tabs. Same-name candidates are ranked by bounded content similarity and require confirmation; thereafter a stable document ID links copies across different paths. First linking lets you choose the local or server version. Server browsing downloads to a local file through Save As before opening it for editing.
 
-Sync runs on save, returning to the app, and manual request. Dirty buffers defer synchronization. Remote writes back up the displaced local file and briefly suspend editing during replacement. Offline edits upload with last-write-wins in server acceptance order. Stable request IDs allow retrying an interrupted upload without changing its acceptance order. Local deletion does not delete the server copy; inaccessible files are reported. Server revision browsing/restoration is included in the client.
+Sync runs on save, returning to the app, manual request, and WebSocket notifications while the app is visible. WorkManager checks opted-in saved files in the background on a 15-minute schedule (Android may delay it), with network constraints and exponential retries. Successful local saves also enqueue durable work so an interrupted upload can finish after the app exits. WebSockets close while the activity is stopped, and reconnecting checks for missed changes. Dirty buffers defer synchronization. Remote writes back up the displaced local file and briefly suspend editing during replacement. Offline edits upload with last-write-wins in server acceptance order. Stable request IDs allow retrying an interrupted upload without changing its acceptance order. Local deletion does not delete the server copy; inaccessible files are reported. Server revision browsing/restoration is included in the client.
 
-The server must implement [the API contract](docs/sync-api.md), including revision retention and idempotent upload receipts. The client has been tested against a controlled in-memory API; your Debian server and its CA-signed HTTPS endpoint have not yet been integrated.
+The deployed SQLite service implements [the API contract](docs/sync-api.md), including revision retention and idempotent upload receipts. The desktop editor browses and edits server copies, with tabs, search/replace, undo/redo, downloads, and history restore. Committed saves trigger WebSocket change notifications across both server workers without periodic SQLite polling. The editor refreshes clean tabs, and preserves dirty buffers when another device saves. It reconnects when visible and uses a 30-second polling fallback if live updates are unavailable. It does not browse Android local storage.
+
+Sign into the browser editor with the same API token used by Android. Retrieve it with `ssh <user>@<your-server> 'sudo cat /etc/android-textpad/api-token'`. **Connect Android** in the browser shows the connection settings. See [server operations and backups](server/README.md) for deployment, credentials, daily SQLite backups, and recovery.
 
 ## Validation
 
@@ -60,4 +68,6 @@ Core JVM tests cover strict encoding, byte-exact Unicode/BOM/newline round trips
 
 The original `requirements.txt`, `questions.txt`, and `questions2.txt` remain the source of the agreed scope; [the consolidated requirements](docs/requirements.md) record implementation decisions.
 
-Verified on an Android 16 emulator: **26 JVM tests and 9 instrumentation tests pass**, the debug APK signature verifies, and Android lint completes without errors. Manual checks using Android's real Downloads picker also verified byte-exact unchanged saves, Unicode editing/saving, Save As, backup revision opening, deliberate loss of unsaved edits after process termination, and reopening recent files using persisted permissions.
+Verified on an Android 16 emulator: **26 JVM tests and 14 instrumentation tests pass**, the debug APK signature verifies, and Android lint completes without errors. Manual checks using Android's real Downloads picker also verified byte-exact unchanged saves, Unicode editing/saving, Save As, backup revision opening, deliberate loss of unsaved edits after process termination, and reopening recent files using persisted permissions.
+
+Server validation: **27 backend tests pass**, desktop Chrome workflows pass against isolated and deployed services, and the Android HTTPS client passes a live test of uploads, downloads, Unicode/UTF-16, history, authentication, and retry ordering. APK 0.1.3 adds live WebSocket updates and WorkManager background sync, retaining automatic migration of the old sync address and HTTP 404 guidance.

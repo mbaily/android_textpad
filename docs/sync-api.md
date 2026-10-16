@@ -1,6 +1,6 @@
 # Textpad sync API v1
 
-This is the Android client's contract for the subsequent Debian 13/SQLite service. It is not an existing deployed API. All endpoints require HTTPS and `Authorization: Bearer <token>`. JSON is UTF-8. Maximum decoded document size is 10 MiB; responses are capped at 16 MiB by the client. Return 401/403 for bad credentials and suitable 4xx/5xx responses for failures. The client does not follow redirects or disable TLS verification.
+The Debian 13/SQLite service implements this Android client contract at `https://git23069.hopto.org/android_textpad`. All endpoints require HTTPS and `Authorization: Bearer <token>`. JSON is UTF-8. Maximum decoded document size is 10 MiB; responses are capped at 16 MiB by the client. Return 401/403 for bad credentials and suitable 4xx/5xx responses for failures. The client does not follow redirects or disable TLS verification.
 
 ## Representation
 
@@ -14,7 +14,7 @@ This is the Android client's contract for the subsequent Debian 13/SQLite servic
 }
 ```
 
-IDs and revision identifiers contain 1–128 ASCII letters, digits, `_` or `-`. Clients generate UUID document IDs for new associations. `revision` is a string; a service-wide monotonically increasing SQLite integer represented as text is recommended. Filenames are metadata, never server filesystem paths. A content response adds `content_base64`, standard Base64 encoding of the exact file bytes including any BOM and line terminators. The client verifies its size and checksum before use.
+IDs and revision identifiers contain 1–128 ASCII letters, digits, `_` or `-`. Clients generate UUID document IDs for new associations. `revision` is a string; the service uses a monotonically increasing SQLite integer represented as text. Filenames are metadata, never server filesystem paths. A content response adds `content_base64`, standard Base64 encoding of the exact file bytes including any BOM and line terminators. The client verifies its size and checksum before use.
 
 ## Endpoints
 
@@ -55,4 +55,18 @@ Each opted-in local URI stores a stable document ID, last acknowledged server re
 
 Choosing **Use server version** for first linking sets the initial baseline to the local saved hash so the first reconciliation can pull. Choosing **Use local version** uses the remote hash as baseline so differing local contents upload.
 
-Subsequent implementation should add explicit server database backup/restore instructions alongside retained document history. Revision history alone does not replace a backup of the SQLite database.
+The service creates daily consistent SQLite backups and retains them until manually removed. See [server backup and recovery instructions](../server/README.md#database-backups-and-recovery). Revision history and upload receipts are stored in the same database.
+
+## Desktop browser API
+
+The browser editor is at `/editor/` under the public endpoint. Its `/editor/api/` routes use a signed login session and CSRF validation for writes, independently of the Android bearer-token API. It lists current documents, returns decoded text and file-format metadata, accepts edited text with a base revision and request ID, previews history, restores old bytes through a new revision, and downloads saved file bytes. Browser edits and Android uploads share the same SQLite write transaction, revision sequence, and last-write-wins policy. Desktop saves preserve existing encodings, BOMs, and line terminators. Browser file names never address Android paths or arbitrary server files.
+
+## Change notifications
+
+`wss://git23069.hopto.org/android_textpad/api/v1/events` authenticates the WebSocket upgrade with the same bearer header as Android HTTPS requests. The browser uses `/editor/api/events` with its signed cookie and a mandatory matching Origin. Tokens are never passed in a URL.
+
+On connection the server sends `{"type":"ready","cursor":"42"}`; subsequent committed revisions produce `{"type":"changed","cursor":"43"}`. The cursor is the SQLite revision sequence high-water mark, shared across server processes. Notifications contain no document text, names, or credentials. Retrying an accepted request creates no new revision or notification.
+
+Clients reconcile through the existing HTTPS API after every ready/change event and after reconnecting. Notifications are hints, not a replacement for revision/checksum validation or durable upload receipts. Full reconciliation on reconnect covers writes missed while disconnected, including across server restarts or restoring a database. Unsaved buffers still defer pulls.
+
+After a new revision commits successfully, the server broadcasts a shared wake-up signal to both worker processes. WebSocket senders block while idle; on a signal they read the latest committed SQLite cursor and send a change hint. Rapid saves can coalesce into one notification, and a change arriving during delivery schedules another check. There is no timed SQLite change polling. A worker exit also signals surviving workers, covering an exit after commit but before publication. The server sends WebSocket ping frames every 25 seconds. Android/browser connections close when the UI is hidden and reconnect with backoff when active. Android WorkManager separately performs background reconciliation with network constraints, a 15-minute periodic interval, and exponential retry backoff. The scheduler may delay work during Doze or other system restrictions; this does not promise immediate background delivery.

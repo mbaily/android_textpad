@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101313">
+  <title>Sign in · Textpad</title>
+  <link rel="icon" href="{{ prefix }}/editor/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ prefix }}/editor/static/editor.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <a class="brand" href="{{ prefix }}/"><span class="brand-mark" aria-hidden="true">T_</span> Textpad</a>
+    <p class="eyebrow">YOUR FILES. YOUR WORDS.</p>
+    <h1>Your synced files,<br>on a bigger screen.</h1>
+    <p class="muted">Sign in to browse and edit the documents on your server.</p>
+    <form method="post" action="{{ prefix }}/editor/login">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="credential">{{ 'Browser password' if separate_password else 'API token' }}</label>
+      <input id="credential" name="credential" type="password" autocomplete="current-password" required autofocus>
+      {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+    {% if not separate_password %}<p class="small muted">Use the same token as Android sync.</p>{% endif %}
+    <a class="small" href="{{ prefix }}/">Download the Android app ↗</a>
+  </main>
+</body>
+</html>

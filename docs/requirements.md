@@ -19,16 +19,24 @@
 - Explicit participation flag for each local file on each device. Disabled files are never downloaded over or uploaded. Persist sync metadata without restoring tabs.
 - Identical filenames and similar contents suggest an association. User confirms once; a permanent server document ID identifies future revisions, independent of filesystem paths.
 - First association chooses the local saved contents or the server contents. Server browsing can download to a user-chosen local document.
-- Sync on save, returning to the foreground, or manual request. Remain fully usable offline; expose pending and failure status.
+- Sync on save, returning to the foreground, manual request, and authenticated WebSocket change notifications while open. Remain fully usable offline; expose pending and failure status.
+- Android WorkManager persists periodic network-constrained background checks (15-minute interval, subject to Android scheduling) and offline retries with exponential backoff. Disable jobs when no files participate or no token is configured.
+- Close Android/browser WebSockets when no longer visible, reconnect with backoff, and reconcile on reconnect to recover missed events. File contents continue to transfer over HTTPS; notifications carry only a change cursor. No Firebase dependency.
 - Last-write-wins according to server acceptance order, with displaced contents retained as backups/revisions. Repeated attempts for one interrupted upload use the same idempotency key.
 - Never silently overwrite unsaved buffers. Defer remote replacement until edits have been saved or discarded.
+- The desktop browser editor can edit server documents directly. The saved-local-file requirement applies to Android clients.
 - Local deletion does not delete the server copy. Retain backups/revisions until manually removed. Previous server revisions can be restored by creating a new current revision.
 
-## Debian service, next
+## Debian service and desktop browser editor
 
 - Debian 13 on `git23069.hopto.org`; single user initially.
 - SQLite stores document contents, metadata, revision history, and upload receipts.
+- Server notifications are triggered after successful commits using a shared signal across server workers. No one-second SQLite polling; coalesce change hints so clients fetch the latest saved state. Worker exits and client reconnects trigger catch-up checks.
 - HTTPS with a server certificate signed using the existing CA under `/etc/ssl/nucbox3/nucbox3-ca` on the server. That is a server-side path; no CA private key belongs in the Android project.
 - Client devices already have the root CA installed. The Android APK includes explicit trust configuration for that host and uses a separately configured shared API token.
-- Initial client address uses port 8443 as a configurable development convention, pending actual service configuration.
-- The API contract is documented separately. No server installation, remote changes, or certificate generation has been performed as part of the Android implementation.
+- The download site uses the existing Apache HTTPS host under `/android_textpad/`; the editor is at `/android_textpad/editor/` and the sync endpoint is `https://git23069.hopto.org/android_textpad`.
+- Desktop/laptop browser UI, primarily Chrome, to browse, view, create, and edit server-side synced documents. It does not expose or browse Android device storage.
+- Browser editing includes tabs, unsaved indicators, save, undo/redo, find/replace, indentation, Unicode, line numbers, wrap/font preferences, and revision viewing/restoration.
+- Retain unsaved browser buffers when remote revisions arrive. Reload clean buffers, show changes elsewhere for dirty buffers, and retain displaced revisions when saving.
+- Single-user browser sign-in uses the configured shared API token unless a separate password is explicitly selected.
+- The API contract is documented separately. SQLite data and credentials remain outside the public deployment directory.

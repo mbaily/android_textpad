@@ -1,0 +1,16 @@
+{
+  "name": "textpad-desktop-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild editor.js --bundle --minify --format=esm --target=chrome110 --outfile=../textpad_server/static/editor.js --legal-comments=external"
+  },
+  "dependencies": {
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.14"
+  },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

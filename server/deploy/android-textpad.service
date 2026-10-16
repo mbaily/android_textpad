@@ -1,0 +1,26 @@
+[Unit]
+Description=Textpad sync API and desktop browser editor
+After=network.target
+
+[Service]
+Type=simple
+User=textpad
+Group=textpad
+WorkingDirectory=/opt/android_textpad/server
+EnvironmentFile=/etc/android-textpad/server.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/android_textpad/server/.venv/bin/gunicorn --config python:textpad_server.gunicorn_config --bind 127.0.0.1:8768 --workers 2 --threads 16 --timeout 120 --graceful-timeout 30 --error-logfile - textpad_server:create_app()
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=35
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/android-textpad
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

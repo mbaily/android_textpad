@@ -74,9 +74,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         if (state == null) handleIntent(getIntent());
     }
 
-    @Override protected void onStart() { super.onStart(); started = true; app.attach(this); scheduleAutosave(); app.sync.syncAll(false); }
+    @Override protected void onStart() { super.onStart(); started = true; app.attach(this); scheduleAutosave(); app.sync.setForeground(true); app.sync.syncAll(false); }
     @Override protected void onStop() {
-        saveViewState(); started = false; app.main.removeCallbacks(autosave); app.detach(this); super.onStop();
+        saveViewState(); started = false; app.main.removeCallbacks(autosave); app.sync.setForeground(false); app.detach(this); super.onStop();
     }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handleIntent(intent); }
     private void handleIntent(Intent intent) {
