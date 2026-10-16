@@ -14,6 +14,7 @@ final class EditorSettings {
     int fontSize() { return prefs.getInt("fontSize", 16); }
     String font() { return prefs.getString("font", "monospace"); }
     int indent() { return prefs.getInt("indent", 4); }
+    int dividerDashes() { return Math.max(1, Math.min(200, prefs.getInt("dividerDashes", 40))); }
     int autosaveSeconds() { return prefs.getInt("autosaveSeconds", 0); }
     void bool(String key, boolean value) { prefs.edit().putBoolean(key, value).apply(); }
 }

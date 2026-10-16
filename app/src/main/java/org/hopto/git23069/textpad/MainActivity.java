@@ -38,6 +38,7 @@ import android.widget.Toast;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
 import org.hopto.git23069.textpad.core.TextCodec;
 import java.util.ArrayList;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -55,7 +56,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, indentLessButton, indentMoreButton, bottomButton;
+    private Button saveButton, undoButton, redoButton, findButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, bottomButton;
     private EditorTab shownTab;
     private long shownState = -1;
     private boolean changing, started, dialogVisible;
@@ -154,10 +155,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         findButton = iconButton(Icon.FIND, TEXT, "Find and replace", v -> showFind());
         indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
+        todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
+        dateButton = iconButton(Icon.DATE, TEXT, "Insert date", v -> insertSnippet(LocalDate.now().toString()));
+        dividerButton = iconButton(Icon.DIVIDER, TEXT, "Insert dividing line", v -> insertDivider());
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
         toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(findButton);
-        toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton); toolbar.addView(bottomButton); toolbar.addView(saveButton);
+        toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
+        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton); toolbar.addView(bottomButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
         root.addView(status);
@@ -241,7 +246,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private void updateStatus() {
         EditorDocument doc = app.current();
         setButtonEnabled(undoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canUndo());
+        setButtonEnabled(todoButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(redoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canRedo());
+        setButtonEnabled(dateButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(dividerButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(findButton, doc != null);
         setButtonEnabled(indentLessButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(indentMoreButton, doc != null && doc.writable && !doc.replacing);
@@ -396,6 +404,49 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         editor.getText().replace(first, last, changed); editor.setSelection(first, first + changed.length());
     }
 
+    private void insertSnippet(String snippet) {
+        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        int start = Math.max(0, editor.getSelectionStart()), end = Math.max(start, editor.getSelectionEnd());
+        if (editor.length() - (end - start) + snippet.length() > TextCodec.MAX_BYTES) {
+            toast("Insertion would exceed the editor size limit."); return;
+        }
+        editor.requestFocus();
+        editor.getText().replace(start, end, snippet);
+        int cursor = start + snippet.length();
+        editor.setSelection(cursor);
+        if (editor.getLayout() != null) editor.bringPointIntoView(cursor);
+        saveViewState(); updateStatus();
+    }
+
+    private void insertDivider() {
+        insertSnippet("-".repeat(app.settings.dividerDashes()));
+    }
+
+    private void toggleTodo() {
+        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        int cursor = Math.max(0, editor.getSelectionStart());
+        String text = editor.getText().toString();
+        int lineStart = text.lastIndexOf('\n', Math.max(-1, cursor - 1)) + 1;
+        int lineEnd = text.indexOf('\n', lineStart);
+        if (lineEnd < 0) lineEnd = text.length();
+        if (lineEnd > lineStart && text.charAt(lineEnd - 1) == '\r') lineEnd--;
+        String line = text.substring(lineStart, lineEnd);
+        editor.requestFocus();
+        if (line.startsWith("[ ]")) {
+            editor.getText().replace(lineStart, lineStart + 3, "[X]");
+            editor.setSelection(Math.min(editor.length(), Math.max(lineStart + 3, cursor)));
+        } else if (line.startsWith("[X]") || line.startsWith("[x]")) {
+            int removeLen = line.length() > 3 && line.charAt(3) == ' ' ? 4 : 3;
+            editor.getText().replace(lineStart, lineStart + removeLen, "");
+            editor.setSelection(Math.min(editor.length(), Math.max(lineStart, cursor - removeLen)));
+        } else {
+            if (editor.length() + 4 > TextCodec.MAX_BYTES) { toast("Insertion would exceed the editor size limit."); return; }
+            editor.getText().insert(lineStart, "[ ] ");
+            editor.setSelection(Math.min(editor.length(), cursor + 4));
+        }
+        saveViewState(); updateStatus();
+    }
+
     private void goToBottom() {
         if (app.current() == null) return;
         int end = editor.length();
@@ -520,14 +571,23 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         });
         fields.addView(label("INDENTATION", 11, MUTED)); Spinner indent = spinner(new String[]{"Tab", "2 spaces", "4 spaces", "8 spaces"});
         int[] indents = {0,2,4,8}; for (int i = 0; i < indents.length; i++) if (indents[i] == app.settings.indent()) indent.setSelection(i); fields.addView(indent);
+        fields.addView(label("DIVIDING LINE DASHES", 11, MUTED));
+        EditText dashes = field("40");
+        dashes.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        dashes.setText(String.valueOf(app.settings.dividerDashes()));
+        fields.addView(dashes);
         fields.addView(label("AUTOSAVE WHILE EDITING", 11, MUTED)); Spinner autosaveSetting = spinner(EditorSettings.AUTOSAVE_LABELS);
         for (int i = 0; i < EditorSettings.AUTOSAVE_SECONDS.length; i++) if (EditorSettings.AUTOSAVE_SECONDS[i] == app.settings.autosaveSeconds()) autosaveSetting.setSelection(i);
         fields.addView(autosaveSetting);
         fields.addView(label("Autosave writes existing writable files. New documents use Save As. Tabs and unsaved edits do not survive process restarts.", 12, MUTED));
         ScrollView scroll = new ScrollView(this); scroll.addView(fields);
         new AlertDialog.Builder(this).setTitle("Editor settings").setView(scroll).setPositiveButton("Apply", (d, w) -> {
+            int dashCount = app.settings.dividerDashes();
+            try { dashCount = Math.max(1, Math.min(200, Integer.parseInt(dashes.getText().toString().trim()))); }
+            catch (NumberFormatException ignored) { }
             app.settings.prefs.edit().putString("font", EditorSettings.FONTS[font.getSelectedItemPosition()])
                     .putInt("fontSize", size.getProgress()).putInt("indent", indents[indent.getSelectedItemPosition()])
+                    .putInt("dividerDashes", dashCount)
                     .putInt("autosaveSeconds", EditorSettings.AUTOSAVE_SECONDS[autosaveSetting.getSelectedItemPosition()]).apply();
             applySettings();
         }).setNegativeButton("Cancel", null).show();
@@ -559,7 +619,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, INDENT_LESS, INDENT_MORE, BOTTOM, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, BOTTOM, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -643,6 +703,21 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         p.moveTo(ox + 4 * s, oy + 5 * s); p.lineTo(ox + 4 * s, oy + 19 * s);
                         p.moveTo(ox + 8 * s, oy + 12 * s); p.lineTo(ox + 19 * s, oy + 12 * s);
                         p.moveTo(ox + 15 * s, oy + 8 * s); p.lineTo(ox + 19 * s, oy + 12 * s); p.lineTo(ox + 15 * s, oy + 16 * s);
+                    }
+                    case TODO -> {
+                        canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 3 * s, ox + 21 * s, oy + 21 * s), 2 * s, 2 * s, strokePaint);
+                        p.moveTo(ox + 8.5f * s, oy + 12.5f * s); p.lineTo(ox + 11 * s, oy + 15 * s); p.lineTo(ox + 16 * s, oy + 9.5f * s);
+                    }
+                    case DATE -> {
+                        canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 5 * s, ox + 21 * s, oy + 21 * s), 2 * s, 2 * s, strokePaint);
+                        p.moveTo(ox + 8 * s, oy + 3 * s); p.lineTo(ox + 8 * s, oy + 7 * s);
+                        p.moveTo(ox + 16 * s, oy + 3 * s); p.lineTo(ox + 16 * s, oy + 7 * s);
+                        p.moveTo(ox + 3 * s, oy + 10 * s); p.lineTo(ox + 21 * s, oy + 10 * s);
+                    }
+                    case DIVIDER -> {
+                        p.moveTo(ox + 3 * s, oy + 12 * s); p.lineTo(ox + 7 * s, oy + 12 * s);
+                        p.moveTo(ox + 10 * s, oy + 12 * s); p.lineTo(ox + 14 * s, oy + 12 * s);
+                        p.moveTo(ox + 17 * s, oy + 12 * s); p.lineTo(ox + 21 * s, oy + 12 * s);
                     }
                     case BOTTOM -> {
                         p.moveTo(ox + 12 * s, oy + 4 * s); p.lineTo(ox + 12 * s, oy + 16 * s);

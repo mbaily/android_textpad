@@ -11,7 +11,7 @@ const nonce = document.querySelector('meta[name="csp-nonce"]').content;
 const documents = new Map();
 let active = null, viewDocument = null, files = [], opening = null, polling = false, refreshAgain = false, selectedRevision = null, historyDocument = null;
 let events = null, eventsReady = false, reconnectTimer = null, reconnectAttempts = 0, apiOnline = false;
-let preferences = {wrap:true, lines:true, fontSize:15, font:"mono"};
+let preferences = {wrap:true, lines:true, fontSize:15, font:"mono", dividerDashes:40};
 try { preferences = {...preferences,...JSON.parse(localStorage.getItem("textpad.editor.preferences") || "{}")}; } catch {}
 let sidebarCollapsed = false;
 try { sidebarCollapsed = localStorage.getItem("textpad.editor.sidebarCollapsed") === "true"; } catch {}
@@ -186,7 +186,7 @@ function renderFiles() {
 }
 function updateStatus() {
   const doc=activeDocument();
-  for(const name of ["save","find","indent-less","indent-more","go-bottom","reload","download","history","encoding-status"]) $(name).disabled=!doc;
+  for(const name of ["save","find","indent-less","indent-more","toggle-todo","insert-date","insert-divider","go-bottom","reload","download","history","encoding-status"]) $(name).disabled=!doc;
   $("undo").disabled=!doc || !undoDepth(view.state);$("redo").disabled=!doc || !redoDepth(view.state);
   $("save").disabled=!doc || doc.saving;$("reload").disabled=!doc || doc.revision===null || doc.saving;
   $("download").disabled=!doc || doc.revision===null;$("history").disabled=!doc || doc.revision===null;
@@ -309,6 +309,7 @@ function setSidebarCollapsed(collapsed) {
 }
 function applyPreferences() {
   preferences.fontSize=Math.min(30,Math.max(10,Number(preferences.fontSize)||15));
+  preferences.dividerDashes=Math.min(200,Math.max(1,Math.trunc(Number(preferences.dividerDashes))||40));
   document.documentElement.style.setProperty("--font-size",`${preferences.fontSize}px`);
   document.documentElement.style.setProperty("--editor-font",fonts[preferences.font]||fonts.mono);
   const effects=()=>[wrap.reconfigure(preferences.wrap?EditorView.lineWrapping:[]),gutters.reconfigure(preferences.lines?lineNumbers():[])];
@@ -322,14 +323,41 @@ async function settings() {
   size.setAttribute("aria-label","Font size");
   const font=element("select");for(const [value,label] of [["mono","Monospace"],["sans","Sans serif"],["serif","Serif"]]) {const option=element("option",label);option.value=value;font.append(option);}font.value=preferences.font;
   font.setAttribute("aria-label","Font");
+  const dashes=element("input");dashes.type="number";dashes.min=1;dashes.max=200;dashes.value=preferences.dividerDashes;
+  dashes.setAttribute("aria-label","Dividing line dashes");
   const wrapping=element("input");wrapping.type="checkbox";wrapping.checked=preferences.wrap;
   const numbers=element("input");numbers.type="checkbox";numbers.checked=preferences.lines;
   if(await modal("Editor settings",body=>{
-    body.append(element("label","Font"),font,element("label","Font size"),size);
+    body.append(element("label","Font"),font,element("label","Font size"),size,element("label","Dividing line dashes"),dashes);
     for(const [input,text] of [[wrapping,"Word wrap"],[numbers,"Line numbers"]]) {const label=element("label",undefined,"inline");label.append(input,document.createTextNode(text));body.append(label);}
   },[{label:"Cancel",value:false},{label:"Apply",value:true,primary:true}])) {
-    preferences={font:font.value,fontSize:Number(size.value),wrap:wrapping.checked,lines:numbers.checked};applyPreferences();
+    preferences={font:font.value,fontSize:Number(size.value),dividerDashes:Number(dashes.value),wrap:wrapping.checked,lines:numbers.checked};applyPreferences();
   }
+}
+function insertSnippet(snippet) {
+  if(!activeDocument()) return;
+  const sel=view.state.selection.main;
+  view.dispatch({changes:{from:sel.from,to:sel.to,insert:snippet},selection:{anchor:sel.from+snippet.length},scrollIntoView:true});
+  view.focus();
+}
+function currentDateString() {
+  const now=new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+}
+function toggleTodo() {
+  if(!activeDocument()) return;
+  const sel=view.state.selection.main, line=view.state.doc.lineAt(sel.head), text=line.text;
+  let from=line.from, to=line.from, insert="", nextHead=sel.head;
+  if(text.startsWith("[ ]")) {
+    to=line.from+3; insert="[X]"; nextHead=Math.max(line.from+3,sel.head);
+  } else if(text.startsWith("[X]") || text.startsWith("[x]")) {
+    const removeLen=text.startsWith("[X] ") || text.startsWith("[x] ") ? 4 : 3;
+    to=line.from+removeLen; nextHead=Math.max(line.from,sel.head-removeLen);
+  } else {
+    insert="[ ] "; nextHead=sel.head+4;
+  }
+  view.dispatch({changes:{from,to,insert},selection:{anchor:nextHead,head:nextHead},scrollIntoView:true});
+  view.focus();
 }
 async function connectAndroid() {
   const info=await api("/connection");
@@ -349,6 +377,9 @@ $("sidebar-toggle").onclick=()=>setSidebarCollapsed(!sidebarCollapsed);
 $("save").onclick=()=>save().catch(failure);$("refresh").onclick=()=>refreshFiles().catch(failure);
 $("undo").onclick=()=>{undo(view);view.focus();};$("redo").onclick=()=>{redo(view);view.focus();};
 $("find").onclick=()=>openSearchPanel(view);$("indent-more").onclick=()=>{indentMore(view);view.focus();};$("indent-less").onclick=()=>{indentLess(view);view.focus();};
+$("toggle-todo").onclick=toggleTodo;
+$("insert-date").onclick=()=>insertSnippet(currentDateString());
+$("insert-divider").onclick=()=>insertSnippet("-".repeat(preferences.dividerDashes));
 $("go-bottom").onclick=()=>{const doc=activeDocument();if(!doc)return;const end=view.state.doc.length;view.dispatch({selection:{anchor:end,head:end},scrollIntoView:true});view.focus();};
 $("reload").onclick=()=>reloadFile().catch(failure);$("reload-remote").onclick=()=>reloadFile().catch(failure);
 $("history").onclick=showHistory;$("close-history").onclick=closeHistory;$("restore-revision").onclick=()=>restoreRevision().catch(failure);

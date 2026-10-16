@@ -101,6 +101,21 @@ public class EditorInstrumentedTest {
                 editor.setSelection(0); assertEquals(0,editor.getSelectionStart());
                 button(activity.getWindow().getDecorView(),"Go to bottom of file").performClick();
                 assertEquals(editor.length(),editor.getSelectionStart()); assertEquals(editor.length(),editor.getSelectionEnd());
+                app.settings.prefs.edit().putInt("dividerDashes", 12).commit();
+                editor.getText().append("\n");
+                button(activity.getWindow().getDecorView(),"Insert date").performClick();
+                assertTrue(editor.getText().toString().endsWith(java.time.LocalDate.now().toString()));
+                editor.getText().append("\n");
+                button(activity.getWindow().getDecorView(),"Insert dividing line").performClick();
+                assertTrue(editor.getText().toString().endsWith("\n------------"));
+                editor.getText().append("\ntask item");
+                editor.setSelection(editor.length());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertTrue(editor.getText().toString().endsWith("\n[ ] task item"));
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertTrue(editor.getText().toString().endsWith("\n[X] task item"));
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertTrue(editor.getText().toString().endsWith("\ntask item"));
             });
         }
     }
