@@ -1,0 +1,68 @@
+Web Editor Keyboard Shortcuts
+=============================
+
+Note: On macOS, "Ctrl" in "Mod" shortcuts below maps to "Cmd" unless noted otherwise.
+
+Application Shortcuts (App.svelte)
+----------------------------------
+- Ctrl+S (Cmd+S)         : Save the active document (works anywhere in the window or editor)
+- Ctrl+F (Cmd+F)         : Open "Find in file" dialog for the active document
+- Ctrl+Shift+F (Cmd+Shift+F) : Open "Find in open files" dialog
+- Alt+R                  : Toggle read-only mode on and off (Note: Ctrl+R is avoided because browsers use it to reload the page)
+
+Find Dialog Shortcuts (when Find input is focused)
+--------------------------------------------------
+- Enter                  : Jump to next match
+- Shift+Enter            : Jump to previous match
+- Escape                 : Close the Find dialog and return focus to the editor
+
+Modal Dialog Shortcuts
+----------------------
+- Enter                  : Submit / confirm primary action (in form inputs)
+- Escape                 : Cancel / close modal dialog
+
+Editor Undo / Redo (CodeMirror historyKeymap)
+---------------------------------------------
+- Ctrl+Z (Cmd+Z)         : Undo text edit
+- Ctrl+Y                 : Redo text edit (Windows / Linux)
+- Ctrl+Shift+Z (Cmd+Shift+Z) : Redo text edit (Linux / macOS)
+- Ctrl+U (Cmd+U)         : Undo selection change
+- Alt+U (Cmd+Shift+U)    : Redo selection change
+
+Indentation & Line Manipulation (CodeMirror indentWithTab & defaultKeymap)
+--------------------------------------------------------------------------
+- Tab                    : Increase indentation (indentMore)
+- Shift+Tab              : Decrease indentation (indentLess)
+- Ctrl+] (Cmd+])         : Increase indentation (indentMore)
+- Ctrl+[ (Cmd+[)         : Decrease indentation (indentLess)
+- Ctrl+Alt+\ (Cmd+Alt+\) : Auto-indent selection (indentSelection)
+- Alt+ArrowUp            : Move line(s) up (moveLineUp)
+- Alt+ArrowDown          : Move line(s) down (moveLineDown)
+- Shift+Alt+ArrowUp      : Copy line(s) up (copyLineUp)
+- Shift+Alt+ArrowDown    : Copy line(s) down (copyLineDown)
+- Ctrl+Shift+K (Cmd+Shift+K) : Delete line (deleteLine)
+- Ctrl+Enter (Cmd+Enter) : Insert blank line below (insertBlankLine)
+- Enter / Shift+Enter    : Insert newline and auto-indent
+
+Selection & Multi-Cursor (CodeMirror defaultKeymap & rectangularSelection)
+--------------------------------------------------------------------------
+- Ctrl+A (Cmd+A)         : Select all
+- Alt+L (Ctrl+L on macOS): Select current line
+- Ctrl+Alt+ArrowUp (Cmd+Alt+ArrowUp)     : Add cursor above
+- Ctrl+Alt+ArrowDown (Cmd+Alt+ArrowDown) : Add cursor below
+- Alt+Mouse Drag         : Rectangular (column/box) selection
+- Escape                 : Collapse multiple selections/cursors to a single cursor
+- Ctrl+Shift+\ (Cmd+Shift+\) : Jump to matching bracket
+- Ctrl+I (Cmd+I)         : Select parent syntax node
+- Ctrl+M (Shift+Alt+M on macOS) : Toggle Tab focus mode (makes Tab move focus instead of indenting)
+
+Navigation & Deletion (CodeMirror standardKeymap)
+-------------------------------------------------
+- Arrow keys             : Move cursor (hold Shift to extend selection)
+- Ctrl+ArrowLeft / Right (Alt+Arrow on macOS) : Move by word/group (hold Shift to select)
+- Home / End             : Move to start / end of line (hold Shift to select)
+- Ctrl+Home / End (Cmd+ArrowUp / Down on macOS) : Move to start / end of document (hold Shift to select)
+- PageUp / PageDown      : Move up / down by page (hold Shift to select)
+- Backspace / Delete     : Delete character backward / forward
+- Ctrl+Backspace (Alt+Backspace on macOS) : Delete word/group backward
+- Ctrl+Delete (Alt+Delete on macOS)       : Delete word/group forward

@@ -313,6 +313,13 @@
               return true;
             },
           },
+          {
+            key: "Alt-r",
+            run: () => {
+              toggleReadOnly();
+              return true;
+            },
+          },
           ...historyKeymap,
           indentWithTab,
           ...defaultKeymap,
@@ -1201,6 +1208,11 @@
           event.preventDefault();
           openFind(event.shiftKey);
         }
+      } else if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.code === "KeyR") {
+        if (activeDoc) {
+          event.preventDefault();
+          toggleReadOnly();
+        }
       }
     };
     const onOnline = () => {
@@ -1354,7 +1366,7 @@
       </button>
       <button id="redo" class="icon-button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!activeDoc || readOnly || !canRedo} onclick={() => { redo(view); view.focus(); syncEditorMetrics(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 9H10a5 5 0 0 0 0 10h5"/><polyline points="17 5 21 9 17 13"/></svg>
-      </button>
+      </button> (Alt+R)" : "Enable read-only mode (Alt+R)
       <span class="toolbar-divider"></span>
       <button id="go-bottom" class="icon-button" title="Go to bottom of file" aria-label="Go to bottom of file" disabled={!activeDoc} onclick={goToBottom}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>
