@@ -151,10 +151,15 @@ def main():
         expect(page.locator('#file-sidebar')).to_be_visible()
         expect(page.locator('#sidebar-toggle')).to_have_attribute('aria-expanded','true')
         expect(page.locator('#sidebar-toggle')).to_have_attribute('aria-label','Hide sidebar')
-        # Mobile viewport adapts without horizontal page overflow and auto-closes overlay sidebar on file selection.
+        # Mobile viewport adapts without horizontal page overflow and allows closing the overlay sidebar via its close button, backdrop, or file selection.
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-        page.locator('.file-item').filter(has_text='Notes.txt').click()
+        expect(page.locator('#sidebar-close')).to_be_visible()
+        page.locator('#sidebar-close').click()
+        expect(page.locator('#file-sidebar')).to_be_hidden()
+        page.locator('#sidebar-toggle').click()
+        expect(page.locator('#file-sidebar')).to_be_visible()
+        page.locator('.sidebar-backdrop').click(position={'x':350,'y':200})
         expect(page.locator('#file-sidebar')).to_be_hidden()
         page.locator('#sidebar-toggle').click()
         expect(page.locator('#file-sidebar')).to_be_visible()

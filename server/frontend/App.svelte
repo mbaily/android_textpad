@@ -1088,7 +1088,17 @@
     ></button>
   {/if}
   <aside id="file-sidebar" class="sidebar" aria-label="Synced files" hidden={sidebarCollapsed}>
-    <a class="brand" href="{prefix}/"><span class="brand-mark" aria-hidden="true">T_</span> Textpad <span class="edition">WEB</span></a>
+    <div class="sidebar-top">
+      <a class="brand" href="{prefix}/"><span class="brand-mark" aria-hidden="true">T_</span> Textpad <span class="edition">WEB</span></a>
+      <button
+        id="sidebar-close"
+        type="button"
+        class="icon-button sidebar-close"
+        aria-label="Hide sidebar"
+        title="Hide sidebar"
+        onclick={() => setSidebarCollapsed(true)}
+      >×</button>
+    </div>
     <div class="sidebar-heading">
       <h1>Synced files <span id="file-count">{files.length}</span></h1>
       <button id="new-file" class="icon-button" title="New server file" aria-label="New server file" onclick={newFile}>+</button>
