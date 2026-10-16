@@ -47,6 +47,7 @@
   let historyRevisions = $state([]);
   let selectedRevision = $state(null);
   let previewText = $state("");
+  let fullscreenRevision = $state(false);
 
   let editorHost = $state(null);
   let dialogEl = $state(null);
@@ -976,6 +977,7 @@
     historyRevisions = [];
     selectedRevision = null;
     previewText = "";
+    fullscreenRevision = false;
   }
 
   async function showHistory() {
@@ -984,6 +986,7 @@
     historyDocument = doc.id;
     selectedRevision = null;
     previewText = "";
+    fullscreenRevision = false;
     historyRevisions = [];
     try {
       const result = await api(`/documents/${doc.id}/revisions`);
@@ -1062,6 +1065,7 @@
       if (historyDocument === doc.id) {
         historyRevisions = result.documents;
         if (selectedRevision && !historyRevisions.some((r) => r.revision === selectedRevision.revision)) {
+          fullscreenRevision = false;
           selectedRevision = null;
           previewText = "";
         }
@@ -1546,7 +1550,10 @@
       }
     };
     const onKeyDown = (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      if (event.key === "Escape" && fullscreenRevision) {
+        event.preventDefault();
+        fullscreenRevision = false;
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         save().catch(failure);
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
@@ -1873,10 +1880,26 @@
         </button>
       {/each}
     </div>
-    <div id="revision-preview" class="revision-preview" class:hidden={!selectedRevision}>
+    <div id="revision-preview" class="revision-preview" class:fullscreen={fullscreenRevision} class:hidden={!selectedRevision}>
       <div class="revision-actions">
         <span id="preview-label">{selectedRevision ? `Revision ${selectedRevision.revision}` : ""}</span>
         <div>
+          <button
+            id="fullscreen-revision"
+            class="icon-button"
+            class:active={fullscreenRevision}
+            aria-pressed={String(fullscreenRevision)}
+            title={fullscreenRevision ? "Exit full screen" : "View full screen"}
+            aria-label={fullscreenRevision ? "Exit full screen" : "View full screen"}
+            disabled={!selectedRevision}
+            onclick={() => (fullscreenRevision = !fullscreenRevision)}
+          >
+            {#if fullscreenRevision}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            {:else}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            {/if}
+          </button>
           <button
             id="download-revision"
             class="icon-button"

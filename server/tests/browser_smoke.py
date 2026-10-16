@@ -88,6 +88,12 @@ def main():
         page.locator('#save').click();expect(page.locator('#save-status')).to_have_text('Saved')
         page.locator('#history').click();page.locator('.history-row').last.click()
         expect(page.locator('#preview-text')).to_contain_text('Textpad desktop editor')
+        expect(page.locator('#fullscreen-revision')).to_have_attribute('aria-pressed','false')
+        page.locator('#fullscreen-revision').click()
+        expect(page.locator('#fullscreen-revision')).to_have_attribute('aria-pressed','true')
+        expect(page.locator('#revision-preview')).to_have_class(re.compile(r'\bfullscreen\b'))
+        page.keyboard.press('Escape')
+        expect(page.locator('#fullscreen-revision')).to_have_attribute('aria-pressed','false')
         with page.expect_download() as rev_event:page.locator('#download-revision').click()
         rev_download=rev_event.value;assert rev_download.suggested_filename=='Notes.txt'
         assert b'Textpad desktop editor\r\n' in Path(rev_download.path()).read_bytes()

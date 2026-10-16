@@ -1,9 +1,14 @@
 package org.hopto.git23069.textpad;
 
 import android.app.AlertDialog;
+import android.app.Dialog;
+import android.graphics.Typeface;
 import android.text.InputType;
+import android.view.Gravity;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import org.hopto.git23069.textpad.core.ContentSimilarity;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
@@ -147,18 +152,66 @@ final class SyncUi {
         new AlertDialog.Builder(activity).setTitle("Revisions · "+document.name()).setItems(revisions.stream()
                 .map(r -> "Revision "+r.revision()+" · "+r.size()+" bytes").toArray(String[]::new),(d,i) -> {
             RemoteApi.Remote revision=revisions.get(i);
-            new AlertDialog.Builder(activity).setTitle("Revision "+revision.revision())
-                    .setMessage("Download this revision to a local file, or restore it as the latest server revision while keeping the current version in history.")
-                    .setPositiveButton("Restore on server",(dialog,w) -> request(api -> {
-                        var old=api.revision(document.id(),revision.revision());
-                        return api.put(document.id(),old.name(),old.content(),document.revision(),UUID.randomUUID().toString());
-                    },restored -> app.sync.syncAll(true)))
-                    .setNeutralButton("Download…",(dialog,w) -> request(api -> api.revision(document.id(),revision.revision()),r -> download(r,false)))
-                    .setNegativeButton("Cancel",null).show();
+            new AlertDialog.Builder(activity).setTitle("Revision "+revision.revision()).setItems(
+                    new String[]{"View full screen…","Download to a local file…","Restore on server…"},(dialog,which) -> {
+                        switch(which) {
+                            case 0 -> request(api -> api.revision(document.id(),revision.revision()),r -> showFullScreenRevision(document,r));
+                            case 1 -> request(api -> api.revision(document.id(),revision.revision()),r -> download(r,false));
+                            case 2 -> confirmRestore(document,revision,null);
+                        }
+                    }).setNegativeButton("Cancel",null).show();
         }).setNeutralButton("Prune",(d,w) -> request(api -> api.prune(document.id()),remaining -> {
             int removed=Math.max(0,revisions.size()-remaining.size());
             app.notice("Revisions",removed > 0 ? "Pruned "+removed+" older revision"+(removed == 1 ? "." : "s.") : "No revisions needed pruning.");
         })).setNegativeButton("Close",null).show();
+    }
+
+    private void confirmRestore(RemoteApi.Remote document,RemoteApi.Remote revision,Dialog parent) {
+        new AlertDialog.Builder(activity).setTitle("Restore revision "+revision.revision()+"?")
+                .setMessage("This creates a new server revision containing the older text. The current version remains in history.")
+                .setPositiveButton("Restore on server",(dialog,w) -> {
+                    if(parent != null) parent.dismiss();
+                    request(api -> {
+                        var old=revision.content() != null ? revision : api.revision(document.id(),revision.revision());
+                        return api.put(document.id(),old.name(),old.content(),document.revision(),UUID.randomUUID().toString());
+                    },restored -> app.sync.syncAll(true));
+                })
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    private void showFullScreenRevision(RemoteApi.Remote document,RemoteApi.Remote revision) {
+        final String text;
+        try { text=TextCodec.decode(revision.content()).text(); }
+        catch(Exception e) { app.notice("Could not view revision",SyncManager.message(e)); return; }
+        Dialog dialog=new Dialog(activity,android.R.style.Theme_DeviceDefault_NoActionBar);
+        float density=activity.getResources().getDisplayMetrics().density;
+        int pad=Math.round(16*density);
+        LinearLayout root=new LinearLayout(activity); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(0xff101313);
+        LinearLayout header=new LinearLayout(activity); header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(pad,pad,pad,pad); header.setBackgroundColor(0xff19201d);
+        TextView title=new TextView(activity); title.setText(document.name()+" · Revision "+revision.revision());
+        title.setTextColor(0xffe3e8df); title.setTextSize(15); title.setSingleLine(true);
+        header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        Button downloadBtn=new Button(activity); downloadBtn.setText("Download"); downloadBtn.setAllCaps(false);
+        downloadBtn.setOnClickListener(v -> { dialog.dismiss(); download(revision,false); });
+        header.addView(downloadBtn);
+        if(!revision.revision().equals(document.revision())) {
+            Button restoreBtn=new Button(activity); restoreBtn.setText("Restore"); restoreBtn.setAllCaps(false);
+            restoreBtn.setOnClickListener(v -> confirmRestore(document,revision,dialog));
+            header.addView(restoreBtn);
+        }
+        Button closeBtn=new Button(activity); closeBtn.setText("Close"); closeBtn.setAllCaps(false);
+        closeBtn.setOnClickListener(v -> dialog.dismiss());
+        header.addView(closeBtn);
+        root.addView(header,new LinearLayout.LayoutParams(-1,-2));
+        ScrollView scroll=new ScrollView(activity); scroll.setFillViewport(true);
+        TextView body=new TextView(activity); body.setText(text); body.setTextColor(0xffe3e8df);
+        body.setTextSize(app.settings.fontSize()); body.setTypeface(Typeface.MONOSPACE);
+        body.setPadding(pad,pad,pad,pad); body.setTextIsSelectable(true);
+        scroll.addView(body,new LinearLayout.LayoutParams(-1,-2));
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        dialog.setContentView(root);
+        dialog.show();
     }
 
     private interface Query<T> { T run(RemoteApi api) throws Exception; }
