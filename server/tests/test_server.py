@@ -89,6 +89,49 @@ class StoreTests(unittest.TestCase):
         self.assertNotIn("content",self.store.list()[0])
         self.assertNotIn("content",self.store.revisions("test-file")[0])
 
+    def test_hybrid_pruning_thins_old_revisions_exponentially_and_protects_conflicts(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 10, 16, 12, 0, 0, tzinfo=timezone.utc)
+        base_rev = None
+        revs = []
+        for i in range(30):
+            res = self.put(f"content-{i}", f"req-{i}", base_rev)
+            revs.append(res)
+            base_rev = res["revision"]
+        # Create one conflict revision (displaced by an offline write based on an older revision)
+        conflict_victim = revs[5]["revision"]
+        with closing(self.store.connect()) as db:
+            # Backdate all 30 revisions to 5 days ago within the same hour so time-bucketing groups them together,
+            # except make revision 5 a displaced conflict victim in receipts.
+            old_iso = (now - timedelta(days=5)).isoformat(timespec="microseconds")
+            db.execute("UPDATE revisions SET created_at=?", (old_iso,))
+            conflict_receipt = {
+                "id": "test-file",
+                "name": "notes.txt",
+                "revision": revs[6]["revision"],
+                "previous_revision": conflict_victim,
+                "replaced_newer_revision": True,
+                "updated_at": (now - timedelta(days=2)).isoformat(timespec="microseconds"),
+            }
+            db.execute(
+                "UPDATE receipts SET response=? WHERE document_id='test-file' AND request_id='req-6'",
+                (sqlite3. Binary(b"") if False else __import__("json").dumps(conflict_receipt),),
+            )
+            db.commit()
+        removed = self.store.prune("test-file", now=now.timestamp())
+        self.assertGreaterEqual(removed, 9)
+        remaining = [r["revision"] for r in self.store.revisions("test-file")]
+        # Most recent 10 revisions are all kept
+        for r in revs[-10:]:
+            self.assertIn(r["revision"], remaining)
+        # Very first revision is always kept
+        self.assertIn(revs[0]["revision"], remaining)
+        # Displaced conflict revision is protected
+        self.assertIn(conflict_victim, remaining)
+        # Receipts survive pruning
+        for i in range(30):
+            self.assertTrue(self.store.has_receipt("test-file", f"req-{i}"))
+
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
@@ -164,6 +207,12 @@ class ApiTests(unittest.TestCase):
         download=self.client.get("/editor/api/documents/test-file/download")
         self.assertEqual(raw,download.data);self.assertIn("attachment",download.headers["Content-Disposition"])
         self.assertEqual(3,len(self.app.extensions["store"].revisions("test-file")))
+        prune_api=self.client.post("/api/v1/documents/test-file/prune",headers=self.headers)
+        self.assertEqual(200,prune_api.status_code)
+        self.assertEqual(0,prune_api.json["removed"])
+        prune_web=self.client.post("/editor/api/documents/test-file/prune",headers={"X-CSRF-Token":self.csrf})
+        self.assertEqual(200,prune_web.status_code)
+        self.assertEqual(3,len(prune_web.json["documents"]))
 
     def test_limits_binary_invalid_base64_and_names(self):
         self.assertEqual(400,self.upload(b"a"*(MAX_BYTES+1)).status_code)

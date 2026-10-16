@@ -10,4 +10,5 @@ interface RemoteApi {
     Remote put(String id, String name, byte[] bytes, String baseRevision, String requestId) throws IOException;
     List<Remote> revisions(String id) throws IOException;
     Remote revision(String id, String revision) throws IOException;
+    default List<Remote> prune(String id) throws IOException { return revisions(id); }
 }

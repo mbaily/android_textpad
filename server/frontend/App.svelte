@@ -695,6 +695,28 @@
     }
   }
 
+  async function pruneHistory() {
+    const doc = activeDoc;
+    if (!doc?.revision) return;
+    try {
+      const result = await api(`/documents/${doc.id}/prune`, { method: "POST", body: "{}" });
+      if (historyDocument === doc.id) {
+        historyRevisions = result.documents;
+        if (selectedRevision && !historyRevisions.some((r) => r.revision === selectedRevision.revision)) {
+          selectedRevision = null;
+          previewText = "";
+        }
+      }
+      notice(
+        result.removed > 0
+          ? `Pruned ${result.removed} older revision${result.removed === 1 ? "" : "s"}.`
+          : "No revisions needed pruning."
+      );
+    } catch (error) {
+      failure(error);
+    }
+  }
+
   async function renameFile() {
     const doc = activeDoc;
     if (!doc || doc.saving) return;
@@ -1369,9 +1391,14 @@
   <aside id="history-panel" class="history-panel" class:hidden={!historyDocument} aria-label="Revision history">
     <div class="history-heading">
       <h2>History</h2>
-      <button id="close-history" class="icon-button" aria-label="Close history" onclick={closeHistory}>×</button>
+      <div>
+        <button id="prune-history" class="icon-button" title="Prune old revisions" aria-label="Prune old revisions" onclick={pruneHistory}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+        <button id="close-history" class="icon-button" aria-label="Close history" onclick={closeHistory}>×</button>
+      </div>
     </div>
-    <p class="small muted">Older saved versions stay here.</p>
+    <p class="small muted">Recent versions are kept; older history is thinned exponentially.</p>
     <div id="history-list" class="history-list">
       {#each historyRevisions as revision (revision.revision)}
         <button

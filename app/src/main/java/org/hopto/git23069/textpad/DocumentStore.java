@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import org.hopto.git23069.textpad.core.RevisionPruner;
 import org.hopto.git23069.textpad.core.SaveTransaction;
 import org.hopto.git23069.textpad.core.TextCodec;
 import org.json.JSONArray;
@@ -23,14 +24,16 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 final class DocumentStore {
     record Info(String name, boolean writable) {}
     record Recent(String name, Uri uri) {}
-    record Backup(String name, File content, File metadata, String originalName, String originalUri) {}
+    record Backup(String name, File content, File metadata, String originalName, String originalUri, long created) {}
     private final Context context;
     private final ContentResolver resolver;
     DocumentStore(Context context) { this.context = context; resolver = context.getContentResolver(); }
@@ -100,16 +103,44 @@ final class DocumentStore {
     void backup(Uri uri, String name, byte[] bytes) throws IOException {
         File folder = new File(context.getFilesDir(), "backups");
         if (!folder.isDirectory() && !folder.mkdirs()) throw new IOException("Could not create the backups directory.");
-        String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ROOT).format(new Date());
+        long now = System.currentTimeMillis();
+        String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ROOT).format(new Date(now));
         String id = stamp + "-" + UUID.randomUUID().toString().substring(0, 8);
         File content = new File(folder, id + ".bin"), metadata = new File(folder, id + ".json");
         try (FileOutputStream out = new FileOutputStream(content)) { out.write(bytes); out.getFD().sync(); }
         try {
-            JSONObject json = new JSONObject().put("name", name).put("uri", uri.toString()).put("created", System.currentTimeMillis());
+            JSONObject json = new JSONObject().put("name", name).put("uri", uri.toString()).put("created", now);
             try (FileOutputStream out = new FileOutputStream(metadata)) {
                 out.write(json.toString().getBytes(StandardCharsets.UTF_8)); out.getFD().sync();
             }
         } catch (JSONException e) { throw new IOException("Could not write backup metadata.", e); }
+        pruneBackups(uri, now);
+    }
+
+    int pruneBackups(Uri targetUri, long nowMillis) throws IOException {
+        List<Backup> all = backups();
+        Map<String, List<Backup>> byUri = new LinkedHashMap<>();
+        String filterKey = targetUri == null ? null : identity(targetUri);
+        for (Backup b : all) {
+            String groupKey;
+            try { groupKey = identity(Uri.parse(b.originalUri)); }
+            catch (Exception e) { groupKey = b.originalUri; }
+            if (filterKey != null && !filterKey.equals(groupKey)) continue;
+            byUri.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(b);
+        }
+        int removed = 0;
+        for (List<Backup> group : byUri.values()) {
+            if (group.size() <= RevisionPruner.RECENT_KEEP_COUNT) continue;
+            long[] timestamps = new long[group.size()];
+            for (int i = 0; i < group.size(); i++) timestamps[i] = group.get(i).created;
+            for (int idx : RevisionPruner.selectPrunedIndices(timestamps, nowMillis)) {
+                Backup victim = group.get(idx);
+                Files.deleteIfExists(victim.metadata.toPath());
+                Files.deleteIfExists(victim.content.toPath());
+                removed++;
+            }
+        }
+        return removed;
     }
 
     List<Backup> backups() throws IOException {
@@ -123,7 +154,7 @@ final class DocumentStore {
                 JSONObject json = new JSONObject(new String(Files.readAllBytes(metadata.toPath()), StandardCharsets.UTF_8));
                 File content = new File(folder, metadata.getName().replace(".json", ".bin"));
                 if (content.isFile()) result.add(new Backup(metadata.getName().substring(0, 19) + "  ·  " + json.getString("name"),
-                        content, metadata, json.getString("name"), json.getString("uri")));
+                        content, metadata, json.getString("name"), json.getString("uri"), json.optLong("created", metadata.lastModified())));
             } catch (JSONException ignored) { /* One invalid entry must not hide the other backups. */ }
         }
         return result;

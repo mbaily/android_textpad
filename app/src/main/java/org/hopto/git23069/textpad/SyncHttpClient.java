@@ -30,6 +30,7 @@ final class SyncHttpClient implements RemoteApi {
     @Override public Remote get(String id) throws IOException { return remote(request("GET",path(id),null),true); }
     @Override public List<Remote> revisions(String id) throws IOException { return array(request("GET",path(id)+"/revisions",null)); }
     @Override public Remote revision(String id, String rev) throws IOException { return remote(request("GET",path(id)+"/revisions/"+segment(rev),null),true); }
+    @Override public List<Remote> prune(String id) throws IOException { return array(request("POST",path(id)+"/prune",new JSONObject())); }
     @Override public Remote put(String id, String name, byte[] bytes, String baseRevision, String requestId) throws IOException {
         try {
             JSONObject body = new JSONObject().put("name",name).put("content_base64",Base64.encodeToString(bytes,Base64.NO_WRAP))

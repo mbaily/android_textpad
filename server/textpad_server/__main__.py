@@ -15,6 +15,8 @@ def main():
     remove = sub.add_parser("remove-revision")
     remove.add_argument("document_id")
     remove.add_argument("revision")
+    prune = sub.add_parser("prune")
+    prune.add_argument("document_id", nargs="?")
     args = parser.parse_args()
     store = Store(os.environ.get("TEXTPAD_DATABASE", "/var/lib/android-textpad/textpad.sqlite3"))
     if args.command == "backup":
@@ -25,6 +27,9 @@ def main():
     elif args.command == "remove-revision":
         store.remove_revision(args.document_id,args.revision)
         print("Removed historical revision; upload receipt retained.")
+    elif args.command == "prune":
+        removed = store.prune(args.document_id)
+        print(f"Pruned {removed} historical revision(s); upload receipts retained.")
     else:
         print("Database initialized.")
 

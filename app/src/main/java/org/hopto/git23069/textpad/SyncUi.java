@@ -138,19 +138,23 @@ final class SyncUi {
         } catch(Exception e) { app.notice("Could not download",SyncManager.message(e)); }
     }
     private void history(RemoteApi.Remote document) {
-        request(api -> api.revisions(document.id()),revisions -> {
-            new AlertDialog.Builder(activity).setTitle("Revisions · "+document.name()).setItems(revisions.stream()
-                    .map(r -> "Revision "+r.revision()+" · "+r.size()+" bytes").toArray(String[]::new),(d,i) -> {
-                RemoteApi.Remote revision=revisions.get(i);
-                new AlertDialog.Builder(activity).setTitle("Restore revision "+revision.revision()+"?")
-                        .setMessage("This creates a new server revision containing the older text. The current version remains in history.")
-                        .setPositiveButton("Restore on server",(dialog,w) -> request(api -> {
-                            var old=api.revision(document.id(),revision.revision());
-                            return api.put(document.id(),old.name(),old.content(),document.revision(),UUID.randomUUID().toString());
-                        },restored -> app.sync.syncAll(true)))
-                        .setNegativeButton("Cancel",null).show();
-            }).setNegativeButton("Close",null).show();
-        });
+        request(api -> api.revisions(document.id()),revisions -> showRevisionsDialog(document,revisions));
+    }
+    private void showRevisionsDialog(RemoteApi.Remote document,List<RemoteApi.Remote> revisions) {
+        new AlertDialog.Builder(activity).setTitle("Revisions · "+document.name()).setItems(revisions.stream()
+                .map(r -> "Revision "+r.revision()+" · "+r.size()+" bytes").toArray(String[]::new),(d,i) -> {
+            RemoteApi.Remote revision=revisions.get(i);
+            new AlertDialog.Builder(activity).setTitle("Restore revision "+revision.revision()+"?")
+                    .setMessage("This creates a new server revision containing the older text. The current version remains in history.")
+                    .setPositiveButton("Restore on server",(dialog,w) -> request(api -> {
+                        var old=api.revision(document.id(),revision.revision());
+                        return api.put(document.id(),old.name(),old.content(),document.revision(),UUID.randomUUID().toString());
+                    },restored -> app.sync.syncAll(true)))
+                    .setNegativeButton("Cancel",null).show();
+        }).setNeutralButton("Prune",(d,w) -> request(api -> api.prune(document.id()),remaining -> {
+            int removed=Math.max(0,revisions.size()-remaining.size());
+            app.notice("Revisions",removed > 0 ? "Pruned "+removed+" older revision"+(removed == 1 ? "." : "s.") : "No revisions needed pruning.");
+        })).setNegativeButton("Close",null).show();
     }
 
     private interface Query<T> { T run(RemoteApi api) throws Exception; }

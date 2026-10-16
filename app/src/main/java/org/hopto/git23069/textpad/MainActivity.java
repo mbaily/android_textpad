@@ -722,13 +722,18 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 List<DocumentStore.Backup> backups = app.store.backups();
                 app.main.post(() -> {
                     if (isFinishing() || isDestroyed()) return;
-                    if (backups.isEmpty()) { app.notice("Backups", "Previous file contents appear here after an overwrite. Backups remain until you delete them or uninstall Textpad."); return; }
+                    if (backups.isEmpty()) { app.notice("Backups", "Previous file contents appear here after an overwrite. Recent backups are kept and older history is thinned exponentially."); return; }
                     new AlertDialog.Builder(this).setTitle("Backups · " + backups.size()).setItems(backups.stream().map(DocumentStore.Backup::name).toArray(String[]::new), (d, i) -> {
                         DocumentStore.Backup backup = backups.get(i);
                         new AlertDialog.Builder(this).setTitle(backup.originalName()).setMessage("Open this revision as a new document, then use Save As or Save to existing file to restore it.")
                                 .setPositiveButton("Open revision", (dialog, w) -> app.restoreBackup(backup))
                                 .setNegativeButton("Cancel", null).setNeutralButton("Delete revision", (dialog, w) -> confirmDeleteBackup(backup)).show();
-                    }).setNegativeButton("Close", null).show();
+                    }).setNeutralButton("Prune", (d, w) -> app.io.execute(() -> {
+                        try {
+                            int removed = app.store.pruneBackups(null, System.currentTimeMillis());
+                            app.main.post(() -> toast(removed > 0 ? "Pruned " + removed + " older backup" + (removed == 1 ? "." : "s.") : "No backups needed pruning."));
+                        } catch (Exception e) { app.main.post(() -> app.notice("Could not prune backups", e.getMessage())); }
+                    })).setNegativeButton("Close", null).show();
                 });
             } catch (Exception e) { app.main.post(() -> app.notice("Could not list backups", e.getMessage())); }
         });

@@ -10,6 +10,12 @@ import sqlite3
 from .codec import decode
 
 METADATA = "sequence,document_id,name,sha256,size,encoding,created_at"
+RECENT_KEEP_COUNT = 10
+RECENT_KEEP_SECONDS = 3600
+HOURLY_KEEP_SECONDS = 24 * 3600
+DAILY_KEEP_SECONDS = 14 * 24 * 3600
+WEEKLY_KEEP_SECONDS = 56 * 24 * 3600
+CONFLICT_KEEP_SECONDS = 30 * 24 * 3600
 
 
 class NotFound(ValueError):
@@ -38,6 +44,72 @@ def representation(row):
     return {"id": row["document_id"], "name": row["name"], "revision": str(row["sequence"]),
             "sha256": row["sha256"], "size": row["size"], "updated_at": row["created_at"],
             "encoding": row["encoding"]}
+
+
+def parse_timestamp(value):
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def time_bucket(timestamp, now):
+    age = max(0.0, now - timestamp)
+    if age <= RECENT_KEEP_SECONDS:
+        return None
+    if age <= HOURLY_KEEP_SECONDS:
+        return f"H:{int(timestamp // 3600)}"
+    if age <= DAILY_KEEP_SECONDS:
+        return f"D:{int(timestamp // 86400)}"
+    if age <= WEEKLY_KEEP_SECONDS:
+        return f"W:{int(timestamp // 604800)}"
+    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    return f"M:{dt.year:04d}-{dt.month:02d}"
+
+
+def exponential_stride(distance):
+    if distance <= RECENT_KEEP_COUNT:
+        return 1
+    if distance <= 26:
+        return 2
+    if distance <= 58:
+        return 4
+    if distance <= 122:
+        return 8
+    return 16
+
+
+def select_pruned_sequences(revisions_newest_first, current_revision, protected_sequences=(), now=None):
+    total = len(revisions_newest_first)
+    if total <= RECENT_KEEP_COUNT:
+        return []
+    if now is None:
+        now = datetime.now(timezone.utc).timestamp()
+    keep = {int(current_revision)} if current_revision is not None else set()
+    keep.update(int(seq) for seq in protected_sequences)
+    seen_buckets = set()
+    for distance, (sequence, created_at) in enumerate(revisions_newest_first):
+        seq = int(sequence)
+        ts = parse_timestamp(created_at) if isinstance(created_at, str) else float(created_at)
+        bucket = time_bucket(ts, now)
+        is_first_in_bucket = False
+        if bucket is not None and bucket not in seen_buckets:
+            seen_buckets.add(bucket)
+            is_first_in_bucket = True
+        rank = total - 1 - distance  # 0 for the very first revision of the document
+        stride = exponential_stride(distance)
+        if (
+            distance < RECENT_KEEP_COUNT
+            or rank == 0
+            or (now - ts) <= RECENT_KEEP_SECONDS
+            or is_first_in_bucket
+            or (rank % stride == 0)
+        ):
+            keep.add(seq)
+    return [int(seq) for seq, _ in revisions_newest_first if int(seq) not in keep]
 
 
 class Store:
@@ -135,6 +207,7 @@ class Store:
                             "updated_at":created,"encoding":decoded.encoding,"previous_revision":old_revision,
                             "replaced_newer_revision":old_revision is not None and old_revision != base_revision}
                 db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (document_id,request_id,request_hash,json.dumps(response)))
+                self._prune_document(db, document_id, cursor.lastrowid)
                 db.commit()
             except BaseException:
                 db.rollback()
@@ -142,6 +215,68 @@ class Store:
         if self.on_commit is not None:
             self.on_commit()
         return response
+
+    def _protected_conflict_sequences(self, db, document_id, now):
+        protected = set()
+        rows = db.execute("SELECT response FROM receipts WHERE document_id=?", (document_id,)).fetchall()
+        for row in rows:
+            try:
+                data = json.loads(row["response"])
+            except (TypeError, ValueError):
+                continue
+            if data.get("replaced_newer_revision") and data.get("previous_revision") is not None:
+                updated_ts = parse_timestamp(data.get("updated_at", ""))
+                if (now - updated_ts) <= CONFLICT_KEEP_SECONDS:
+                    try:
+                        protected.add(int(data["previous_revision"]))
+                    except (TypeError, ValueError):
+                        pass
+        return protected
+
+    def _prune_document(self, db, document_id, current_revision=None, now=None):
+        if current_revision is None:
+            doc_row = db.execute("SELECT current_revision FROM documents WHERE id=?", (document_id,)).fetchone()
+            if doc_row is None:
+                raise NotFound("Document not found.")
+            current_revision = doc_row["current_revision"]
+        rows = db.execute(
+            "SELECT sequence, created_at FROM revisions WHERE document_id=? ORDER BY sequence DESC",
+            (document_id,),
+        ).fetchall()
+        if len(rows) <= RECENT_KEEP_COUNT:
+            return 0
+        if now is None:
+            now = datetime.now(timezone.utc).timestamp()
+        protected = self._protected_conflict_sequences(db, document_id, now)
+        revisions = [(row["sequence"], row["created_at"]) for row in rows]
+        to_delete = select_pruned_sequences(revisions, current_revision, protected, now)
+        if not to_delete:
+            return 0
+        placeholders = ",".join("?" for _ in to_delete)
+        result = db.execute(
+            f"DELETE FROM revisions WHERE document_id=? AND sequence IN ({placeholders})",
+            (document_id, *to_delete),
+        )
+        return result.rowcount
+
+    def prune(self, document_id=None, now=None):
+        if document_id is not None:
+            identifier(document_id)
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if document_id is not None:
+                    removed = self._prune_document(db, document_id, now=now)
+                else:
+                    removed = 0
+                    docs = db.execute("SELECT id, current_revision FROM documents").fetchall()
+                    for doc in docs:
+                        removed += self._prune_document(db, doc["id"], doc["current_revision"], now=now)
+                db.commit()
+                return removed
+            except BaseException:
+                db.rollback()
+                raise
 
     def has_receipt(self, document_id, request_id):
         identifier(document_id), identifier(request_id)

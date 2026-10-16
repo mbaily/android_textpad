@@ -210,6 +210,11 @@ def create_app(test_config=None):
     def api_revision(document_id, revision):
         return binary_document(document_id, revision)
 
+    @app.post("/api/v1/documents/<document_id>/prune")
+    def api_prune(document_id):
+        removed = store.prune(document_id)
+        return jsonify(removed=removed, documents=store.revisions(document_id))
+
     @app.get("/editor")
     def editor_redirect():
         return redirect(public("/editor/"), code=302)
@@ -316,6 +321,11 @@ def create_app(test_config=None):
         metadata, raw = store.get(document_id, str(payload.get("revision")))
         return jsonify(store.put(document_id,metadata["name"],raw,payload.get("base_revision"),
                                  payload.get("request_id"),metadata["encoding"]))
+
+    @app.post("/editor/api/documents/<document_id>/prune")
+    def browser_prune(document_id):
+        removed = store.prune(document_id)
+        return jsonify(removed=removed, documents=store.revisions(document_id))
 
     @app.get("/editor/api/documents/<document_id>/download")
     def download(document_id):

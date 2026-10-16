@@ -90,6 +90,8 @@ def main():
         expect(page.locator('#preview-text')).to_contain_text('Textpad desktop editor')
         page.locator('#restore-revision').click();page.locator('#modal-actions').get_by_role('button',name='Restore',exact=True).click()
         expect(editor).to_contain_text('Textpad desktop editor');expect(editor).not_to_contain_text('Unsaved browser edit')
+        page.locator('#prune-history').click()
+        expect(page.locator('#notice-text')).to_contain_text('No revisions needed pruning.')
         page.locator('#close-history').click()
         # New server document, independent tabs, undo/redo, search, and preferences.
         page.locator('#new-file').click();page.get_by_role('textbox',name='Filename',exact=True).fill('Desktop QA.txt')
