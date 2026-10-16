@@ -184,9 +184,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         dividerButton = iconButton(Icon.DIVIDER, TEXT, "Insert dividing line", v -> insertDivider());
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
-        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
+        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
-        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton); toolbar.addView(bottomButton); toolbar.addView(saveButton);
+        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
         root.addView(status);

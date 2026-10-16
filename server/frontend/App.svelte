@@ -1192,6 +1192,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 9H10a5 5 0 0 0 0 10h5"/><polyline points="17 5 21 9 17 13"/></svg>
       </button>
       <span class="toolbar-divider"></span>
+      <button id="go-bottom" class="icon-button" title="Go to bottom of file" aria-label="Go to bottom of file" disabled={!activeDoc} onclick={goToBottom}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>
+      </button>
       <button id="find" class="icon-button" title="Find in file (Ctrl+F)" aria-label="Find in file" disabled={!activeDoc} onclick={() => openFind(false)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-4.35-4.35"/></svg>
       </button>
@@ -1212,9 +1215,6 @@
       </button>
       <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="3" y1="12" x2="7" y2="12"/><line x1="10" y1="12" x2="14" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/></svg>
-      </button>
-      <button id="go-bottom" class="icon-button" title="Go to bottom of file" aria-label="Go to bottom of file" disabled={!activeDoc} onclick={goToBottom}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>
       </button>
       <span class="toolbar-spacer"></span>
       <button id="reload" class="icon-button" title="Reload from server" aria-label="Reload" disabled={!activeDoc || activeDoc.revision === null || activeDoc.saving} onclick={() => reloadFile().catch(failure)}>
