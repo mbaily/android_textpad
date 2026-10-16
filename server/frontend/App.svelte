@@ -1366,12 +1366,12 @@
       </button>
       <button id="redo" class="icon-button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!activeDoc || readOnly || !canRedo} onclick={() => { redo(view); view.focus(); syncEditorMetrics(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 9H10a5 5 0 0 0 0 10h5"/><polyline points="17 5 21 9 17 13"/></svg>
-      </button> (Alt+R)" : "Enable read-only mode (Alt+R)
+      </button>
       <span class="toolbar-divider"></span>
       <button id="go-bottom" class="icon-button" title="Go to bottom of file" aria-label="Go to bottom of file" disabled={!activeDoc} onclick={goToBottom}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>
       </button>
-      <button id="toggle-readonly" class="icon-button" class:active={readOnly} aria-pressed={String(readOnly)} title={readOnly ? "Disable read-only mode" : "Enable read-only mode"} aria-label="Toggle read-only mode" disabled={!activeDoc} onclick={toggleReadOnly}>
+      <button id="toggle-readonly" class="icon-button" class:active={readOnly} aria-pressed={String(readOnly)} title={readOnly ? "Disable read-only mode (Alt+R)" : "Enable read-only mode (Alt+R)"} aria-label="Toggle read-only mode" disabled={!activeDoc} onclick={toggleReadOnly}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
       </button>
       <button id="find" class="icon-button" title="Find in file (Ctrl+F)" aria-label="Find in file" disabled={!activeDoc} onclick={() => openFind(false)}>
