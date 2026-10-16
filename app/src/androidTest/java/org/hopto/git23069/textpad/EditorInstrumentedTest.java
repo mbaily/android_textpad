@@ -197,4 +197,23 @@ public class EditorInstrumentedTest {
             byte[] result = read(uri); assertEquals(bytes.length,result.length); assertEquals('b',result[0]);
         }
     }
+
+    @Test public void exitPromptsEachUnsavedFileInSequence() throws Exception {
+        Uri uri = seed("exit-save.txt", "before".getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.getText().append(" after");
+                app.newDocument();
+                editor.getText().append("discard this");
+                app.newDocument();
+                editor.getText().append("cancel on this");
+                assertEquals(3, app.tabs.size());
+                activity.exitApp();
+                assertTrue(app.exiting);
+                assertEquals(app.tabs.get(0).id, app.selectedTab);
+            });
+        }
+    }
 }

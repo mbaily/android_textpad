@@ -41,7 +41,7 @@ public final class TextpadApplication extends Application {
     SyncManager sync;
     long selectedTab = -1, nextTab = 1;
     int untitled = 1;
-    boolean opening;
+    boolean opening, exiting;
     PendingSave pendingSave;
     TextCodec.Encoding nextOpenEncoding;
 
@@ -114,10 +114,11 @@ public final class TextpadApplication extends Application {
 
     void saveAsResult(Uri uri) {
         PendingSave pending = pendingSave; pendingSave = null;
-        if (pending == null || uri == null) return;
+        if (pending == null || uri == null) { exiting = false; return; }
         EditorDocument doc = pending.document;
         for (EditorTab tab : tabs) {
             if (tab.document != doc && DocumentStore.same(uri, tab.document.uri) && tab.document.buffer.dirty()) {
+                exiting = false;
                 notice("File already open", "The destination has unsaved edits in another tab. Save or close that document before overwriting it.");
                 return;
             }
@@ -135,7 +136,7 @@ public final class TextpadApplication extends Application {
                             new Conflict(doc, uri, snapshot, expected, pending.closeTab, pending.move)));
                     else saveTo(doc, uri, expected, snapshot, pending.closeTab, pending.move);
                 });
-            } catch (Exception e) { main.post(() -> { doc.saving = false; refresh(); notice("Could not save file", e.getMessage()); }); }
+            } catch (Exception e) { main.post(() -> { doc.saving = false; exiting = false; refresh(); notice("Could not save file", e.getMessage()); }); }
         });
     }
 
@@ -146,6 +147,7 @@ public final class TextpadApplication extends Application {
         if (doc.saving) return;
         for (EditorTab tab : tabs) {
             if (tab.document != doc && DocumentStore.same(target, tab.document.uri)) {
+                exiting = false;
                 notice("Destination already open", "Close the destination document's tabs before replacing it with another document. Its edits will stay intact.");
                 return;
             }
@@ -187,13 +189,17 @@ public final class TextpadApplication extends Application {
                         if(sync.testApi==null) SyncScheduler.retry(this);
                         sync.syncAll(false);
                     }
+                    if (exiting) {
+                        if (!doc.buffer.dirty()) emit(new Event("continue-exit", "", null));
+                        else exiting = false;
+                    }
                 });
             } catch (SaveTransaction.Changed e) {
                 final DocumentBuffer.Snapshot captured = snapshot;
                 main.post(() -> { doc.saving = false; refresh(); emit(new Event("File changed elsewhere", e.getMessage()
                         + " Overwrite it with your saved version? The displaced contents will be backed up.",
                         new Conflict(doc, target, captured, e.actualHash, closeTab, move))); });
-            } catch (Exception e) { main.post(() -> { doc.saving = false; refresh(); notice("Could not save file", e.getMessage()); }); }
+            } catch (Exception e) { main.post(() -> { doc.saving = false; exiting = false; refresh(); notice("Could not save file", e.getMessage()); }); }
         });
     }
 

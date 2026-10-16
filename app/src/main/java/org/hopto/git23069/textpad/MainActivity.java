@@ -293,12 +293,50 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void closeTab(EditorTab tab) {
         if (tab.document.saving) { toast("Wait for this file to finish saving."); return; }
-        if (!tab.document.buffer.dirty()) { app.close(tab.id); return; }
+        long views = app.tabs.stream().filter(t -> t.document == tab.document).count();
+        if (!tab.document.buffer.dirty() || views > 1) { app.close(tab.id); return; }
         new AlertDialog.Builder(this).setTitle("Save changes to " + tab.document.name + "?")
                 .setMessage("Your unsaved changes will be lost when the last view of this document closes.")
                 .setPositiveButton("Save", (dialog, which) -> app.save(tab.document, tab.id))
-                .setNegativeButton("Discard", (dialog, which) -> app.close(tab.id))
+                .setNegativeButton("Don't Save", (dialog, which) -> app.close(tab.id))
                 .setNeutralButton("Cancel", null).show();
+    }
+
+    void exitApp() {
+        for (EditorTab tab : app.tabs) {
+            if (tab.document.saving) { toast("Wait for this file to finish saving."); return; }
+        }
+        saveViewState();
+        app.exiting = true;
+        continueExit();
+    }
+
+    private void continueExit() {
+        if (!app.exiting) return;
+        while (!app.tabs.isEmpty()) {
+            EditorTab tab = app.tabs.get(0);
+            if (tab.document.saving) return;
+            long views = app.tabs.stream().filter(t -> t.document == tab.document).count();
+            if (!tab.document.buffer.dirty() || views > 1) {
+                app.close(tab.id);
+                continue;
+            }
+            if (app.selectedTab != tab.id) {
+                saveViewState();
+                app.selectedTab = tab.id;
+                app.refresh();
+            }
+            AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Save changes to " + tab.document.name + "?")
+                    .setMessage("Your unsaved changes will be lost when closing Textpad.")
+                    .setPositiveButton("Save", (d, w) -> app.save(tab.document, tab.id))
+                    .setNegativeButton("Don't Save", (d, w) -> { app.close(tab.id); continueExit(); })
+                    .setNeutralButton("Cancel", (d, w) -> app.exiting = false).create();
+            dialog.setOnCancelListener(d -> app.exiting = false);
+            dialog.show();
+            return;
+        }
+        app.exiting = false;
+        finishAndRemoveTask();
     }
 
     private void openPicker() {
@@ -331,7 +369,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
-            if (request == CREATE || request == EXISTING) app.pendingSave = null;
+            if (request == CREATE || request == EXISTING) { app.pendingSave = null; app.exiting = false; }
             return;
         }
         Uri uri = data.getData(); takePermission(uri, data.getFlags());
@@ -345,21 +383,23 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     @Override public void event(TextpadApplication.Event event) {
         if (event.title().equals("save-as")) { launchSavePicker(); return; }
+        if (event.title().equals("continue-exit")) { continueExit(); return; }
         if (dialogVisible) { app.events.addFirst(event); return; }
         dialogVisible = true;
         AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(event.title()).setMessage(event.message());
         if (event.conflict() != null) {
             var conflict = event.conflict();
             builder.setPositiveButton("Overwrite", (dialog, which) -> app.saveTo(conflict.document(), conflict.target(), conflict.expected(), conflict.snapshot(), conflict.closeTab(), conflict.move()));
-            builder.setNegativeButton("Cancel", null);
+            builder.setNegativeButton("Cancel", (dialog, which) -> app.exiting = false);
         } else builder.setPositiveButton("OK", null);
         AlertDialog dialog = builder.create();
+        dialog.setOnCancelListener(d -> { if (event.conflict() != null) app.exiting = false; });
         dialog.setOnDismissListener(d -> { dialogVisible = false; app.main.post(app::deliverNext); }); dialog.show();
     }
 
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        String[] actions = {"New document", "Open file…", "Recent files…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…"};
+        String[] actions = {"New document", "Open file…", "Recent files…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit"};
         for (int i = 0; i < actions.length; i++) menu.getMenu().add(0, i, i, actions[i]);
         menu.getMenu().findItem(8).setCheckable(true).setChecked(app.settings.wrap());
         menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.lineNumbers());
@@ -380,6 +420,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 case 16 -> new AlertDialog.Builder(this).setTitle("Open with encoding")
                         .setItems(java.util.Arrays.stream(TextCodec.Encoding.values()).map(e -> e.label).toArray(String[]::new),
                                 (d, which) -> openPicker(TextCodec.Encoding.values()[which])).setNegativeButton("Cancel", null).show();
+                case 17 -> exitApp();
             }
             return true;
         }); menu.show();
