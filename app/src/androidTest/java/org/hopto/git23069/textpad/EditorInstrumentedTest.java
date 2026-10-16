@@ -53,6 +53,13 @@ public class EditorInstrumentedTest {
         }
         return null;
     }
+    private View findViewWithHint(View view, String hint) {
+        if (view instanceof android.widget.TextView tv && tv.getHint() != null && hint.contentEquals(tv.getHint())) return tv;
+        if (view instanceof ViewGroup group) for (int i = 0; i < group.getChildCount(); i++) {
+            View found = findViewWithHint(group.getChildAt(i), hint); if (found != null) return found;
+        }
+        return null;
+    }
 
     @Test public void nativeEditorSavesUnicodeAndMixedTerminatorsThroughSaf() throws Exception {
         Uri uri = seed("unicode.txt", "\ufeffone\r\n😀 café\nالعربية\r".getBytes(StandardCharsets.UTF_8));
@@ -116,6 +123,26 @@ public class EditorInstrumentedTest {
                 assertTrue(editor.getText().toString().endsWith("\n[X] task item"));
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
                 assertTrue(editor.getText().toString().endsWith("\ntask item"));
+                // Find in open files cycles through matches in current file and switches tabs when reaching the end.
+                app.newDocument();
+                editor.getText().append("alpha task\nbeta task");
+                long secondTab = app.selectedTab;
+                long firstTab = app.tabs.get(0).id;
+                app.selectedTab = firstTab; app.refresh();
+                editor.setSelection(0);
+                button(activity.getWindow().getDecorView(),"Find in open files").performClick();
+                android.widget.EditText findInput = (android.widget.EditText) findViewWithHint(activity.getWindow().getDecorView(),"Find text");
+                findInput.setText("task");
+                button(activity.getWindow().getDecorView(),"Next match").performClick();
+                assertEquals(firstTab,app.selectedTab);
+                button(activity.getWindow().getDecorView(),"Next match").performClick();
+                assertEquals(secondTab,app.selectedTab);
+                assertEquals(6,editor.getSelectionStart()); assertEquals(10,editor.getSelectionEnd());
+                button(activity.getWindow().getDecorView(),"Next match").performClick();
+                assertEquals(secondTab,app.selectedTab);
+                assertEquals(16,editor.getSelectionStart()); assertEquals(20,editor.getSelectionEnd());
+                button(activity.getWindow().getDecorView(),"Next match").performClick();
+                assertEquals(firstTab,app.selectedTab);
             });
         }
     }

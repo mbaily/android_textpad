@@ -4,7 +4,7 @@
   import { EditorState, Compartment, EditorSelection } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth, indentMore, indentLess, indentWithTab } from "@codemirror/commands";
-  import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
+  import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -49,6 +49,13 @@
   let editorHost = $state(null);
   let dialogEl = $state(null);
   let modalState = $state(null);
+
+  let findOpen = $state(false);
+  let findAllFiles = $state(false);
+  let findQuery = $state("");
+  let findMatchCase = $state(false);
+  let findResultText = $state("");
+  let findInputEl = $state(null);
 
   let cursorLine = $state(1);
   let cursorCol = $state(1);
@@ -263,7 +270,13 @@
         EditorView.theme({ "&": { color: "#e3e8df" } }, { dark: true }),
         wrapCompartment.of(preferences.wrap ? EditorView.lineWrapping : []),
         guttersCompartment.of(preferences.lines ? lineNumbers() : []),
-        search({ top: true }),
+        search({
+          createPanel: () => {
+            const dom = document.createElement("div");
+            dom.hidden = true;
+            return { dom };
+          },
+        }),
         keymap.of([
           {
             key: "Mod-s",
@@ -272,8 +285,21 @@
               return true;
             },
           },
+          {
+            key: "Mod-f",
+            run: () => {
+              openFind(false);
+              return true;
+            },
+          },
+          {
+            key: "Mod-Shift-f",
+            run: () => {
+              openFind(true);
+              return true;
+            },
+          },
           ...historyKeymap,
-          ...searchKeymap,
           indentWithTab,
           ...defaultKeymap,
         ]),
@@ -329,7 +355,11 @@
       view.setState(doc.state);
       view.scrollDOM.scrollTop = doc.scrollTop || 0;
       view.scrollDOM.scrollLeft = doc.scrollLeft || 0;
-      view.focus();
+      if (findOpen) syncSearchHighlight();
+      else view.focus();
+    } else if (!doc && findOpen) {
+      findOpen = false;
+      findResultText = "";
     }
     syncEditorMetrics();
     if (historyDocument && historyDocument !== id) closeHistory();
@@ -757,6 +787,152 @@
     view.focus();
   }
 
+  function findMatchesInText(text, needle, caseSensitive) {
+    if (!needle) return [];
+    const haystack = caseSensitive ? text : text.toLocaleLowerCase();
+    const target = caseSensitive ? needle : needle.toLocaleLowerCase();
+    if (!target) return [];
+    const matches = [];
+    let index = 0;
+    while (index <= haystack.length - target.length) {
+      const found = haystack.indexOf(target, index);
+      if (found === -1) break;
+      matches.push({ from: found, to: found + target.length });
+      index = found + Math.max(1, target.length);
+    }
+    return matches;
+  }
+
+  function syncSearchHighlight() {
+    if (!view || !activeDoc) return;
+    if (findOpen) openSearchPanel(view);
+    else closeSearchPanel(view);
+    const query =
+      findOpen && findQuery
+        ? new SearchQuery({ search: findQuery, caseSensitive: findMatchCase })
+        : new SearchQuery({ search: "" });
+    view.dispatch({ effects: setSearchQuery.of(query) });
+  }
+
+  function openFind(allFiles = false) {
+    if (!activeDoc) return;
+    findAllFiles = allFiles;
+    findOpen = true;
+    syncSearchHighlight();
+    queueMicrotask(() => {
+      findInputEl?.focus();
+      findInputEl?.select();
+    });
+  }
+
+  function closeFind() {
+    findOpen = false;
+    findResultText = "";
+    syncSearchHighlight();
+    view?.focus();
+  }
+
+  function selectMatchInDoc(doc, match, index, total) {
+    if (active !== doc.id) {
+      activate(doc.id);
+    }
+    if (view) {
+      openSearchPanel(view);
+      const query = new SearchQuery({ search: findQuery, caseSensitive: findMatchCase });
+      view.dispatch({
+        selection: EditorSelection.range(match.from, match.to),
+        effects: [setSearchQuery.of(query), EditorView.scrollIntoView(match.from, { y: "center" })],
+      });
+      doc.state = view.state;
+      syncEditorMetrics();
+    }
+    findResultText = findAllFiles ? `${index + 1}/${total} · ${doc.name}` : `${index + 1}/${total}`;
+  }
+
+  function findStep(forward = true) {
+    if (!activeDoc || !view) return;
+    if (!findQuery) {
+      findResultText = "";
+      syncSearchHighlight();
+      return;
+    }
+    const sel = view.state.selection.main;
+    const curMatches = findMatchesInText(view.state.doc.toString(), findQuery, findMatchCase);
+
+    if (!findAllFiles) {
+      if (curMatches.length === 0) {
+        findResultText = "No matches";
+        syncSearchHighlight();
+        return;
+      }
+      let targetIdx = -1;
+      const exactIdx = curMatches.findIndex((m) => m.from === sel.from && m.to === sel.to);
+      if (forward) {
+        const searchFrom = exactIdx >= 0 ? sel.to : sel.from;
+        targetIdx = curMatches.findIndex((m) => m.from >= searchFrom);
+        if (targetIdx === -1) targetIdx = 0;
+      } else {
+        const searchBefore = exactIdx >= 0 ? sel.from : sel.to;
+        for (let i = curMatches.length - 1; i >= 0; i--) {
+          if (curMatches[i].to <= searchBefore) {
+            targetIdx = i;
+            break;
+          }
+        }
+        if (targetIdx === -1) targetIdx = curMatches.length - 1;
+      }
+      selectMatchInDoc(activeDoc, curMatches[targetIdx], targetIdx, curMatches.length);
+      return;
+    }
+
+    const exactIdx = curMatches.findIndex((m) => m.from === sel.from && m.to === sel.to);
+    if (forward) {
+      const searchFrom = exactIdx >= 0 ? sel.to : sel.from;
+      const nextInCurrent = curMatches.findIndex((m) => m.from >= searchFrom);
+      if (nextInCurrent !== -1) {
+        selectMatchInDoc(activeDoc, curMatches[nextInCurrent], nextInCurrent, curMatches.length);
+        return;
+      }
+    } else {
+      const searchBefore = exactIdx >= 0 ? sel.from : sel.to;
+      let prevInCurrent = -1;
+      for (let i = curMatches.length - 1; i >= 0; i--) {
+        if (curMatches[i].to <= searchBefore) {
+          prevInCurrent = i;
+          break;
+        }
+      }
+      if (prevInCurrent !== -1) {
+        selectMatchInDoc(activeDoc, curMatches[prevInCurrent], prevInCurrent, curMatches.length);
+        return;
+      }
+    }
+
+    const openDocs = [...documents.values()];
+    const curDocIdx = openDocs.findIndex((d) => d.id === activeDoc.id);
+    for (let step = 1; step < openDocs.length; step++) {
+      const idx = forward
+        ? (curDocIdx + step) % openDocs.length
+        : (curDocIdx - step + openDocs.length) % openDocs.length;
+      const candidate = openDocs[idx];
+      const text = candidate.id === activeDoc.id ? view.state.doc.toString() : candidate.state.doc.toString();
+      const matches = findMatchesInText(text, findQuery, findMatchCase);
+      if (matches.length > 0) {
+        const matchIdx = forward ? 0 : matches.length - 1;
+        selectMatchInDoc(candidate, matches[matchIdx], matchIdx, matches.length);
+        return;
+      }
+    }
+
+    if (curMatches.length > 0) {
+      const matchIdx = forward ? 0 : curMatches.length - 1;
+      selectMatchInDoc(activeDoc, curMatches[matchIdx], matchIdx, curMatches.length);
+    } else {
+      findResultText = "No matches";
+      syncSearchHighlight();
+    }
+  }
+
   async function connectAndroid() {
     const info = await api("/connection");
     await openModal({
@@ -846,6 +1022,11 @@
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         save().catch(failure);
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        if (activeDoc) {
+          event.preventDefault();
+          openFind(event.shiftKey);
+        }
       }
     };
     const onOnline = () => {
@@ -982,8 +1163,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 9H10a5 5 0 0 0 0 10h5"/><polyline points="17 5 21 9 17 13"/></svg>
       </button>
       <span class="toolbar-divider"></span>
-      <button id="find" class="icon-button" title="Find / Replace (Ctrl+F)" aria-label="Find / Replace" disabled={!activeDoc} onclick={() => openSearchPanel(view)}>
+      <button id="find" class="icon-button" title="Find in file (Ctrl+F)" aria-label="Find in file" disabled={!activeDoc} onclick={() => openFind(false)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-4.35-4.35"/></svg>
+      </button>
+      <button id="find-all" class="icon-button" title="Find in open files (Ctrl+Shift+F)" aria-label="Find in open files" disabled={!activeDoc} onclick={() => openFind(true)}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h10"/><path d="M4 10h6"/><path d="M4 14h5"/><circle cx="15.5" cy="14.5" r="4.5"/><path d="m19 18 3 3"/></svg>
       </button>
       <button id="indent-less" class="icon-button" title="Decrease indentation" aria-label="Decrease indentation" disabled={!activeDoc} onclick={() => { indentLess(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="5" x2="4" y2="19"/><line x1="20" y1="12" x2="9" y2="12"/><polyline points="13 8 9 12 13 16"/></svg>
@@ -1033,6 +1217,50 @@
     </div>
 
     <div class="editor-body">
+      {#if findOpen && activeDoc}
+        <dialog id="find-dialog" class="find-dialog cm-search" open aria-label={findAllFiles ? "Find in open files" : "Find in file"}>
+          <div class="find-dialog-header">
+            <h2 id="find-dialog-title">{findAllFiles ? "Find in open files" : "Find in file"}</h2>
+            <button id="find-close" name="close" type="button" class="icon-button" title="Close find" aria-label="Close find" onclick={closeFind}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="7" y1="7" x2="17" y2="17"/><line x1="17" y1="7" x2="7" y2="17"/></svg>
+            </button>
+          </div>
+          <div class="find-dialog-row">
+            <input
+              id="find-input"
+              name="search"
+              type="search"
+              placeholder="Find text…"
+              aria-label="Find text"
+              bind:this={findInputEl}
+              bind:value={findQuery}
+              oninput={() => syncSearchHighlight()}
+              onkeydown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  findStep(!e.shiftKey);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeFind();
+                }
+              }}
+            >
+            <button id="find-prev" type="button" class="icon-button" title="Previous match (Shift+Enter)" aria-label="Previous match" onclick={() => findStep(false)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="7 10 12 5 17 10"/></svg>
+            </button>
+            <button id="find-next" type="button" class="icon-button" title="Next match (Enter)" aria-label="Next match" onclick={() => findStep(true)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="7 14 12 19 17 14"/></svg>
+            </button>
+          </div>
+          <div class="find-dialog-footer">
+            <label class="inline">
+              <input type="checkbox" bind:checked={findMatchCase} onchange={() => syncSearchHighlight()}>
+              Match case
+            </label>
+            <span id="find-result">{findResultText}</span>
+          </div>
+        </dialog>
+      {/if}
       <div id="welcome" class="welcome" class:hidden={!!activeDoc}>
         <span class="welcome-mark" aria-hidden="true">T_</span>
         <h2>Your synced files,<br>ready to edit.</h2>

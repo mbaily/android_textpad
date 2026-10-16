@@ -107,6 +107,17 @@ def main():
         page.keyboard.press('Control+s');expect(page.locator('#save-status')).to_have_text('Saved')
         page.locator('#find').click();page.locator('input[name=search]').fill('second');page.locator('input[name=search]').press('Enter')
         expect(page.locator('.cm-searchMatch')).to_have_text('second')
+        expect(page.locator('#find-result')).to_have_text('1/1')
+        # Find across all open files cycles matches in the current file and switches tabs once the last match is reached.
+        page.locator('#find-all').click()
+        expect(page.locator('#find-dialog-title')).to_have_text('Find in open files')
+        page.locator('input[name=search]').fill('e')
+        editor.click();page.keyboard.press('Control+Home')
+        while 'Notes.txt' not in (page.locator('#find-result').text_content() or ''):
+            page.locator('#find-next').click()
+        expect(page.get_by_role('tab',name='Notes.txt',exact=True)).to_have_attribute('aria-selected','true')
+        page.locator('#find-prev').click()
+        expect(page.get_by_role('tab',name='Desktop QA.txt',exact=True)).to_have_attribute('aria-selected','true')
         page.locator('.cm-search button[name=close]').click()
         page.locator('#settings').click();page.get_by_role('spinbutton',name='Font size').fill('18')
         page.get_by_role('spinbutton',name='Dividing line dashes').fill('15')

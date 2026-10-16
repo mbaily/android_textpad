@@ -52,14 +52,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private TextpadApplication app;
     private LinearLayout root, tabBar, findPanel, empty;
     private HorizontalScrollView tabScroll;
-    private TextView location, status, findResult;
+    private TextView location, status, findTitle, findResult;
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, bottomButton;
+    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, bottomButton;
     private EditorTab shownTab;
     private long shownState = -1;
-    private boolean changing, started, dialogVisible;
+    private boolean changing, started, dialogVisible, findAllFiles;
     private final Map<Long, TextView> tabNames = new HashMap<>();
     private final Map<Long, LinearLayout> tabViews = new HashMap<>();
     private final Runnable autosave = new Runnable() {
@@ -120,12 +120,23 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         location.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); location.setPadding(dp(16), dp(7), dp(16), dp(7));
         root.addView(location); root.addView(divider());
 
-        findPanel = column(); findPanel.setPadding(dp(10), dp(5), dp(10), dp(5)); findPanel.setBackgroundColor(SURFACE);
+        findPanel = column(); findPanel.setPadding(dp(12), dp(8), dp(12), dp(8));
+        GradientDrawable findBg = rounded(SURFACE, 10); findBg.setStroke(dp(1), 0xff465b3c); findPanel.setBackground(findBg);
+        LinearLayout.LayoutParams findParams = new LinearLayout.LayoutParams(-1, -2);
+        findParams.setMargins(dp(12), dp(8), dp(12), dp(4)); findPanel.setLayoutParams(findParams);
+        LinearLayout findHeader = row();
+        findTitle = label("Find in file", 13, ACCENT); findTitle.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        findHeader.addView(findTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        findHeader.addView(iconButton(Icon.CLOSE, TEXT, "Close find", v -> { findPanel.setVisibility(View.GONE); editor.requestFocus(); }));
+        findPanel.addView(findHeader);
         LinearLayout queryRow = row(); find = field("Find text");
+        find.setOnKeyListener((v, keyCode, event) -> {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode == KeyEvent.KEYCODE_ENTER) { findNext(!event.isShiftPressed()); return true; }
+            return false;
+        });
         queryRow.addView(find, new LinearLayout.LayoutParams(0, dp(48), 1));
         queryRow.addView(iconButton(Icon.PREV, TEXT, "Previous match", v -> findNext(false)));
         queryRow.addView(iconButton(Icon.NEXT, TEXT, "Next match", v -> findNext(true)));
-        queryRow.addView(iconButton(Icon.CLOSE, TEXT, "Close find", v -> { findPanel.setVisibility(View.GONE); editor.requestFocus(); }));
         findPanel.addView(queryRow);
         LinearLayout replaceRow = row(); replacement = field("Replace with");
         replaceRow.addView(replacement, new LinearLayout.LayoutParams(0, dp(48), 1));
@@ -152,7 +163,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         LinearLayout toolbar = row(); toolbar.setPadding(dp(8), dp(4), dp(8), dp(4));
         undoButton = iconButton(Icon.UNDO, TEXT, "Undo", v -> history(false));
         redoButton = iconButton(Icon.REDO, TEXT, "Redo", v -> history(true));
-        findButton = iconButton(Icon.FIND, TEXT, "Find and replace", v -> showFind());
+        findButton = iconButton(Icon.FIND, TEXT, "Find in file", v -> showFind(false));
+        findAllButton = iconButton(Icon.FIND_ALL, TEXT, "Find in open files", v -> showFind(true));
         indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
@@ -160,7 +172,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         dividerButton = iconButton(Icon.DIVIDER, TEXT, "Insert dividing line", v -> insertDivider());
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
-        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(findButton);
+        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
         toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton); toolbar.addView(bottomButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
@@ -250,6 +262,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         setButtonEnabled(redoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canRedo());
         setButtonEnabled(dateButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(dividerButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(findAllButton, doc != null);
         setButtonEnabled(findButton, doc != null);
         setButtonEnabled(indentLessButton, doc != null && doc.writable && !doc.replacing);
         setButtonEnabled(indentMoreButton, doc != null && doc.writable && !doc.replacing);
@@ -457,26 +470,70 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         updateStatus();
     }
 
-    private void showFind() { if (app.current() == null) return; findPanel.setVisibility(View.VISIBLE); find.requestFocus(); }
+    private void showFind(boolean allFiles) {
+        if (app.current() == null) return;
+        findAllFiles = allFiles;
+        findTitle.setText(allFiles ? "Find in open files" : "Find in file");
+        findPanel.setVisibility(View.VISIBLE);
+        find.requestFocus();
+    }
     private Pattern query() {
         String needle = find.getText().toString(); if (needle.isEmpty()) return null;
         return Pattern.compile(Pattern.quote(needle), matchCase.isChecked() ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     }
+    private void selectFoundMatch(EditorTab targetTab, int start, int end) {
+        if (targetTab != shownTab) {
+            saveViewState();
+            targetTab.selectionStart = start;
+            targetTab.selectionEnd = end;
+            app.selectedTab = targetTab.id;
+            app.refresh();
+        }
+        editor.setSelection(start, end);
+        if (editor.getLayout() != null) editor.bringPointIntoView(start);
+        saveViewState();
+        updateStatus();
+        findResult.setText(findAllFiles ? "Match · " + targetTab.document.name : "Match selected");
+    }
     private void findNext(boolean forward) {
-        Pattern pattern = query(); if (pattern == null || app.current() == null) return;
-        Matcher matcher = pattern.matcher(editor.getText()); int start = -1, end = -1;
+        Pattern pattern = query(); EditorTab currentTab = app.currentTab();
+        if (pattern == null || currentTab == null) return;
+        Matcher matcher = pattern.matcher(editor.getText());
+        int start = -1, end = -1, firstStart = -1, firstEnd = -1, lastStart = -1, lastEnd = -1;
         int offset = Math.max(0, forward ? editor.getSelectionEnd() : editor.getSelectionStart());
         if (forward) {
-            if (matcher.find(offset) || matcher.find(0)) { start = matcher.start(); end = matcher.end(); }
+            if (matcher.find(offset)) { start = matcher.start(); end = matcher.end(); }
+            if (matcher.find(0)) { firstStart = matcher.start(); firstEnd = matcher.end(); }
         } else {
-            int lastStart = -1, lastEnd = -1;
             while (matcher.find()) {
                 lastStart = matcher.start(); lastEnd = matcher.end();
                 if (matcher.end() <= offset) { start = matcher.start(); end = matcher.end(); }
             }
-            if (start < 0) { start = lastStart; end = lastEnd; }
         }
-        if (start >= 0) { editor.setSelection(start, end); editor.bringPointIntoView(start); findResult.setText("Match selected"); }
+        if (start >= 0) {
+            selectFoundMatch(currentTab, start, end);
+            return;
+        }
+        if (findAllFiles && app.tabs.size() > 1) {
+            int curIdx = app.tabs.indexOf(currentTab);
+            for (int step = 1; step < app.tabs.size(); step++) {
+                int idx = forward ? (curIdx + step) % app.tabs.size() : (curIdx - step + app.tabs.size()) % app.tabs.size();
+                EditorTab candidate = app.tabs.get(idx);
+                Matcher m = pattern.matcher(candidate.document.buffer.text());
+                int cStart = -1, cEnd = -1;
+                if (forward) {
+                    if (m.find(0)) { cStart = m.start(); cEnd = m.end(); }
+                } else {
+                    while (m.find()) { cStart = m.start(); cEnd = m.end(); }
+                }
+                if (cStart >= 0) {
+                    selectFoundMatch(candidate, cStart, cEnd);
+                    return;
+                }
+            }
+        }
+        int wrapStart = forward ? firstStart : lastStart, wrapEnd = forward ? firstEnd : lastEnd;
+        if (wrapStart >= 0) selectFoundMatch(currentTab, wrapStart, wrapEnd);
         else findResult.setText("No matches");
     }
     private void replaceOne() {
@@ -606,7 +663,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 case KeyEvent.KEYCODE_S -> { if (event.isShiftPressed()) saveAs(false); else if (app.current() != null) app.save(app.current(), null); return true; }
                 case KeyEvent.KEYCODE_O -> { openPicker(); return true; }
                 case KeyEvent.KEYCODE_N -> { saveViewState(); app.newDocument(); return true; }
-                case KeyEvent.KEYCODE_F -> { showFind(); return true; }
+                case KeyEvent.KEYCODE_F -> { showFind(event.isShiftPressed()); return true; }
                 case KeyEvent.KEYCODE_Z -> { history(event.isShiftPressed()); return true; }
                 case KeyEvent.KEYCODE_Y -> { history(true); return true; }
                 case KeyEvent.KEYCODE_W -> { if (app.currentTab() != null) closeTab(app.currentTab()); return true; }
@@ -619,7 +676,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, BOTTOM, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, BOTTOM, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -693,6 +750,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                     case FIND -> {
                         canvas.drawCircle(ox + 11 * s, oy + 11 * s, 6.5f * s, strokePaint);
                         p.moveTo(ox + 16 * s, oy + 16 * s); p.lineTo(ox + 20.5f * s, oy + 20.5f * s);
+                    }
+                    case FIND_ALL -> {
+                        p.moveTo(ox + 4 * s, oy + 6 * s); p.lineTo(ox + 14 * s, oy + 6 * s);
+                        p.moveTo(ox + 4 * s, oy + 10 * s); p.lineTo(ox + 10 * s, oy + 10 * s);
+                        p.moveTo(ox + 4 * s, oy + 14 * s); p.lineTo(ox + 9 * s, oy + 14 * s);
+                        canvas.drawCircle(ox + 15.5f * s, oy + 14.5f * s, 4.2f * s, strokePaint);
+                        p.moveTo(ox + 18.5f * s, oy + 17.5f * s); p.lineTo(ox + 21.5f * s, oy + 20.5f * s);
                     }
                     case INDENT_LESS -> {
                         p.moveTo(ox + 4 * s, oy + 5 * s); p.lineTo(ox + 4 * s, oy + 19 * s);
