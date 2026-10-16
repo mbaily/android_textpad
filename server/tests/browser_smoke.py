@@ -58,10 +58,27 @@ def main():
         saved=context.request.get(BASE+'/api/v1/documents/sample-notes',headers=headers).json()
         raw=base64.b64decode(saved['content_base64'])
         assert b'\r\n' in raw and raw.endswith('Browser addition 😀\r\n'.encode()),repr(raw)
-        # A clean open tab updates when Android saves a newer revision.
-        body={'name':'Notes.txt','content_base64':base64.b64encode(b'Remote clean refresh\r\n').decode(),'base_revision':saved['revision'],'request_id':str(uuid.uuid4())}
-        assert context.request.put(BASE+'/api/v1/documents/sample-notes',headers=headers,data=body).ok
-        expect(editor).to_have_text('Remote clean refresh\n',timeout=7000)
+        # A clean open tab updates when Android saves a newer revision and preserves scroll position.
+        long_lines=''.join(f'Line {i:03d}: initial content\r\n' for i in range(1,201))
+        body={'name':'Notes.txt','content_base64':base64.b64encode(long_lines.encode()).decode(),'base_revision':saved['revision'],'request_id':str(uuid.uuid4())}
+        r1=context.request.put(BASE+'/api/v1/documents/sample-notes',headers=headers,data=body)
+        assert r1.ok
+        expect(editor).to_contain_text('Line 001: initial content',timeout=7000)
+        editor.click();page.keyboard.press('Control+Home')
+        page.locator('.cm-scroller').evaluate('el => { el.scrollTop = 1800; }')
+        page.wait_for_timeout(50)
+        scroll_before=page.locator('.cm-scroller').evaluate('el => el.scrollTop')
+        assert scroll_before > 1000, f'Expected scrolled editor, got scrollTop={scroll_before}'
+        updated_long_lines=long_lines+'Line 201: Remote clean refresh\r\n'
+        body={'name':'Notes.txt','content_base64':base64.b64encode(updated_long_lines.encode()).decode(),'base_revision':r1.json()['revision'],'request_id':str(uuid.uuid4())}
+        r2=context.request.put(BASE+'/api/v1/documents/sample-notes',headers=headers,data=body)
+        assert r2.ok
+        expect(page.locator('#revision-status')).to_have_text(f"Revision {r2.json()['revision']}",timeout=7000)
+        page.wait_for_timeout(50)
+        scroll_after=page.locator('.cm-scroller').evaluate('el => el.scrollTop')
+        assert abs(scroll_after - scroll_before) < 5, f'Expected scrollTop preserved near {scroll_before}, got {scroll_after}'
+        page.locator('#go-bottom').click()
+        expect(editor).to_contain_text('Line 201: Remote clean refresh')
         # A dirty open tab survives remote writes; its save wins and retains history.
         editor.click();page.keyboard.press('Control+End');page.keyboard.insert_text('Unsaved browser edit\n')
         body['content_base64']=base64.b64encode(b'Concurrent Android edit\n').decode();body['request_id']=str(uuid.uuid4())

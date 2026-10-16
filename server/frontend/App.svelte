@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { EditorState, Compartment, EditorSelection } from "@codemirror/state";
+  import { EditorState, Compartment, EditorSelection, ChangeSet } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
@@ -335,6 +335,7 @@
       savedDoc: null,
       scrollTop: 0,
       scrollLeft: 0,
+      scrollSnapshot: null,
     });
     const initialState = makeState(doc, metadata.text);
     doc.state = initialState;
@@ -342,22 +343,68 @@
     return doc;
   }
 
-  function activate(id) {
-    const before = viewDocument;
-    if (before && view) {
-      before.state = view.state;
-      before.scrollTop = view.scrollDOM.scrollTop;
-      before.scrollLeft = view.scrollDOM.scrollLeft;
+  function diffBounds(oldText, newText) {
+    let start = 0;
+    const minLen = Math.min(oldText.length, newText.length);
+    while (start < minLen && oldText.charCodeAt(start) === newText.charCodeAt(start)) {
+      start++;
     }
+    let oldEnd = oldText.length;
+    let newEnd = newText.length;
+    while (oldEnd > start && newEnd > start && oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)) {
+      oldEnd--;
+      newEnd--;
+    }
+    return { start, oldEnd, newEnd };
+  }
+
+  function mapDocPos(beforeDoc, afterDoc, bounds, pos) {
+    if (pos <= bounds.start) return pos;
+    if (pos >= bounds.oldEnd) return pos + (bounds.newEnd - bounds.oldEnd);
+    const oldLine = beforeDoc.lineAt(pos);
+    const newLine = afterDoc.line(Math.min(oldLine.number, afterDoc.lines));
+    return Math.min(newLine.from + (pos - oldLine.from), newLine.to);
+  }
+
+  function mapScrollSnapshot(snapshot, beforeDoc, afterDoc, bounds) {
+    if (!snapshot) return null;
+    const oldPos = snapshot.value?.range?.head;
+    if (typeof oldPos !== "number") return snapshot;
+    const newPos = mapDocPos(beforeDoc, afterDoc, bounds, oldPos);
+    const delta = newPos - oldPos;
+    if (delta === 0) return snapshot;
+    const change =
+      delta > 0
+        ? ChangeSet.of({ from: 0, to: 0, insert: " ".repeat(delta) }, beforeDoc.length)
+        : ChangeSet.of({ from: 0, to: -delta }, beforeDoc.length);
+    return snapshot.map(change);
+  }
+
+  function captureViewState(doc = viewDocument) {
+    if (!doc || !view || viewDocument !== doc) return;
+    view.measure();
+    doc.state = view.state;
+    doc.scrollTop = view.scrollDOM.scrollTop;
+    doc.scrollLeft = view.scrollDOM.scrollLeft;
+    doc.scrollSnapshot = view.scrollSnapshot();
+  }
+
+  function activate(id) {
+    captureViewState();
     active = id;
     const doc = id ? documents.get(id) ?? null : null;
     viewDocument = doc;
     if (doc && view) {
       view.setState(doc.state);
-      view.scrollDOM.scrollTop = doc.scrollTop || 0;
-      view.scrollDOM.scrollLeft = doc.scrollLeft || 0;
       if (findOpen) syncSearchHighlight();
       else view.focus();
+      if (doc.scrollSnapshot) {
+        view.dispatch({ effects: doc.scrollSnapshot });
+        view.measure();
+      } else {
+        view.scrollDOM.scrollTop = doc.scrollTop || 0;
+        view.scrollDOM.scrollLeft = doc.scrollLeft || 0;
+      }
     } else if (!doc && findOpen) {
       findOpen = false;
       findResultText = "";
@@ -528,17 +575,20 @@
       if (current) current.remoteChanged = true;
       return;
     }
+    captureViewState(doc);
     const selection = doc.state.selection.main;
     const next = createDocModel(metadata);
-    const nextState = makeState(
-      next,
-      metadata.text,
-      EditorSelection.range(Math.min(selection.anchor, metadata.text.length), Math.min(selection.head, metadata.text.length))
+    const bounds = diffBounds(before.toString(), metadata.text);
+    const nextSelection = EditorSelection.range(
+      mapDocPos(before, next.state.doc, bounds, selection.anchor),
+      mapDocPos(before, next.state.doc, bounds, selection.head)
     );
+    const nextState = makeState(next, metadata.text, nextSelection);
     next.state = nextState;
     next.savedDoc = nextState.doc;
     next.scrollTop = doc.scrollTop;
     next.scrollLeft = doc.scrollLeft;
+    next.scrollSnapshot = mapScrollSnapshot(doc.scrollSnapshot, before, nextState.doc, bounds);
     documents.set(doc.id, next);
     if (active === doc.id) activate(doc.id);
   }
