@@ -22,7 +22,8 @@ sys.dont_write_bytecode = True
 
 BASE = Path("/opt/android_textpad")
 CONFIG = Path("/etc/android-textpad")
-DATA = Path("/var/lib/android-textpad")
+DATA = BASE / "data"
+LEGACY_DATA = Path("/var/lib/android-textpad")
 UNIT_DIRECTORY = Path("/etc/systemd/system")
 APACHE_INCLUDE = Path("/etc/apache2/android-textpad-server.conf")
 HTTPS_VHOST = Path("/etc/apache2/sites-available/view_git.conf")
@@ -71,6 +72,38 @@ def main(stage):
         account = pwd.getpwnam("textpad")
     DATA.mkdir(mode=0o700, exist_ok=True)
     os.chown(DATA, account.pw_uid, group.gr_gid)
+    backups = DATA / "backups"
+    backups.mkdir(mode=0o700, exist_ok=True)
+    os.chown(backups, account.pw_uid, group.gr_gid)
+    was_active = subprocess.run(["systemctl", "is-active", "--quiet", "android-textpad.service"], capture_output=True).returncode == 0
+    if LEGACY_DATA.exists():
+        subprocess.run(["systemctl", "stop", "android-textpad.service", "android-textpad-backup.service"], capture_output=True)
+        legacy_backups = LEGACY_DATA / "backups"
+        if legacy_backups.is_dir():
+            for item in sorted(legacy_backups.iterdir()):
+                target = backups / item.name
+                if not target.exists():
+                    shutil.move(str(item), str(target))
+                    target.chmod(0o600)
+                    os.chown(target, account.pw_uid, group.gr_gid)
+            try:
+                legacy_backups.rmdir()
+            except OSError:
+                pass
+        legacy_db = LEGACY_DATA / "textpad.sqlite3"
+        target_db = DATA / "textpad.sqlite3"
+        if legacy_db.exists() and not target_db.exists():
+            for suffix in ["", "-wal", "-shm"]:
+                src = LEGACY_DATA / f"textpad.sqlite3{suffix}"
+                if src.exists():
+                    dst = DATA / f"textpad.sqlite3{suffix}"
+                    shutil.move(str(src), str(dst))
+                    dst.chmod(0o600)
+                    os.chown(dst, account.pw_uid, group.gr_gid)
+        try:
+            LEGACY_DATA.rmdir()
+        except OSError:
+            pass
     CONFIG.mkdir(mode=0o750, exist_ok=True)
     os.chown(CONFIG, 0, group.gr_gid)
     for name in ["api-token", "session-key"]:
@@ -90,6 +123,15 @@ def main(stage):
             f"TEXTPAD_SESSION_FILE={CONFIG}/session-key\n"
             f"TEXTPAD_PUBLIC_URL={PUBLIC}\n").encode(), 0o640)
         os.chown(environment_path, 0, group.gr_gid)
+    else:
+        env_text = environment_path.read_text()
+        updated_env = env_text.replace(
+            f"TEXTPAD_DATABASE={LEGACY_DATA}/textpad.sqlite3",
+            f"TEXTPAD_DATABASE={DATA}/textpad.sqlite3",
+        )
+        if updated_env != env_text:
+            atomic_write(environment_path, updated_env.encode(), 0o640)
+            os.chown(environment_path, 0, group.gr_gid)
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     for line in environment_path.read_text().splitlines():
         if line and not line.startswith("#"):
@@ -109,10 +151,9 @@ def main(stage):
         "-m", "textpad_server", "init", cwd=release, env=environment)
     run("/usr/sbin/runuser", "-u", "textpad", "--", str(release / ".venv/bin/gunicorn"),
         "--config", "python:textpad_server.gunicorn_config", "--check-config", "textpad_server:create_app()", cwd=release, env=environment)
-    backups = DATA / "backups"
-    backups.mkdir(mode=0o700, exist_ok=True)
-    os.chown(backups, account.pw_uid, group.gr_gid)
     database = DATA / "textpad.sqlite3"
+    database.chmod(0o600)
+    os.chown(database, account.pw_uid, group.gr_gid)
     snapshot = backups / f"before-deploy-{stamp}.sqlite3"
     with closing(sqlite3.connect(database)) as source, closing(sqlite3.connect(snapshot)) as destination:
         source.backup(destination)
@@ -127,7 +168,6 @@ def main(stage):
         if contents is not None:
             atomic_write(config_backup / path.name, contents, 0o600)
     atomic_write(config_backup / "previous-server.json", json.dumps({"target":old_target}).encode(), 0o600)
-    was_active = subprocess.run(["systemctl", "is-active", "--quiet", "android-textpad.service"], capture_output=True).returncode == 0
     try:
         for name in units:
             atomic_write(UNIT_DIRECTORY / name, (stage / name).read_bytes())

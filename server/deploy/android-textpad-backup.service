@@ -14,4 +14,4 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/android-textpad
+ReadWritePaths=/opt/android_textpad/data

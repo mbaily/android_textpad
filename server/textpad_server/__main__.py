@@ -11,14 +11,14 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     backup = sub.add_parser("backup")
-    backup.add_argument("--directory", type=Path, default=Path("/var/lib/android-textpad/backups"))
+    backup.add_argument("--directory", type=Path, default=Path("/opt/android_textpad/data/backups"))
     remove = sub.add_parser("remove-revision")
     remove.add_argument("document_id")
     remove.add_argument("revision")
     prune = sub.add_parser("prune")
     prune.add_argument("document_id", nargs="?")
     args = parser.parse_args()
-    store = Store(os.environ.get("TEXTPAD_DATABASE", "/var/lib/android-textpad/textpad.sqlite3"))
+    store = Store(os.environ.get("TEXTPAD_DATABASE", "/opt/android_textpad/data/textpad.sqlite3"))
     if args.command == "backup":
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         destination = args.directory / f"textpad-{stamp}.sqlite3"

@@ -37,8 +37,8 @@ UTF-8, UTF-16 LE/BE, ASCII, BOMs, and existing LF/CRLF/CR or mixed terminators a
 | `/etc/android-textpad/server.env` | Service paths and public URL |
 | `/etc/android-textpad/api-token` | API and default browser credential, root/textpad readable |
 | `/etc/android-textpad/session-key` | Browser cookie signing key |
-| `/var/lib/android-textpad/textpad.sqlite3` | Current documents, exact bytes, revisions, and upload receipts |
-| `/var/lib/android-textpad/backups/` | Consistent SQLite backups, retained until manually removed |
+| `/opt/android_textpad/data/textpad.sqlite3` | Current documents, exact bytes, revisions, and upload receipts |
+| `/opt/android_textpad/data/backups/` | Consistent SQLite backups, retained until manually removed |
 
 `android-textpad.service` runs Gunicorn as the dedicated `textpad` account, listening on `127.0.0.1:8768` with two worker processes and 16 threads per worker. WebSocket connections each occupy a thread, suitable for this private deployment. Apache proxies only the Textpad API/editor paths through the existing TLS listener. Apache also upgrades the two authenticated events paths to WebSockets. No new public port is opened. The existing certificate and private root CA are reused; clients must trust that CA and retain hostname verification. Port 8443 belongs to another application.
 
@@ -72,10 +72,10 @@ The daily `android-textpad-backup.timer` uses SQLite's online backup API, includ
 
 ```sh
 sudo systemctl start android-textpad-backup.service
-sudo ls -l /var/lib/android-textpad/backups/
+sudo ls -l /opt/android_textpad/data/backups/
 ```
 
-To restore a selected backup, stop the service **and backup timer**, retain the current database and its `-wal`/`-shm` files together in a separate recovery directory, then install the selected backup as `/var/lib/android-textpad/textpad.sqlite3` owned by `textpad:textpad`, mode `0600`. Do not leave old WAL/SHM files beside the restored database. Check `PRAGMA integrity_check` on the selected backup before installation, then start the service and timer. Database restoration restores documents, history, and retry receipts to the backup's point in time; `/etc/android-textpad/` credentials are separate. Copy database backups and credentials to your normal protected backup location as needed.
+To restore a selected backup, stop the service **and backup timer**, retain the current database and its `-wal`/`-shm` files together in a separate recovery directory, then install the selected backup as `/opt/android_textpad/data/textpad.sqlite3` owned by `textpad:textpad`, mode `0600`. Do not leave old WAL/SHM files beside the restored database. Check `PRAGMA integrity_check` on the selected backup before installation, then start the service and timer. Database restoration restores documents, history, and retry receipts to the backup's point in time; `/etc/android-textpad/` credentials are separate. Copy database backups and credentials to your normal protected backup location as needed.
 
 Historical revisions can be removed explicitly by an administrator; the current revision is protected and idempotency receipts are retained:
 

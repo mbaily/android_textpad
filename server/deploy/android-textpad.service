@@ -19,7 +19,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/android-textpad
+ReadWritePaths=/opt/android_textpad/data
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]

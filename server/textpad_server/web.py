@@ -39,7 +39,7 @@ def same(left, right):
 def create_app(test_config=None):
     app = Flask(__name__, static_url_path="/editor/static")
     app.config.from_mapping(
-        DATABASE=os.environ.get("TEXTPAD_DATABASE", "/var/lib/android-textpad/textpad.sqlite3"),
+        DATABASE=os.environ.get("TEXTPAD_DATABASE", "/opt/android_textpad/data/textpad.sqlite3"),
         PUBLIC_URL=os.environ.get("TEXTPAD_PUBLIC_URL", "https://git23069.hopto.org/android_textpad").rstrip("/"),
         MAX_CONTENT_LENGTH=32 * 1024 * 1024,
         SESSION_COOKIE_NAME="textpad_session", SESSION_COOKIE_SECURE=True,
