@@ -151,6 +151,18 @@ def main():
         expect(page.locator('#file-sidebar')).to_be_visible()
         expect(page.locator('#sidebar-toggle')).to_have_attribute('aria-expanded','true')
         expect(page.locator('#sidebar-toggle')).to_have_attribute('aria-label','Hide sidebar')
+        # Mobile viewport adapts without horizontal page overflow and auto-closes overlay sidebar on file selection.
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        page.locator('.file-item').filter(has_text='Notes.txt').click()
+        expect(page.locator('#file-sidebar')).to_be_hidden()
+        page.locator('#sidebar-toggle').click()
+        expect(page.locator('#file-sidebar')).to_be_visible()
+        page.locator('.file-item').filter(has_text='Desktop QA.txt').click()
+        expect(page.locator('#file-sidebar')).to_be_hidden()
+        page.set_viewport_size({'width':1440,'height':960})
+        page.locator('#sidebar-toggle').click()
+        expect(page.locator('#file-sidebar')).to_be_visible()
         # Go to bottom of file places cursor at the end of the document.
         editor.click();page.keyboard.press('Control+Home')
         expect(page.locator('#cursor-status')).to_contain_text('Ln 1, Col 1')

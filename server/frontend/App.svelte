@@ -24,9 +24,10 @@
     initialPrefs = { ...initialPrefs, ...JSON.parse(localStorage.getItem("textpad.editor.preferences") || "{}") };
   } catch {}
 
-  let initialCollapsed = false;
+  let initialCollapsed = typeof window !== "undefined" && window.matchMedia?.("(max-width: 700px)").matches;
   try {
-    initialCollapsed = localStorage.getItem("textpad.editor.sidebarCollapsed") === "true";
+    const savedCollapsed = localStorage.getItem("textpad.editor.sidebarCollapsed");
+    if (savedCollapsed !== null) initialCollapsed = savedCollapsed === "true";
   } catch {}
 
   const documents = new SvelteMap();
@@ -365,8 +366,16 @@
     if (historyDocument && historyDocument !== id) closeHistory();
   }
 
+  function closeSidebarOnMobile() {
+    if (typeof window !== "undefined" && window.matchMedia?.("(max-width: 700px)").matches && !sidebarCollapsed) {
+      sidebarCollapsed = true;
+      view?.requestMeasure();
+    }
+  }
+
   async function openFile(id) {
     opening = id;
+    closeSidebarOnMobile();
     if (documents.has(id)) {
       activate(id);
       return;
@@ -399,6 +408,7 @@
       return;
     }
     opening = null;
+    closeSidebarOnMobile();
     const doc = createDocModel({
       id: crypto.randomUUID(),
       name,
@@ -1068,6 +1078,15 @@
 </script>
 
 <div class="workspace">
+  {#if !sidebarCollapsed}
+    <button
+      type="button"
+      class="sidebar-backdrop"
+      aria-label="Hide sidebar"
+      tabindex="-1"
+      onclick={() => setSidebarCollapsed(true)}
+    ></button>
+  {/if}
   <aside id="file-sidebar" class="sidebar" aria-label="Synced files" hidden={sidebarCollapsed}>
     <a class="brand" href="{prefix}/"><span class="brand-mark" aria-hidden="true">T_</span> Textpad <span class="edition">WEB</span></a>
     <div class="sidebar-heading">
