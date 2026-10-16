@@ -1,5 +1,5 @@
 """Optional Chrome smoke test against an isolated temporary server and database."""
-import base64, uuid
+import base64, re, uuid
 from contextlib import contextmanager
 from pathlib import Path
 import socket
@@ -142,10 +142,13 @@ def main():
         page.get_by_role('spinbutton',name='Dividing line dashes').fill('15')
         page.get_by_label('Line numbers',exact=True).uncheck();page.locator('#modal-actions').get_by_role('button',name='Apply',exact=True).click()
         expect(page.locator('.cm-lineNumbers')).to_have_count(0)
-        # Insert date, dividing line, and toggle todo buttons.
+        # Insert date, time, dividing line, and toggle todo buttons.
         editor.click();page.keyboard.press('Control+End')
         page.locator('#insert-date').click()
         expect(editor).to_contain_text(time.strftime('%Y-%m-%d'))
+        page.keyboard.insert_text('\n')
+        page.locator('#insert-time').click()
+        expect(page.locator('.cm-line').last).to_have_text(re.compile(r'^([1-9]|1[0-2]):[0-5][0-9] (AM|PM)$'))
         page.locator('#insert-divider').click()
         expect(editor).to_contain_text('-' * 15)
         page.keyboard.insert_text('\nBuy milk')

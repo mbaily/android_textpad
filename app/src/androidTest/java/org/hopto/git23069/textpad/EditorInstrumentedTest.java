@@ -121,6 +121,9 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(),"Insert date").performClick();
                 assertTrue(editor.getText().toString().endsWith(java.time.LocalDate.now().toString()));
                 editor.getText().append("\n");
+                button(activity.getWindow().getDecorView(),"Insert time").performClick();
+                assertTrue(editor.getText().toString().matches("(?s).*\\n([1-9]|1[0-2]):[0-5][0-9] (AM|PM)$"));
+                editor.getText().append("\n");
                 button(activity.getWindow().getDecorView(),"Insert dividing line").performClick();
                 assertTrue(editor.getText().toString().endsWith("\n------------"));
                 editor.getText().append("\ntask item");

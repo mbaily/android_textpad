@@ -44,6 +44,7 @@ import org.hopto.git23069.textpad.core.TextCodec;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,7 +63,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
+    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private EditorTab shownTab;
     private long shownState = -1;
     private boolean changing, started, dialogVisible, findAllFiles, readOnlyMode;
@@ -183,6 +184,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
         dateButton = iconButton(Icon.DATE, TEXT, "Insert date", v -> insertSnippet(LocalDate.now().toString()));
+        timeButton = iconButton(Icon.TIME, TEXT, "Insert time", v -> insertSnippet(currentTimeString()));
         dividerButton = iconButton(Icon.DIVIDER, TEXT, "Insert dividing line", v -> insertDivider());
         moveUpButton = iconButton(Icon.MOVE_LINE_UP, TEXT, "Move line up", v -> moveLines(true));
         moveDownButton = iconButton(Icon.MOVE_LINE_DOWN, TEXT, "Move line down", v -> moveLines(false));
@@ -191,7 +193,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
         toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(readOnlyButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
-        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton);
+        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(timeButton); toolbar.addView(dividerButton);
         toolbar.addView(moveUpButton); toolbar.addView(moveDownButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
@@ -306,6 +308,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         setButtonEnabled(moveUpButton, editable);
         setButtonEnabled(moveDownButton, editable);
         setButtonEnabled(redoButton, editable && doc.buffer.canRedo());
+        setButtonEnabled(timeButton, editable);
         setButtonEnabled(dateButton, editable);
         setButtonEnabled(dividerButton, editable);
         setButtonEnabled(findAllButton, doc != null);
@@ -528,6 +531,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         editor.setSelection(cursor);
         if (editor.getLayout() != null) editor.bringPointIntoView(cursor);
         saveViewState(); updateStatus();
+    }
+
+    private static String currentTimeString() {
+        LocalTime now = LocalTime.now();
+        int h24 = now.getHour(), h12 = h24 % 12 == 0 ? 12 : h24 % 12;
+        return String.format(Locale.US, "%d:%02d %s", h12, now.getMinute(), h24 >= 12 ? "PM" : "AM");
     }
 
     private void insertDivider() {
@@ -922,7 +931,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -1017,6 +1026,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                     case TODO -> {
                         canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 3 * s, ox + 21 * s, oy + 21 * s), 2 * s, 2 * s, strokePaint);
                         p.moveTo(ox + 8.5f * s, oy + 12.5f * s); p.lineTo(ox + 11 * s, oy + 15 * s); p.lineTo(ox + 16 * s, oy + 9.5f * s);
+                    }
+                    case TIME -> {
+                        canvas.drawCircle(ox + 12 * s, oy + 12 * s, 9 * s, strokePaint);
+                        p.moveTo(ox + 12 * s, oy + 7 * s); p.lineTo(ox + 12 * s, oy + 12 * s); p.lineTo(ox + 15.5f * s, oy + 14 * s);
                     }
                     case DATE -> {
                         canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 5 * s, ox + 21 * s, oy + 21 * s), 2 * s, 2 * s, strokePaint);
