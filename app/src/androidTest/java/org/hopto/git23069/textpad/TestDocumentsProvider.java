@@ -31,7 +31,8 @@ public class TestDocumentsProvider extends ContentProvider {
                 case DocumentsContract.Document.COLUMN_DISPLAY_NAME -> id;
                 case DocumentsContract.Document.COLUMN_MIME_TYPE -> "text/plain";
                 case DocumentsContract.Document.COLUMN_SIZE -> file(id).length();
-                case DocumentsContract.Document.COLUMN_FLAGS -> id.startsWith("readonly") ? 0 : DocumentsContract.Document.FLAG_SUPPORTS_WRITE;
+                case DocumentsContract.Document.COLUMN_FLAGS -> id.startsWith("readonly") ? 0
+                        : (DocumentsContract.Document.FLAG_SUPPORTS_WRITE | DocumentsContract.Document.FLAG_SUPPORTS_DELETE);
                 default -> null;
             };
             row.add(value);
@@ -44,5 +45,9 @@ public class TestDocumentsProvider extends ContentProvider {
     @Override public String getType(Uri uri) { return "text/plain"; }
     @Override public Uri insert(Uri uri, ContentValues values) { throw new UnsupportedOperationException(); }
     @Override public int update(Uri uri, ContentValues values, String where, String[] args) { throw new UnsupportedOperationException(); }
-    @Override public int delete(Uri uri, String where, String[] args) { throw new UnsupportedOperationException(); }
+    @Override public int delete(Uri uri, String where, String[] args) {
+        String id = DocumentsContract.getDocumentId(uri);
+        if (id.startsWith("readonly")) throw new SecurityException("Read-only test document");
+        return file(id).delete() ? 1 : 0;
+    }
 }

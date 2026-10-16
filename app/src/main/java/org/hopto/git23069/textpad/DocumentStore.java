@@ -142,13 +142,36 @@ final class DocumentStore {
     }
 
     void remember(Uri uri, String name) {
-        List<Recent> recent = recents(); recent.removeIf(r -> r.uri.equals(uri)); recent.add(0, new Recent(name, uri));
+        List<Recent> recent = recents(); recent.removeIf(r -> same(r.uri, uri)); recent.add(0, new Recent(name, uri));
         JSONArray array = new JSONArray();
         for (Recent r : recent.subList(0, Math.min(30, recent.size()))) {
             try { array.put(new JSONObject().put("name", r.name).put("uri", r.uri.toString())); }
             catch (JSONException ignored) { }
         }
         context.getSharedPreferences("files", 0).edit().putString("recent", array.toString()).apply();
+    }
+
+    void forget(Uri uri) {
+        List<Recent> recent = recents();
+        if (!recent.removeIf(r -> same(r.uri, uri))) return;
+        JSONArray array = new JSONArray();
+        for (Recent r : recent) {
+            try { array.put(new JSONObject().put("name", r.name).put("uri", r.uri.toString())); }
+            catch (JSONException ignored) { }
+        }
+        context.getSharedPreferences("files", 0).edit().putString("recent", array.toString()).apply();
+    }
+
+    boolean delete(Uri uri) {
+        forget(uri);
+        try {
+            if (DocumentsContract.deleteDocument(resolver, uri)) return true;
+        } catch (Exception ignored) { }
+        try {
+            return resolver.delete(uri, null, null) > 0;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     static boolean same(Uri a, Uri b) { return a != null && b != null && identity(a).equals(identity(b)); }

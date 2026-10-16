@@ -14,6 +14,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.TypedValue;
@@ -286,11 +287,16 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         EditorDocument doc = app.current(); if (doc == null || doc.saving) return;
         app.pendingSave = new TextpadApplication.PendingSave(doc, null, existing); launchSavePicker();
     }
+    private void moveDocument() {
+        EditorDocument doc = app.current(); if (doc == null || doc.uri == null || !doc.writable || doc.saving) return;
+        app.pendingSave = new TextpadApplication.PendingSave(doc, null, false, true); launchSavePicker();
+    }
     void launchSavePicker() {
         var pending = app.pendingSave; if (pending == null) return;
         Intent intent = new Intent(pending.existing() ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_CREATE_DOCUMENT)
                 .setType(pending.existing() ? "*/*" : "text/plain").addCategory(Intent.CATEGORY_OPENABLE);
         intent.putExtra(Intent.EXTRA_TITLE, pending.document().name);
+        if (pending.document().uri != null) intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, pending.document().uri);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(intent, pending.existing() ? EXISTING : CREATE);
     }
@@ -316,7 +322,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(event.title()).setMessage(event.message());
         if (event.conflict() != null) {
             var conflict = event.conflict();
-            builder.setPositiveButton("Overwrite", (dialog, which) -> app.saveTo(conflict.document(), conflict.target(), conflict.expected(), conflict.snapshot(), conflict.closeTab()));
+            builder.setPositiveButton("Overwrite", (dialog, which) -> app.saveTo(conflict.document(), conflict.target(), conflict.expected(), conflict.snapshot(), conflict.closeTab(), conflict.move()));
             builder.setNegativeButton("Cancel", null);
         } else builder.setPositiveButton("OK", null);
         AlertDialog dialog = builder.create();
@@ -325,22 +331,25 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        String[] actions = {"New document", "Open file…", "Recent files…", "Save", "Save As…", "Save to existing file…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…"};
+        String[] actions = {"New document", "Open file…", "Recent files…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…"};
         for (int i = 0; i < actions.length; i++) menu.getMenu().add(0, i, i, actions[i]);
-        menu.getMenu().findItem(7).setCheckable(true).setChecked(app.settings.wrap());
-        menu.getMenu().findItem(8).setCheckable(true).setChecked(app.settings.lineNumbers());
-        for (int i : new int[]{3,4,5,6,9,10,13}) menu.getMenu().findItem(i).setEnabled(app.current() != null);
+        menu.getMenu().findItem(8).setCheckable(true).setChecked(app.settings.wrap());
+        menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.lineNumbers());
+        for (int i : new int[]{3,4,5,7,10,11,14}) menu.getMenu().findItem(i).setEnabled(app.current() != null);
+        EditorDocument current = app.current();
+        menu.getMenu().findItem(6).setEnabled(current != null && current.uri != null && current.writable && !current.saving);
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 0 -> { saveViewState(); app.newDocument(); }
                 case 1 -> openPicker(); case 2 -> showRecents();
                 case 3 -> app.save(app.current(), null); case 4 -> saveAs(false); case 5 -> saveAs(true);
-                case 6 -> { saveViewState(); app.duplicate(); }
-                case 7 -> { app.settings.bool("wrap", !app.settings.wrap()); applySettings(); }
-                case 8 -> { app.settings.bool("lineNumbers", !app.settings.lineNumbers()); applySettings(); }
-                case 9 -> showEncoding(); case 10 -> reload(); case 11 -> showBackups();
-                case 12 -> showSettings(); case 13 -> showDocumentInfo(app.current()); case 14 -> showSync();
-                case 15 -> new AlertDialog.Builder(this).setTitle("Open with encoding")
+                case 6 -> moveDocument();
+                case 7 -> { saveViewState(); app.duplicate(); }
+                case 8 -> { app.settings.bool("wrap", !app.settings.wrap()); applySettings(); }
+                case 9 -> { app.settings.bool("lineNumbers", !app.settings.lineNumbers()); applySettings(); }
+                case 10 -> showEncoding(); case 11 -> reload(); case 12 -> showBackups();
+                case 13 -> showSettings(); case 14 -> showDocumentInfo(app.current()); case 15 -> showSync();
+                case 16 -> new AlertDialog.Builder(this).setTitle("Open with encoding")
                         .setItems(java.util.Arrays.stream(TextCodec.Encoding.values()).map(e -> e.label).toArray(String[]::new),
                                 (d, which) -> openPicker(TextCodec.Encoding.values()[which])).setNegativeButton("Cancel", null).show();
             }

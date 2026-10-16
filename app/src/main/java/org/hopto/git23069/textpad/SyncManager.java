@@ -82,6 +82,26 @@ final class SyncManager {
         doc.syncEnabled=true; doc.syncId=id; doc.serverRevision=revision;
         doc.syncedHash=baselineHash == null ? null : HexFormat.of().parseHex(baselineHash); app.refresh();
     }
+    void move(Uri oldUri, Uri newUri, String newName, EditorDocument doc) {
+        String oldKey=app.store.key(oldUri), newKey=app.store.key(newUri);
+        String id=prefs.getString(oldKey+".id",doc.syncId);
+        String revision=prefs.getString(oldKey+".revision",doc.serverRevision);
+        String oldName=prefs.getString(oldKey+".name",null);
+        String oldHash=prefs.getString(oldKey+".hash",doc.syncedHash == null ? null : HexFormat.of().formatHex(doc.syncedHash));
+        String baselineHash=newName.equals(oldName) ? oldHash : null;
+        SharedPreferences.Editor editor=prefs.edit();
+        if (!oldKey.equals(newKey)) {
+            editor.remove(oldKey+".uri").remove(oldKey+".name").remove(oldKey+".id")
+                    .remove(oldKey+".enabled").remove(oldKey+".revision").remove(oldKey+".hash")
+                    .remove(oldKey+".pendingHash").remove(oldKey+".request");
+        }
+        editor.putString(newKey+".uri",newUri.toString()).putString(newKey+".name",newName)
+                .putString(newKey+".id",id).putBoolean(newKey+".enabled",true)
+                .putString(newKey+".revision",revision).putString(newKey+".hash",baselineHash)
+                .remove(newKey+".pendingHash").remove(newKey+".request").commit();
+        doc.syncEnabled=true; doc.syncId=id; doc.serverRevision=revision;
+        doc.syncedHash=baselineHash == null ? null : HexFormat.of().parseHex(baselineHash);
+    }
     void disable(EditorDocument doc) {
         if (doc.uri != null) prefs.edit().putBoolean(app.store.key(doc.uri)+".enabled",false).apply();
         doc.syncEnabled=false; app.refresh();

@@ -197,4 +197,36 @@ public class SyncInstrumentedTest {
         sync(); assertEquals(1,api.accepted); assertEquals(2,api.uploads);
         assertEquals(hash(bytes("local version")),app.sync.bindings().get(0).hash()); app.sync.testApi=null;
     }
+
+    @Test public void moveAndRenameDeletesOldFileMigratesSyncBindingAndUpdatesServerName() throws Exception {
+        Uri oldUri=seed("old-name.txt","same content");
+        Uri newUri=seed("moved-name.txt","");
+        EditorDocument doc=new EditorDocument("old-name.txt",new DocumentBuffer(TextCodec.decode(bytes("same content"))));
+        doc.uri=oldUri; doc.savedHash=SaveTransaction.hash(bytes("same content"));
+        main(() -> { app.store.remember(oldUri,"old-name.txt"); app.addTab(doc); app.sync.link(doc,"move-doc",null,null); });
+        sync();
+        assertEquals("old-name.txt",api.get("move-doc").name());
+        assertEquals("1",api.get("move-doc").revision());
+
+        main(() -> {
+            app.pendingSave=new TextpadApplication.PendingSave(doc,null,false,true);
+            app.saveAsResult(newUri);
+        });
+        waitFor(() -> !doc.saving && !app.sync.busy && "2".equals(doc.serverRevision));
+
+        assertEquals(newUri,doc.uri);
+        assertEquals("moved-name.txt",doc.name);
+        assertTrue(doc.syncEnabled);
+        assertEquals("move-doc",doc.syncId);
+        assertEquals("same content",read(newUri));
+        assertThrows(java.io.IOException.class,() -> app.store.read(oldUri));
+        assertEquals(1,app.sync.bindings().size());
+        assertEquals(newUri,app.sync.bindings().get(0).uri());
+        assertEquals("moved-name.txt",app.sync.bindings().get(0).name());
+        assertEquals("moved-name.txt",api.get("move-doc").name());
+        assertEquals("same content",new String(api.get("move-doc").content(),StandardCharsets.UTF_8));
+        assertFalse(app.store.recents().stream().anyMatch(r -> DocumentStore.same(r.uri(),oldUri)));
+        assertTrue(app.store.recents().stream().anyMatch(r -> DocumentStore.same(r.uri(),newUri)));
+        app.sync.testApi=null;
+    }
 }
