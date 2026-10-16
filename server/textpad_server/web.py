@@ -44,7 +44,7 @@ def create_app(test_config=None):
         MAX_CONTENT_LENGTH=32 * 1024 * 1024,
         SESSION_COOKIE_NAME="textpad_session", SESSION_COOKIE_SECURE=True,
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Strict",
-        PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
         SOCK_SERVER_OPTIONS={"ping_interval":25, "max_message_size":4096},
     )
     if test_config is not None:
@@ -110,7 +110,8 @@ def create_app(test_config=None):
         response.headers["X-Frame-Options"] = "DENY"
         nonce = getattr(request, "csp_nonce", "")
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'nonce-" + nonce + "'; "
+            "default-src 'self'; script-src 'self'; worker-src 'self'; manifest-src 'self'; "
+            "style-src 'self' 'nonce-" + nonce + "'; "
             f"connect-src 'self' {'wss' if url.scheme == 'https' else 'ws'}://{url.netloc}; "
             "img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
         return response
@@ -256,6 +257,33 @@ def create_app(test_config=None):
             return redirect(public("/editor/login"), code=303)
         request.csp_nonce = secrets.token_urlsafe(18)
         return render_template("editor.html", prefix=prefix, csrf=csrf_token(), nonce=request.csp_nonce)
+
+    @app.get("/editor/manifest.webmanifest")
+    def editor_manifest():
+        manifest = {
+            "name": "Textpad",
+            "short_name": "Textpad",
+            "description": "Synced plain-text editor",
+            "start_url": public("/editor/"),
+            "scope": public("/editor/"),
+            "display": "standalone",
+            "background_color": "#101313",
+            "theme_color": "#101313",
+            "icons": [
+                {"src": public("/editor/static/apple-touch-icon.png"), "sizes": "180x180", "type": "image/png"},
+                {"src": public("/editor/static/icon-192.png"), "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+                {"src": public("/editor/static/icon-512.png"), "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+                {"src": public("/editor/static/favicon.svg"), "sizes": "any", "type": "image/svg+xml"},
+            ],
+        }
+        return app.response_class(json.dumps(manifest), mimetype="application/manifest+json")
+
+    @app.get("/editor/sw.js")
+    def editor_service_worker():
+        sw_code = (Path(app.static_folder) / "sw.js").read_text(encoding="utf-8")
+        response = app.response_class(sw_code, mimetype="application/javascript")
+        response.headers["Service-Worker-Allowed"] = public("/editor/")
+        return response
 
     @app.post("/editor/api/logout")
     def logout():

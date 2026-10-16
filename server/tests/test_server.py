@@ -228,5 +228,27 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(200,response.status_code,response.data)
         self.assertEqual(hashlib.sha256(raw).hexdigest(),response.json["sha256"])
 
+    def test_pwa_manifest_and_service_worker_assets(self):
+        manifest=self.client.get("/editor/manifest.webmanifest")
+        self.assertEqual(200,manifest.status_code)
+        self.assertEqual("application/manifest+json",manifest.mimetype)
+        data=manifest.json
+        self.assertEqual("standalone",data["display"])
+        self.assertEqual("/editor/",data["start_url"])
+        self.assertTrue(any(icon["sizes"]=="180x180" for icon in data["icons"]))
+        sw=self.client.get("/editor/sw.js")
+        self.assertEqual(200,sw.status_code)
+        self.assertIn("javascript",sw.mimetype)
+        self.assertEqual("/editor/",sw.headers.get("Service-Worker-Allowed"))
+        icon=self.client.get("/editor/static/apple-touch-icon.png")
+        self.assertEqual(200,icon.status_code)
+        self.assertTrue(icon.data.startswith(b"\x89PNG\r\n\x1a\n"))
+        icon.close()
+        self.login()
+        editor_html=self.client.get("/editor/")
+        self.assertEqual(200,editor_html.status_code)
+        self.assertIn(b'rel="manifest"',editor_html.data)
+        self.assertIn(b'name="apple-mobile-web-app-capable"',editor_html.data)
+
 
 if __name__=="__main__": unittest.main()

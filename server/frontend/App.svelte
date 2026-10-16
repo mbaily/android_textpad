@@ -65,6 +65,7 @@
   let canUndo = $state(false);
   let canRedo = $state(false);
   let readOnly = $state(false);
+  let pendingSyncCount = $state(0);
 
   let view = null;
   let viewDocument = null;
@@ -74,6 +75,172 @@
   let events = null;
   let reconnectTimer = null;
   let reconnectAttempts = 0;
+  let dbPromise = null;
+
+  const IDB_NAME = "textpad.editor.offline";
+  const IDB_VERSION = 1;
+
+  function openOfflineDb() {
+    if (typeof indexedDB === "undefined") return Promise.resolve(null);
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve) => {
+        try {
+          const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+          req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });
+            if (!db.objectStoreNames.contains("documents")) db.createObjectStore("documents", { keyPath: "id" });
+            if (!db.objectStoreNames.contains("outbox")) db.createObjectStore("outbox", { keyPath: "id" });
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+          req.onblocked = () => resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+    }
+    return dbPromise;
+  }
+
+  function idbPlain(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+
+  async function idbGetAll(storeName) {
+    const db = await openOfflineDb();
+    if (!db) return [];
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(storeName, "readonly");
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch {
+        resolve([]);
+      }
+    });
+  }
+
+  async function idbGet(storeName, key) {
+    const db = await openOfflineDb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(storeName, "readonly");
+        const req = tx.objectStore(storeName).get(key);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  async function idbStoreDocument(docMeta) {
+    const db = await openOfflineDb();
+    if (!db || !docMeta?.id) return;
+    const plain = idbPlain(docMeta);
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(["documents", "files"], "readwrite");
+        tx.objectStore("documents").put(plain);
+        const { text: _text, ...fileSummary } = plain;
+        tx.objectStore("files").put(fileSummary);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  async function idbSyncFileList(remoteFiles) {
+    const db = await openOfflineDb();
+    if (!db) return;
+    const plainFiles = idbPlain(remoteFiles);
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(["files", "outbox"], "readwrite");
+        const filesStore = tx.objectStore("files");
+        const outboxStore = tx.objectStore("outbox");
+        const outboxReq = outboxStore.getAll();
+        outboxReq.onsuccess = () => {
+          const outboxMap = new Map((outboxReq.result || []).map((item) => [item.id, item]));
+          filesStore.clear();
+          for (const f of plainFiles) {
+            const pending = outboxMap.get(f.id);
+            filesStore.put(pending ? pending.fileSummary : f);
+            outboxMap.delete(f.id);
+          }
+          for (const pending of outboxMap.values()) {
+            filesStore.put(pending.fileSummary);
+          }
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  async function idbSaveOffline(id, body, docMeta) {
+    const db = await openOfflineDb();
+    if (!db) return;
+    const plainDoc = idbPlain(docMeta);
+    const { text: _text, ...fileSummary } = plainDoc;
+    const outboxEntry = idbPlain({ id, body, docMeta: plainDoc, fileSummary });
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(["outbox", "documents", "files"], "readwrite");
+        tx.objectStore("outbox").put(outboxEntry);
+        tx.objectStore("documents").put(plainDoc);
+        tx.objectStore("files").put(fileSummary);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+    const outbox = await idbGetAll("outbox");
+    pendingSyncCount = outbox.length;
+  }
+
+  async function idbRemoveOutbox(id) {
+    const db = await openOfflineDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction("outbox", "readwrite");
+        tx.objectStore("outbox").delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+    const outbox = await idbGetAll("outbox");
+    pendingSyncCount = outbox.length;
+  }
+
+  async function idbClearAll() {
+    const db = await openOfflineDb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(["files", "documents", "outbox"], "readwrite");
+        tx.objectStore("files").clear();
+        tx.objectStore("documents").clear();
+        tx.objectStore("outbox").clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+    pendingSyncCount = 0;
+  }
 
   const activeDoc = $derived(active ? documents.get(active) ?? null : null);
   const filteredFiles = $derived.by(() => {
@@ -81,7 +248,13 @@
     return files.filter((file) => file.name.toLocaleLowerCase().includes(q));
   });
   const connectionLabel = $derived(
-    apiOnline ? (eventsReady ? "Connected · live updates" : "Connected to server") : "Connection unavailable"
+    apiOnline
+      ? eventsReady
+        ? "Connected · live updates"
+        : "Connected to server"
+      : pendingSyncCount > 0
+        ? `Offline · ${pendingSyncCount} pending`
+        : "Offline · cached mode"
   );
   const cursorStatus = $derived(
     activeDoc ? `Ln ${cursorLine}, Col ${cursorCol}  ·  ${lineCount.toLocaleString()} lines` : "No document open"
@@ -98,10 +271,12 @@
       : activeDoc.saving
         ? "Saving…"
         : readOnly
-          ? `Read only · ${activeDoc.dirty ? "Unsaved changes" : "Saved"}`
+          ? `Read only · ${activeDoc.dirty ? "Unsaved changes" : activeDoc.pendingSync ? "Saved offline" : "Saved"}`
           : activeDoc.dirty
             ? "Unsaved changes"
-            : "Saved"
+            : activeDoc.pendingSync
+              ? "Saved offline"
+              : "Saved"
   );
 
   $effect(() => {
@@ -151,7 +326,9 @@
       });
     } catch {
       apiOnline = false;
-      throw new Error("Connection lost. Your open edits are still here. Reconnect and retry.");
+      const error = new Error("Connection lost. Your open edits are still here. Reconnect and retry.");
+      error.offline = true;
+      throw error;
     }
     let data;
     try {
@@ -329,7 +506,7 @@
           doc.state = update.state;
           if (update.docChanged) {
             doc.dirty =
-              doc.revision === null ||
+              (doc.revision === null && !doc.pendingSync) ||
               !update.state.doc.eq(doc.savedDoc) ||
               doc.name !== doc.savedName ||
               doc.encoding !== doc.savedEncoding ||
@@ -347,6 +524,7 @@
       dirty: false,
       saving: false,
       remoteChanged: false,
+      pendingSync: Boolean(metadata.pendingSync),
       pending: null,
       savedName: metadata.name,
       savedEncoding: metadata.encoding,
@@ -360,6 +538,9 @@
     const initialState = makeState(doc, metadata.text);
     doc.state = initialState;
     doc.savedDoc = initialState.doc;
+    if (metadata.pendingBody) {
+      doc.pending = { doc: initialState.doc, body: metadata.pendingBody };
+    }
     return doc;
   }
 
@@ -448,12 +629,31 @@
       return;
     }
     try {
+      const pendingOutbox = await idbGet("outbox", id);
+      if (pendingOutbox && !apiOnline) {
+        const meta = { ...pendingOutbox.docMeta, pendingSync: true, pendingBody: pendingOutbox.body };
+        if (!documents.has(id)) documents.set(id, createDocModel(meta));
+        if (opening === id) activate(id);
+        return;
+      }
       const metadata = await api(`/documents/${encodeURIComponent(id)}`);
+      await idbStoreDocument(metadata);
       if (!documents.has(id)) documents.set(id, createDocModel(metadata));
       if (opening === id) activate(id);
       const remote = files.find((file) => file.id === id);
       if (remote && documents.get(id).revision !== remote.revision) refreshFiles().catch(failure);
     } catch (error) {
+      if (error.offline) {
+        const pendingOutbox = await idbGet("outbox", id);
+        const cached = pendingOutbox
+          ? { ...pendingOutbox.docMeta, pendingSync: true, pendingBody: pendingOutbox.body }
+          : await idbGet("documents", id);
+        if (cached) {
+          if (!documents.has(id)) documents.set(id, createDocModel(cached));
+          if (opening === id) activate(id);
+          return;
+        }
+      }
       failure(error);
     }
   }
@@ -561,7 +761,15 @@
       doc.savedEncoding = pending.body.encoding;
       doc.savedBom = pending.body.bom;
       doc.pending = null;
+      doc.pendingSync = false;
       doc.remoteChanged = false;
+      await idbRemoveOutbox(doc.id);
+      await idbStoreDocument({
+        ...result,
+        text: pending.body.text,
+        bom: doc.savedBom,
+        line_endings: doc.line_endings,
+      });
       files = [result, ...files.filter((file) => file.id !== result.id)];
       doc.dirty =
         !doc.state.doc.eq(doc.savedDoc) ||
@@ -572,6 +780,49 @@
         notice("Saved as the latest revision. The displaced server version is available in History.");
       }
       await refreshFiles();
+    } catch (error) {
+      if (error.offline) {
+        const nowIso = new Date().toISOString();
+        const byteLength = new TextEncoder().encode(pending.body.text).length;
+        const offlineMeta = {
+          id: doc.id,
+          name: pending.body.name,
+          revision: doc.revision,
+          sha256: doc.sha256 || "",
+          size: byteLength,
+          updated_at: nowIso,
+          encoding: pending.body.encoding,
+          bom: pending.body.bom,
+          line_endings: doc.line_endings || "LF",
+          text: pending.body.text,
+        };
+        await idbSaveOffline(doc.id, pending.body, offlineMeta);
+        doc.size = byteLength;
+        doc.updated_at = nowIso;
+        doc.savedDoc = pending.doc;
+        doc.savedName = pending.body.name;
+        doc.savedEncoding = pending.body.encoding;
+        doc.savedBom = pending.body.bom;
+        doc.pendingSync = true;
+        const summary = {
+          id: doc.id,
+          name: offlineMeta.name,
+          revision: offlineMeta.revision,
+          sha256: offlineMeta.sha256,
+          size: offlineMeta.size,
+          updated_at: offlineMeta.updated_at,
+          encoding: offlineMeta.encoding,
+        };
+        files = [summary, ...files.filter((file) => file.id !== doc.id)];
+        doc.dirty =
+          !doc.state.doc.eq(doc.savedDoc) ||
+          doc.name !== doc.savedName ||
+          doc.encoding !== doc.savedEncoding ||
+          doc.bom !== doc.savedBom;
+        notice("Saved offline in this browser. Changes will sync automatically when reconnected.");
+        return;
+      }
+      throw error;
     } finally {
       doc.saving = false;
       syncEditorMetrics();
@@ -590,6 +841,7 @@
     }
     const before = doc.state.doc;
     const metadata = await api(`/documents/${doc.id}`);
+    await idbStoreDocument(metadata);
     if (documents.get(doc.id) !== doc || doc.saving || !doc.state.doc.eq(before) || (!prompt && doc.dirty)) {
       const current = documents.get(doc.id);
       if (current) current.remoteChanged = true;
@@ -613,6 +865,66 @@
     if (active === doc.id) activate(doc.id);
   }
 
+  async function flushOutbox() {
+    const outbox = await idbGetAll("outbox");
+    pendingSyncCount = outbox.length;
+    if (!outbox.length) return;
+    for (const item of outbox) {
+      const openDoc = documents.get(item.id);
+      if (openDoc?.saving) continue;
+      const result = await api(`/documents/${item.id}`, { method: "PUT", body: JSON.stringify(item.body) });
+      await idbRemoveOutbox(item.id);
+      await idbStoreDocument({
+        ...result,
+        text: item.body.text,
+        bom: item.body.bom,
+        line_endings: result.line_endings,
+      });
+      if (openDoc) {
+        openDoc.revision = result.revision;
+        openDoc.sha256 = result.sha256;
+        openDoc.size = result.size;
+        openDoc.updated_at = result.updated_at;
+        openDoc.line_endings = result.line_endings;
+        openDoc.pendingSync = false;
+        openDoc.remoteChanged = false;
+        if (openDoc.pending?.body?.request_id === item.body.request_id) {
+          openDoc.pending = null;
+        }
+        openDoc.dirty =
+          !openDoc.state.doc.eq(openDoc.savedDoc) ||
+          openDoc.name !== openDoc.savedName ||
+          openDoc.encoding !== openDoc.savedEncoding ||
+          openDoc.bom !== openDoc.savedBom;
+      }
+      if (result.replaced_newer_revision) {
+        notice("Saved as the latest revision. The displaced server version is available in History.");
+      }
+    }
+  }
+
+  async function cacheDocumentsInBackground(remoteFiles) {
+    for (const remote of remoteFiles) {
+      if (!apiOnline) break;
+      const cached = await idbGet("documents", remote.id);
+      if (cached && cached.revision === remote.revision) continue;
+      const pending = await idbGet("outbox", remote.id);
+      if (pending) continue;
+      try {
+        const res = await fetch(`${apiBase}/documents/${encodeURIComponent(remote.id)}`, {
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          await idbStoreDocument(data);
+        }
+      } catch {
+        break;
+      }
+    }
+  }
+
   async function refreshFiles() {
     if (polling) {
       refreshAgain = true;
@@ -620,8 +932,10 @@
     }
     polling = true;
     try {
+      await flushOutbox();
       const result = await api("/documents");
       files = result.documents;
+      await idbSyncFileList(files);
       for (const remote of files) {
         const doc = documents.get(remote.id);
         if (!doc || !doc.revision || doc.revision === remote.revision) continue;
@@ -632,6 +946,22 @@
         await reloadFile(doc, false);
       }
       syncEditorMetrics();
+      cacheDocumentsInBackground(files);
+    } catch (error) {
+      if (error.offline) {
+        const cachedFiles = await idbGetAll("files");
+        const outbox = await idbGetAll("outbox");
+        pendingSyncCount = outbox.length;
+        if (cachedFiles.length > 0 || files.length > 0) {
+          if (cachedFiles.length > 0 && files.length === 0) {
+            cachedFiles.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+            files = cachedFiles;
+          }
+          syncEditorMetrics();
+          return;
+        }
+      }
+      throw error;
     } finally {
       polling = false;
       if (refreshAgain) {
@@ -1153,6 +1483,10 @@
     }
     try {
       await api("/logout", { method: "POST", body: "{}" });
+      await idbClearAll();
+      try {
+        navigator.serviceWorker?.controller?.postMessage({ type: "CLEAR_CACHE" });
+      } catch {}
       window.location.assign(`${prefix}/editor/login`);
     } catch (error) {
       failure(error);
@@ -1192,6 +1526,9 @@
     applyPreferences();
     refreshFiles().catch(failure);
     connectEvents();
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register(`${prefix}/editor/sw.js`, { scope: `${prefix}/editor/` }).catch(() => {});
+    }
 
     const onBeforeUnload = (event) => {
       if ([...documents.values()].some((d) => d.dirty || d.saving)) {
@@ -1220,6 +1557,10 @@
       connectEvents();
       refreshFiles().catch(failure);
     };
+    const onOffline = () => {
+      apiOnline = false;
+      closeEvents();
+    };
     const onVisibilityChange = () => {
       if (document.hidden) closeEvents();
       else {
@@ -1231,6 +1572,7 @@
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
     window.addEventListener("pagehide", closeEvents);
     window.addEventListener("pageshow", connectEvents);
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -1244,6 +1586,7 @@
       window.removeEventListener("beforeunload", onBeforeUnload);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
       window.removeEventListener("pagehide", closeEvents);
       window.removeEventListener("pageshow", connectEvents);
       document.removeEventListener("visibilitychange", onVisibilityChange);
