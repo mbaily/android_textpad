@@ -108,6 +108,14 @@ public class EditorInstrumentedTest {
                 editor.setSelection(0); assertEquals(0,editor.getSelectionStart());
                 button(activity.getWindow().getDecorView(),"Go to bottom of file").performClick();
                 assertEquals(editor.length(),editor.getSelectionStart()); assertEquals(editor.length(),editor.getSelectionEnd());
+                button(activity.getWindow().getDecorView(),"Toggle read-only mode").performClick();
+                assertNull(editor.getKeyListener());
+                assertFalse(button(activity.getWindow().getDecorView(),"Undo").isEnabled());
+                assertFalse(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
+                button(activity.getWindow().getDecorView(),"Toggle read-only mode").performClick();
+                assertNotNull(editor.getKeyListener());
+                assertTrue(button(activity.getWindow().getDecorView(),"Undo").isEnabled());
+                assertTrue(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
                 app.settings.prefs.edit().putInt("dividerDashes", 12).commit();
                 editor.getText().append("\n");
                 button(activity.getWindow().getDecorView(),"Insert date").performClick();

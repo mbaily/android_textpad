@@ -62,10 +62,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, moveUpButton, moveDownButton, bottomButton;
+    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private EditorTab shownTab;
     private long shownState = -1;
-    private boolean changing, started, dialogVisible, findAllFiles;
+    private boolean changing, started, dialogVisible, findAllFiles, readOnlyMode;
     private final Map<Long, TextView> tabNames = new HashMap<>();
     private final Map<Long, LinearLayout> tabViews = new HashMap<>();
     private final Runnable autosave = new Runnable() {
@@ -151,8 +151,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         findPanel.addView(queryRow);
         LinearLayout replaceRow = row(); replacement = field("Replace with");
         replaceRow.addView(replacement, new LinearLayout.LayoutParams(0, dp(48), 1));
-        replaceRow.addView(iconButton(Icon.REPLACE, TEXT, "Replace selection", v -> replaceOne()));
-        replaceRow.addView(iconButton(Icon.REPLACE_ALL, TEXT, "Replace all matches", v -> replaceAll())); findPanel.addView(replaceRow);
+        replaceOneButton = iconButton(Icon.REPLACE, TEXT, "Replace selection", v -> replaceOne());
+        replaceAllButton = iconButton(Icon.REPLACE_ALL, TEXT, "Replace all matches", v -> replaceAll());
+        replaceRow.addView(replaceOneButton);
+        replaceRow.addView(replaceAllButton); findPanel.addView(replaceRow);
         LinearLayout findOptions = row(); matchCase = new CheckBox(this); matchCase.setText("Match case"); matchCase.setTextSize(12);
         matchCase.setOnCheckedChangeListener((buttonView, isChecked) -> updateSearchHighlight());
         findOptions.addView(matchCase); findResult = label("", 11, MUTED); findOptions.addView(findResult); findPanel.addView(findOptions);
@@ -185,8 +187,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         moveUpButton = iconButton(Icon.MOVE_LINE_UP, TEXT, "Move line up", v -> moveLines(true));
         moveDownButton = iconButton(Icon.MOVE_LINE_DOWN, TEXT, "Move line down", v -> moveLines(false));
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
+        readOnlyButton = iconButton(Icon.READ_ONLY, TEXT, "Toggle read-only mode", v -> toggleReadOnly());
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
-        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
+        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(readOnlyButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
         toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(dividerButton);
         toolbar.addView(moveUpButton); toolbar.addView(moveDownButton); toolbar.addView(saveButton);
@@ -224,7 +227,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 boolean differentBuffer = editor.buffer != doc.buffer;
                 editor.buffer = doc.buffer;
                 if (switchTab || shownState != doc.buffer.state() || differentBuffer) editor.setText(doc.buffer.text());
-                editor.configure(app.settings, doc.writable && !doc.replacing);
+                editor.configure(app.settings, isEditable(doc));
                 int length = editor.length();
                 editor.setSelection(Math.min(length, selected.selectionStart), Math.min(length, selected.selectionEnd));
                 shownState = doc.buffer.state();
@@ -239,9 +242,34 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         }
         editor.setVisibility(selected == null ? View.GONE : View.VISIBLE);
         empty.setVisibility(selected == null ? View.VISIBLE : View.GONE);
-        if (selected != null && ((editor.getKeyListener() != null) != (selected.document.writable && !selected.document.replacing)))
-            editor.configure(app.settings, selected.document.writable && !selected.document.replacing);
+        if (selected != null && ((editor.getKeyListener() != null) != isEditable(selected.document)))
+            editor.configure(app.settings, isEditable(selected.document));
         updateTabLabels(); updateStatus();
+    }
+
+    private boolean isEditable(EditorDocument doc) {
+        return doc != null && doc.writable && !doc.replacing && !readOnlyMode;
+    }
+
+    private void toggleReadOnly() {
+        readOnlyMode = !readOnlyMode;
+        EditorDocument doc = app.current();
+        if (doc != null) {
+            saveViewState();
+            int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
+            int sx = editor.getScrollX(), sy = editor.getScrollY();
+            changing = true;
+            editor.configure(app.settings, isEditable(doc));
+            int len = editor.length();
+            editor.setSelection(Math.min(len, selStart), Math.min(len, selEnd));
+            editor.scrollTo(sx, sy);
+            changing = false;
+            if (readOnlyMode) {
+                var imm = getSystemService(android.view.inputmethod.InputMethodManager.class);
+                if (imm != null) imm.hideSoftInputFromWindow(editor.getWindowToken(), 0);
+            }
+        }
+        updateStatus();
     }
 
     private void updateTabLabels() {
@@ -272,18 +300,23 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void updateStatus() {
         EditorDocument doc = app.current();
-        setButtonEnabled(undoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canUndo());
-        setButtonEnabled(todoButton, doc != null && doc.writable && !doc.replacing);
-        setButtonEnabled(moveUpButton, doc != null && doc.writable && !doc.replacing);
-        setButtonEnabled(moveDownButton, doc != null && doc.writable && !doc.replacing);
-        setButtonEnabled(redoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canRedo());
-        setButtonEnabled(dateButton, doc != null && doc.writable && !doc.replacing);
-        setButtonEnabled(dividerButton, doc != null && doc.writable && !doc.replacing);
+        boolean editable = isEditable(doc);
+        setButtonEnabled(undoButton, editable && doc.buffer.canUndo());
+        setButtonEnabled(todoButton, editable);
+        setButtonEnabled(moveUpButton, editable);
+        setButtonEnabled(moveDownButton, editable);
+        setButtonEnabled(redoButton, editable && doc.buffer.canRedo());
+        setButtonEnabled(dateButton, editable);
+        setButtonEnabled(dividerButton, editable);
         setButtonEnabled(findAllButton, doc != null);
         setButtonEnabled(findButton, doc != null);
-        setButtonEnabled(indentLessButton, doc != null && doc.writable && !doc.replacing);
-        setButtonEnabled(indentMoreButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(indentLessButton, editable);
+        setButtonEnabled(indentMoreButton, editable);
         setButtonEnabled(bottomButton, doc != null);
+        setButtonEnabled(readOnlyButton, doc != null);
+        readOnlyButton.setBackground(iconDrawable(Icon.READ_ONLY, readOnlyMode ? ACCENT : TEXT));
+        if (replaceOneButton != null) setButtonEnabled(replaceOneButton, editable);
+        if (replaceAllButton != null) setButtonEnabled(replaceAllButton, editable);
         setButtonEnabled(saveButton, doc != null && !doc.saving);
         if (doc == null) { status.setText(app.opening ? "Opening file…" : "OFFLINE · READY"); location.setText("LOCAL FILES · FULLY OFFLINE"); return; }
         location.setText(doc.uri == null ? "NEW DOCUMENT · NOT SAVED" : app.store.location(doc.uri, doc.name));
@@ -291,7 +324,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         int column = offset - doc.buffer.lineStart(line) + 1;
         String baseStatus = String.format(Locale.ROOT, "Ln %d, Col %d  ·  %s%s  ·  %s%s", line + 1, column,
                 doc.buffer.encoding().label, doc.buffer.bom() ? " BOM" : "", doc.buffer.endingLabel(),
-                !doc.writable ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED");
+                (!doc.writable || readOnlyMode) ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED");
         if (doc.syncEnabled) {
             SpannableStringBuilder sb = new SpannableStringBuilder(baseStatus).append("  ·  ●");
             boolean synced = !doc.buffer.dirty() && doc.savedHash != null && doc.syncedHash != null && Arrays.equals(doc.savedHash, doc.syncedHash);
@@ -452,7 +485,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void history(boolean redo) {
-        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        EditorDocument doc = app.current(); if (!isEditable(doc)) return;
         DocumentBuffer.Change change = redo ? doc.buffer.redo() : doc.buffer.undo(); if (change == null) return;
         int start = change.start(), oldLength = redo ? change.removed().length() : change.added().length();
         String added = redo ? change.added() : change.removed();
@@ -462,7 +495,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void indent(boolean increase) {
-        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        EditorDocument doc = app.current(); if (!isEditable(doc)) return;
         int start = Math.max(0, editor.getSelectionStart()), end = Math.max(start, editor.getSelectionEnd());
         String text = editor.getText().toString(), unit = app.settings.indent() == 0 ? "\t" : " ".repeat(app.settings.indent());
         if (increase && start == end) { editor.getText().insert(start, unit); return; }
@@ -484,7 +517,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void insertSnippet(String snippet) {
-        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        EditorDocument doc = app.current(); if (!isEditable(doc)) return;
         int start = Math.max(0, editor.getSelectionStart()), end = Math.max(start, editor.getSelectionEnd());
         if (editor.length() - (end - start) + snippet.length() > TextCodec.MAX_BYTES) {
             toast("Insertion would exceed the editor size limit."); return;
@@ -502,7 +535,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void moveLines(boolean up) {
-        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        EditorDocument doc = app.current(); if (!isEditable(doc)) return;
         int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
         String text = editor.getText().toString();
         int blockStart = text.lastIndexOf('\n', Math.max(-1, selStart - 1)) + 1;
@@ -536,7 +569,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void toggleTodo() {
-        EditorDocument doc = app.current(); if (doc == null || !doc.writable || doc.replacing) return;
+        EditorDocument doc = app.current(); if (!isEditable(doc)) return;
         int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
         String text = editor.getText().toString();
         int blockStart = text.lastIndexOf('\n', Math.max(-1, selStart - 1)) + 1;
@@ -745,13 +778,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         else findResult.setText("No matches");
     }
     private void replaceOne() {
-        EditorDocument doc = app.current(); Pattern pattern = query(); if (doc == null || !doc.writable || doc.replacing || pattern == null) return;
+        EditorDocument doc = app.current(); Pattern pattern = query(); if (!isEditable(doc) || pattern == null) return;
         int start = Math.max(0, editor.getSelectionStart()), end = Math.max(start, editor.getSelectionEnd());
         if (pattern.matcher(editor.getText().subSequence(start, end)).matches()) editor.getText().replace(start, end, replacement.getText());
         findNext(true);
     }
     private void replaceAll() {
-        EditorDocument doc = app.current(); Pattern pattern = query(); if (doc == null || !doc.writable || doc.replacing || pattern == null) return;
+        EditorDocument doc = app.current(); Pattern pattern = query(); if (!isEditable(doc) || pattern == null) return;
         Matcher matcher = pattern.matcher(editor.getText()); StringBuilder out = new StringBuilder(); int previous = 0, count = 0;
         while (matcher.find()) {
             out.append(editor.getText(), previous, matcher.start()).append(replacement.getText()); previous = matcher.end(); count++;
@@ -862,7 +895,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             applySettings();
         }).setNegativeButton("Cancel", null).show();
     }
-    private void applySettings() { if (app.current() != null) editor.configure(app.settings, app.current().writable && !app.current().replacing); scheduleAutosave(); updateStatus(); }
+    private void applySettings() { if (app.current() != null) editor.configure(app.settings, isEditable(app.current())); scheduleAutosave(); updateStatus(); }
     private void scheduleAutosave() {
         app.main.removeCallbacks(autosave);
         if (started && app.settings.autosaveSeconds() > 0) app.main.postDelayed(autosave, app.settings.autosaveSeconds() * 1000L);
@@ -882,14 +915,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 case KeyEvent.KEYCODE_W -> { if (app.currentTab() != null) closeTab(app.currentTab()); return true; }
             }
         }
-        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getKeyCode() == KeyEvent.KEYCODE_TAB && app.current() != null && editor.hasFocus()) { indent(!event.isShiftPressed()); return true; }
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getKeyCode() == KeyEvent.KEYCODE_TAB && isEditable(app.current()) && editor.hasFocus()) { indent(!event.isShiftPressed()); return true; }
         return super.dispatchKeyEvent(event);
     }
 
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -1014,6 +1047,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         p.moveTo(ox + 12 * s, oy + 4 * s); p.lineTo(ox + 12 * s, oy + 16 * s);
                         p.moveTo(ox + 7 * s, oy + 11 * s); p.lineTo(ox + 12 * s, oy + 16 * s); p.lineTo(ox + 17 * s, oy + 11 * s);
                         p.moveTo(ox + 5 * s, oy + 20 * s); p.lineTo(ox + 19 * s, oy + 20 * s);
+                    }
+                    case READ_ONLY -> {
+                        canvas.drawRoundRect(new RectF(ox + 5 * s, oy + 11 * s, ox + 19 * s, oy + 21 * s), 2 * s, 2 * s, strokePaint);
+                        p.moveTo(ox + 8 * s, oy + 11 * s); p.lineTo(ox + 8 * s, oy + 7.5f * s);
+                        p.arcTo(new RectF(ox + 8 * s, oy + 3.5f * s, ox + 16 * s, oy + 11.5f * s), 180f, 180f, false);
+                        p.lineTo(ox + 16 * s, oy + 11 * s);
                     }
                     case SAVE -> {
                         p.moveTo(ox + 5 * s, oy + 3 * s); p.lineTo(ox + 16 * s, oy + 3 * s); p.lineTo(ox + 20 * s, oy + 7 * s);

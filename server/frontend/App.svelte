@@ -13,6 +13,7 @@
 
   const wrapCompartment = new Compartment();
   const guttersCompartment = new Compartment();
+  const readOnlyCompartment = new Compartment();
   const fonts = {
     mono: 'ui-monospace,"SFMono-Regular",Consolas,monospace',
     sans: "system-ui,sans-serif",
@@ -63,6 +64,7 @@
   let lineCount = $state(1);
   let canUndo = $state(false);
   let canRedo = $state(false);
+  let readOnly = $state(false);
 
   let view = null;
   let viewDocument = null;
@@ -91,7 +93,15 @@
     !activeDoc ? "" : activeDoc.revision ? `Revision ${activeDoc.revision}` : "New file"
   );
   const saveStatus = $derived(
-    !activeDoc ? "Ready" : activeDoc.saving ? "Saving…" : activeDoc.dirty ? "Unsaved changes" : "Saved"
+    !activeDoc
+      ? "Ready"
+      : activeDoc.saving
+        ? "Saving…"
+        : readOnly
+          ? `Read only · ${activeDoc.dirty ? "Unsaved changes" : "Saved"}`
+          : activeDoc.dirty
+            ? "Unsaved changes"
+            : "Saved"
   );
 
   $effect(() => {
@@ -263,6 +273,9 @@
       extensions: [
         history(),
         drawSelection(),
+        readOnlyCompartment.of(
+          readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []
+        ),
         rectangularSelection(),
         highlightActiveLineGutter(),
         EditorState.tabSize.of(4),
@@ -817,8 +830,23 @@
     }
   }
 
+  function toggleReadOnly() {
+    readOnly = !readOnly;
+    const effect = readOnlyCompartment.reconfigure(
+      readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []
+    );
+    for (const doc of documents.values()) {
+      if (active === doc.id && view) {
+        view.dispatch({ effects: effect });
+      } else {
+        doc.state = doc.state.update({ effects: effect }).state;
+      }
+    }
+    if (view && !readOnly) view.focus();
+  }
+
   function insertSnippet(snippet) {
-    if (!activeDoc || !view) return;
+    if (!activeDoc || !view || readOnly) return;
     const sel = view.state.selection.main;
     view.dispatch({
       changes: { from: sel.from, to: sel.to, insert: snippet },
@@ -834,7 +862,7 @@
   }
 
   function toggleTodo() {
-    if (!activeDoc || !view) return;
+    if (!activeDoc || !view || readOnly) return;
     const sel = view.state.selection.main;
     const doc = view.state.doc;
     const startLine = doc.lineAt(sel.from);
@@ -1314,15 +1342,18 @@
       <button id="save" class="primary icon-button" title="Save (Ctrl+S)" aria-label="Save" disabled={!activeDoc || activeDoc.saving} onclick={() => save().catch(failure)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>
-      <button id="undo" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!activeDoc || !canUndo} onclick={() => { undo(view); view.focus(); syncEditorMetrics(); }}>
+      <button id="undo" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!activeDoc || readOnly || !canUndo} onclick={() => { undo(view); view.focus(); syncEditorMetrics(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 9h11a5 5 0 0 1 0 10H9"/><polyline points="7 5 3 9 7 13"/></svg>
       </button>
-      <button id="redo" class="icon-button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!activeDoc || !canRedo} onclick={() => { redo(view); view.focus(); syncEditorMetrics(); }}>
+      <button id="redo" class="icon-button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!activeDoc || readOnly || !canRedo} onclick={() => { redo(view); view.focus(); syncEditorMetrics(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 9H10a5 5 0 0 0 0 10h5"/><polyline points="17 5 21 9 17 13"/></svg>
       </button>
       <span class="toolbar-divider"></span>
       <button id="go-bottom" class="icon-button" title="Go to bottom of file" aria-label="Go to bottom of file" disabled={!activeDoc} onclick={goToBottom}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>
+      </button>
+      <button id="toggle-readonly" class="icon-button" class:active={readOnly} aria-pressed={String(readOnly)} title={readOnly ? "Disable read-only mode" : "Enable read-only mode"} aria-label="Toggle read-only mode" disabled={!activeDoc} onclick={toggleReadOnly}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>
       </button>
       <button id="find" class="icon-button" title="Find in file (Ctrl+F)" aria-label="Find in file" disabled={!activeDoc} onclick={() => openFind(false)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7"/><path d="m20 20-4.35-4.35"/></svg>
@@ -1330,25 +1361,25 @@
       <button id="find-all" class="icon-button" title="Find in open files (Ctrl+Shift+F)" aria-label="Find in open files" disabled={!activeDoc} onclick={() => openFind(true)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h10"/><path d="M4 10h6"/><path d="M4 14h5"/><circle cx="15.5" cy="14.5" r="4.5"/><path d="m19 18 3 3"/></svg>
       </button>
-      <button id="indent-less" class="icon-button" title="Decrease indentation" aria-label="Decrease indentation" disabled={!activeDoc} onclick={() => { indentLess(view); view.focus(); }}>
+      <button id="indent-less" class="icon-button" title="Decrease indentation" aria-label="Decrease indentation" disabled={!activeDoc || readOnly} onclick={() => { indentLess(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="5" x2="4" y2="19"/><line x1="20" y1="12" x2="9" y2="12"/><polyline points="13 8 9 12 13 16"/></svg>
       </button>
-      <button id="indent-more" class="icon-button" title="Increase indentation" aria-label="Increase indentation" disabled={!activeDoc} onclick={() => { indentMore(view); view.focus(); }}>
+      <button id="indent-more" class="icon-button" title="Increase indentation" aria-label="Increase indentation" disabled={!activeDoc || readOnly} onclick={() => { indentMore(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="5" x2="4" y2="19"/><line x1="8" y1="12" x2="19" y2="12"/><polyline points="15 8 19 12 15 16"/></svg>
       </button>
-      <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] / [X])" aria-label="Toggle todo" disabled={!activeDoc} onclick={toggleTodo}>
+      <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] / [X])" aria-label="Toggle todo" disabled={!activeDoc || readOnly} onclick={toggleTodo}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="8.5 12.5 11 15 16 9.5"/></svg>
       </button>
-      <button id="insert-date" class="icon-button" title="Insert date (YYYY-MM-DD)" aria-label="Insert date" disabled={!activeDoc} onclick={() => insertSnippet(currentDateString())}>
+      <button id="insert-date" class="icon-button" title="Insert date (YYYY-MM-DD)" aria-label="Insert date" disabled={!activeDoc || readOnly} onclick={() => insertSnippet(currentDateString())}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       </button>
-      <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
+      <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc || readOnly} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="3" y1="12" x2="7" y2="12"/><line x1="10" y1="12" x2="14" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/></svg>
       </button>
-      <button id="move-line-up" class="icon-button" title="Move line up (Alt+ArrowUp)" aria-label="Move line up" disabled={!activeDoc} onclick={() => { moveLineUp(view); view.focus(); }}>
+      <button id="move-line-up" class="icon-button" title="Move line up (Alt+ArrowUp)" aria-label="Move line up" disabled={!activeDoc || readOnly} onclick={() => { moveLineUp(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="7" x2="11" y2="7"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/><line x1="17" y1="19" x2="17" y2="5"/><polyline points="13.5 8.5 17 5 20.5 8.5"/></svg>
       </button>
-      <button id="move-line-down" class="icon-button" title="Move line down (Alt+ArrowDown)" aria-label="Move line down" disabled={!activeDoc} onclick={() => { moveLineDown(view); view.focus(); }}>
+      <button id="move-line-down" class="icon-button" title="Move line down (Alt+ArrowDown)" aria-label="Move line down" disabled={!activeDoc || readOnly} onclick={() => { moveLineDown(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="7" x2="11" y2="7"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/><line x1="17" y1="5" x2="17" y2="19"/><polyline points="13.5 15.5 17 19 20.5 15.5"/></svg>
       </button>
       <span class="toolbar-spacer"></span>
