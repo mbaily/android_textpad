@@ -186,7 +186,7 @@ function renderFiles() {
 }
 function updateStatus() {
   const doc=activeDocument();
-  for(const name of ["save","find","indent-less","indent-more","reload","download","history","encoding-status"]) $(name).disabled=!doc;
+  for(const name of ["save","find","indent-less","indent-more","go-bottom","reload","download","history","encoding-status"]) $(name).disabled=!doc;
   $("undo").disabled=!doc || !undoDepth(view.state);$("redo").disabled=!doc || !redoDepth(view.state);
   $("save").disabled=!doc || doc.saving;$("reload").disabled=!doc || doc.revision===null || doc.saving;
   $("download").disabled=!doc || doc.revision===null;$("history").disabled=!doc || doc.revision===null;
@@ -349,6 +349,7 @@ $("sidebar-toggle").onclick=()=>setSidebarCollapsed(!sidebarCollapsed);
 $("save").onclick=()=>save().catch(failure);$("refresh").onclick=()=>refreshFiles().catch(failure);
 $("undo").onclick=()=>{undo(view);view.focus();};$("redo").onclick=()=>{redo(view);view.focus();};
 $("find").onclick=()=>openSearchPanel(view);$("indent-more").onclick=()=>{indentMore(view);view.focus();};$("indent-less").onclick=()=>{indentLess(view);view.focus();};
+$("go-bottom").onclick=()=>{const doc=activeDocument();if(!doc)return;const end=view.state.doc.length;view.dispatch({selection:{anchor:end,head:end},scrollIntoView:true});view.focus();};
 $("reload").onclick=()=>reloadFile().catch(failure);$("reload-remote").onclick=()=>reloadFile().catch(failure);
 $("history").onclick=showHistory;$("close-history").onclick=closeHistory;$("restore-revision").onclick=()=>restoreRevision().catch(failure);
 $("encoding-status").onclick=encodingSettings;$("settings").onclick=settings;$("connect-android").onclick=()=>connectAndroid().catch(failure);

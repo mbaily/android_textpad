@@ -98,6 +98,9 @@ public class EditorInstrumentedTest {
                 assertEquals("    hello\n    world",editor.getText().toString());
                 button(activity.getWindow().getDecorView(),"Undo").performClick(); assertEquals("hello\nworld",editor.getText().toString());
                 button(activity.getWindow().getDecorView(),"Redo").performClick(); assertEquals("    hello\n    world",editor.getText().toString());
+                editor.setSelection(0); assertEquals(0,editor.getSelectionStart());
+                button(activity.getWindow().getDecorView(),"Go to bottom of file").performClick();
+                assertEquals(editor.length(),editor.getSelectionStart()); assertEquals(editor.length(),editor.getSelectionEnd());
             });
         }
     }

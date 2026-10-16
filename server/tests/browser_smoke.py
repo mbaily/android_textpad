@@ -123,6 +123,11 @@ def main():
         expect(page.locator('#file-sidebar')).to_be_visible()
         expect(page.locator('#sidebar-toggle')).to_have_attribute('aria-expanded','true')
         expect(page.locator('#sidebar-toggle')).to_have_attribute('aria-label','Hide sidebar')
+        # Go to bottom of file places cursor at the end of the document.
+        editor.click();page.keyboard.press('Control+Home')
+        expect(page.locator('#cursor-status')).to_contain_text('Ln 1, Col 1')
+        page.locator('#go-bottom').click()
+        expect(page.locator('#cursor-status')).to_contain_text('Ln 3, Col 1')
         page.locator('#encoding-status').click();page.locator('#modal-actions').get_by_role('button',name='Rename…',exact=True).click()
         page.get_by_role('textbox',name='Filename',exact=True).fill('Renamed 😀.txt');page.locator('#modal-actions').get_by_role('button',name='Apply',exact=True).click()
         page.locator('#save').click();expect(page.locator('#save-status')).to_have_text('Saved')

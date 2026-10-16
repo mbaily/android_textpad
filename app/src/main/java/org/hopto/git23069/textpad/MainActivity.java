@@ -3,7 +3,14 @@ package org.hopto.git23069.textpad;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PixelFormat;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -47,7 +54,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton;
+    private Button saveButton, undoButton, redoButton, findButton, indentLessButton, indentMoreButton, bottomButton;
     private EditorTab shownTab;
     private long shownState = -1;
     private boolean changing, started, dialogVisible;
@@ -98,9 +105,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         TextView title = label("Textpad", 23, TEXT); title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         TextView subtitle = label("A LITTLE SPACE TO WRITE", 9, MUTED); subtitle.setLetterSpacing(.15f);
         brand.addView(title); brand.addView(subtitle); header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
-        header.addView(button("+", "New document", v -> { saveViewState(); app.newDocument(); }));
-        header.addView(button("Open", "Open file", v -> openPicker()));
-        Button menu = button("⋮", "More options", this::showMenu); header.addView(menu);
+        header.addView(iconButton(Icon.NEW, TEXT, "New document", v -> { saveViewState(); app.newDocument(); }));
+        header.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
+        Button menu = iconButton(Icon.MENU, TEXT, "More options", this::showMenu); header.addView(menu);
         root.addView(header);
         root.addView(divider());
 
@@ -114,14 +121,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         findPanel = column(); findPanel.setPadding(dp(10), dp(5), dp(10), dp(5)); findPanel.setBackgroundColor(SURFACE);
         LinearLayout queryRow = row(); find = field("Find text");
         queryRow.addView(find, new LinearLayout.LayoutParams(0, dp(48), 1));
-        queryRow.addView(button("↑", "Previous match", v -> findNext(false)));
-        queryRow.addView(button("↓", "Next match", v -> findNext(true)));
-        queryRow.addView(button("×", "Close find", v -> { findPanel.setVisibility(View.GONE); editor.requestFocus(); }));
+        queryRow.addView(iconButton(Icon.PREV, TEXT, "Previous match", v -> findNext(false)));
+        queryRow.addView(iconButton(Icon.NEXT, TEXT, "Next match", v -> findNext(true)));
+        queryRow.addView(iconButton(Icon.CLOSE, TEXT, "Close find", v -> { findPanel.setVisibility(View.GONE); editor.requestFocus(); }));
         findPanel.addView(queryRow);
         LinearLayout replaceRow = row(); replacement = field("Replace with");
         replaceRow.addView(replacement, new LinearLayout.LayoutParams(0, dp(48), 1));
-        replaceRow.addView(button("Replace", "Replace selection", v -> replaceOne()));
-        replaceRow.addView(button("All", "Replace all matches", v -> replaceAll())); findPanel.addView(replaceRow);
+        replaceRow.addView(iconButton(Icon.REPLACE, TEXT, "Replace selection", v -> replaceOne()));
+        replaceRow.addView(iconButton(Icon.REPLACE_ALL, TEXT, "Replace all matches", v -> replaceAll())); findPanel.addView(replaceRow);
         LinearLayout findOptions = row(); matchCase = new CheckBox(this); matchCase.setText("Match case"); matchCase.setTextSize(12);
         findOptions.addView(matchCase); findResult = label("", 11, MUTED); findOptions.addView(findResult); findPanel.addView(findOptions);
         findPanel.setVisibility(View.GONE); root.addView(findPanel);
@@ -133,21 +140,23 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         TextView welcome = label("Your files. Your words.", 24, TEXT); welcome.setGravity(Gravity.CENTER); empty.addView(welcome);
         TextView intro = label("Open a text file or start a fresh page.\nEverything you write stays on your device\nuntil you choose to sync it.", 14, MUTED);
         intro.setGravity(Gravity.CENTER); intro.setLineSpacing(dp(4), 1); intro.setPadding(0, dp(16), 0, dp(24)); empty.addView(intro);
-        LinearLayout emptyActions = row(); emptyActions.addView(button("New document", "New document", v -> app.newDocument()));
-        emptyActions.addView(button("Open file", "Open file", v -> openPicker())); empty.addView(emptyActions);
+        LinearLayout emptyActions = row(); emptyActions.addView(iconButton(Icon.NEW, ACCENT, "New document", v -> app.newDocument()));
+        emptyActions.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker())); empty.addView(emptyActions);
         body.addView(empty, new android.widget.FrameLayout.LayoutParams(-1, -1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
         root.addView(divider());
         HorizontalScrollView tools = new HorizontalScrollView(this); tools.setHorizontalScrollBarEnabled(false);
         LinearLayout toolbar = row(); toolbar.setPadding(dp(8), dp(4), dp(8), dp(4));
-        undoButton = button("↶", "Undo", v -> history(false)); redoButton = button("↷", "Redo", v -> history(true));
-        toolbar.addView(undoButton); toolbar.addView(redoButton);
-        toolbar.addView(button("Find", "Find and replace", v -> showFind()));
-        toolbar.addView(button("←|", "Decrease indentation", v -> indent(false)));
-        toolbar.addView(button("|→", "Increase indentation", v -> indent(true)));
-        saveButton = button("Save", "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
-        saveButton.setTextColor(ACCENT); toolbar.addView(saveButton);
+        undoButton = iconButton(Icon.UNDO, TEXT, "Undo", v -> history(false));
+        redoButton = iconButton(Icon.REDO, TEXT, "Redo", v -> history(true));
+        findButton = iconButton(Icon.FIND, TEXT, "Find and replace", v -> showFind());
+        indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
+        indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
+        bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
+        saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
+        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(findButton);
+        toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton); toolbar.addView(bottomButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
         root.addView(status);
@@ -212,7 +221,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 name.setEllipsize(android.text.TextUtils.TruncateAt.END); name.setPadding(dp(13), dp(10), dp(4), dp(10));
                 name.setOnClickListener(v -> { saveViewState(); app.selectedTab = tab.id; app.refresh(); });
                 name.setOnLongClickListener(v -> { showDocumentInfo(tab.document); return true; });
-                view.addView(name); Button close = button("×", "Close " + tab.document.name, v -> closeTab(tab));
+                view.addView(name); Button close = iconButton(Icon.CLOSE, TEXT, "Close " + tab.document.name, v -> closeTab(tab));
                 view.addView(close); tabBar.addView(view); tabNames.put(tab.id, name); tabViews.put(tab.id, view);
             }
         }
@@ -230,10 +239,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void updateStatus() {
         EditorDocument doc = app.current();
-        undoButton.setEnabled(doc != null && doc.writable && !doc.replacing && doc.buffer.canUndo());
-        redoButton.setEnabled(doc != null && doc.writable && !doc.replacing && doc.buffer.canRedo());
-        saveButton.setEnabled(doc != null && !doc.saving);
-        saveButton.setText(doc != null && doc.saving ? "Saving…" : "Save");
+        setButtonEnabled(undoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canUndo());
+        setButtonEnabled(redoButton, doc != null && doc.writable && !doc.replacing && doc.buffer.canRedo());
+        setButtonEnabled(findButton, doc != null);
+        setButtonEnabled(indentLessButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(indentMoreButton, doc != null && doc.writable && !doc.replacing);
+        setButtonEnabled(bottomButton, doc != null);
+        setButtonEnabled(saveButton, doc != null && !doc.saving);
         if (doc == null) { status.setText(app.opening ? "Opening file…" : "OFFLINE · READY"); location.setText("LOCAL FILES · FULLY OFFLINE"); return; }
         location.setText(doc.uri == null ? "NEW DOCUMENT · NOT SAVED" : app.store.location(doc.uri, doc.name));
         int offset = Math.max(0, editor.getSelectionStart()), line = doc.buffer.lineAt(offset);
@@ -373,6 +385,16 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             changed = out.toString();
         }
         editor.getText().replace(first, last, changed); editor.setSelection(first, first + changed.length());
+    }
+
+    private void goToBottom() {
+        if (app.current() == null) return;
+        int end = editor.length();
+        editor.requestFocus();
+        editor.setSelection(end);
+        if (editor.getLayout() != null) editor.bringPointIntoView(end);
+        saveViewState();
+        updateStatus();
     }
 
     private void showFind() { if (app.current() == null) return; findPanel.setVisibility(View.VISIBLE); find.requestFocus(); }
@@ -528,12 +550,109 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private Button button(String text, String description, View.OnClickListener action) {
-        Button button = new Button(this); button.setText(text); button.setTextSize(13); button.setAllCaps(false);
-        button.setTextColor(TEXT); button.setMinWidth(dp(44)); button.setMinimumWidth(dp(44)); button.setMinHeight(dp(44)); button.setMinimumHeight(dp(44));
-        button.setPadding(dp(10), 0, dp(10), 0); button.setBackground(rounded(SURFACE, 7));
-        button.setContentDescription(description); button.setOnClickListener(action);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(44)); lp.setMargins(dp(2), 0, dp(2), 0); button.setLayoutParams(lp); return button;
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, INDENT_LESS, INDENT_MORE, BOTTOM, SAVE }
+    private void setButtonEnabled(Button button, boolean enabled) {
+        button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
+    }
+    private Button iconButton(Icon icon, int color, String description, View.OnClickListener action) {
+        Button button = new Button(this); button.setText(""); button.setAllCaps(false);
+        button.setMinWidth(dp(44)); button.setMinimumWidth(dp(44)); button.setMinHeight(dp(44)); button.setMinimumHeight(dp(44));
+        button.setPadding(0, 0, 0, 0); button.setBackground(iconDrawable(icon, color));
+        button.setContentDescription(description); button.setTooltipText(description); button.setOnClickListener(action);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44)); lp.setMargins(dp(2), 0, dp(2), 0); button.setLayoutParams(lp); return button;
+    }
+    private Drawable iconDrawable(Icon icon, int color) {
+        return new Drawable() {
+            private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            {
+                bgPaint.setColor(SURFACE);
+                strokePaint.setColor(color); strokePaint.setStyle(Paint.Style.STROKE);
+                strokePaint.setStrokeWidth(dp(2)); strokePaint.setStrokeCap(Paint.Cap.ROUND); strokePaint.setStrokeJoin(Paint.Join.ROUND);
+                fillPaint.setColor(color); fillPaint.setStyle(Paint.Style.FILL);
+            }
+            @Override public void draw(Canvas canvas) {
+                RectF bounds = new RectF(getBounds());
+                float r = dp(7);
+                canvas.drawRoundRect(bounds, r, r, bgPaint);
+                float size = dp(18), ox = bounds.centerX() - size / 2f, oy = bounds.centerY() - size / 2f, s = size / 24f;
+                Path p = new Path();
+                switch (icon) {
+                    case NEW -> { p.moveTo(ox + 5 * s, oy + 12 * s); p.lineTo(ox + 19 * s, oy + 12 * s); p.moveTo(ox + 12 * s, oy + 5 * s); p.lineTo(ox + 12 * s, oy + 19 * s); }
+                    case OPEN -> {
+                        p.moveTo(ox + 3 * s, oy + 6 * s); p.lineTo(ox + 9 * s, oy + 6 * s); p.lineTo(ox + 11 * s, oy + 8 * s);
+                        p.lineTo(ox + 21 * s, oy + 8 * s); p.lineTo(ox + 21 * s, oy + 19 * s); p.lineTo(ox + 3 * s, oy + 19 * s); p.close();
+                    }
+                    case MENU -> {
+                        for (float y : new float[]{5f, 12f, 19f}) canvas.drawCircle(ox + 12 * s, oy + y * s, 1.8f * s, fillPaint);
+                    }
+                    case PREV -> {
+                        p.moveTo(ox + 12 * s, oy + 19 * s); p.lineTo(ox + 12 * s, oy + 5 * s);
+                        p.moveTo(ox + 7 * s, oy + 10 * s); p.lineTo(ox + 12 * s, oy + 5 * s); p.lineTo(ox + 17 * s, oy + 10 * s);
+                    }
+                    case NEXT -> {
+                        p.moveTo(ox + 12 * s, oy + 5 * s); p.lineTo(ox + 12 * s, oy + 19 * s);
+                        p.moveTo(ox + 7 * s, oy + 14 * s); p.lineTo(ox + 12 * s, oy + 19 * s); p.lineTo(ox + 17 * s, oy + 14 * s);
+                    }
+                    case CLOSE -> {
+                        p.moveTo(ox + 7 * s, oy + 7 * s); p.lineTo(ox + 17 * s, oy + 17 * s);
+                        p.moveTo(ox + 17 * s, oy + 7 * s); p.lineTo(ox + 7 * s, oy + 17 * s);
+                    }
+                    case REPLACE -> {
+                        p.moveTo(ox + 4 * s, oy + 8 * s); p.lineTo(ox + 19 * s, oy + 8 * s);
+                        p.moveTo(ox + 15 * s, oy + 4 * s); p.lineTo(ox + 19 * s, oy + 8 * s); p.lineTo(ox + 15 * s, oy + 12 * s);
+                        p.moveTo(ox + 20 * s, oy + 16 * s); p.lineTo(ox + 5 * s, oy + 16 * s);
+                        p.moveTo(ox + 9 * s, oy + 12 * s); p.lineTo(ox + 5 * s, oy + 16 * s); p.lineTo(ox + 9 * s, oy + 20 * s);
+                    }
+                    case REPLACE_ALL -> {
+                        p.moveTo(ox + 2 * s, oy + 12 * s); p.lineTo(ox + 7 * s, oy + 17 * s); p.lineTo(ox + 16 * s, oy + 7 * s);
+                        p.moveTo(ox + 9 * s, oy + 12 * s); p.lineTo(ox + 14 * s, oy + 17 * s); p.lineTo(ox + 22 * s, oy + 7 * s);
+                    }
+                    case UNDO -> {
+                        p.moveTo(ox + 7 * s, oy + 5 * s); p.lineTo(ox + 3 * s, oy + 9 * s); p.lineTo(ox + 7 * s, oy + 13 * s);
+                        p.moveTo(ox + 3 * s, oy + 9 * s); p.lineTo(ox + 14 * s, oy + 9 * s);
+                        p.arcTo(new RectF(ox + 9 * s, oy + 9 * s, ox + 19 * s, oy + 19 * s), -90f, 180f, false);
+                        p.lineTo(ox + 9 * s, oy + 19 * s);
+                    }
+                    case REDO -> {
+                        p.moveTo(ox + 17 * s, oy + 5 * s); p.lineTo(ox + 21 * s, oy + 9 * s); p.lineTo(ox + 17 * s, oy + 13 * s);
+                        p.moveTo(ox + 21 * s, oy + 9 * s); p.lineTo(ox + 10 * s, oy + 9 * s);
+                        p.arcTo(new RectF(ox + 5 * s, oy + 9 * s, ox + 15 * s, oy + 19 * s), -90f, -180f, false);
+                        p.lineTo(ox + 15 * s, oy + 19 * s);
+                    }
+                    case FIND -> {
+                        canvas.drawCircle(ox + 11 * s, oy + 11 * s, 6.5f * s, strokePaint);
+                        p.moveTo(ox + 16 * s, oy + 16 * s); p.lineTo(ox + 20.5f * s, oy + 20.5f * s);
+                    }
+                    case INDENT_LESS -> {
+                        p.moveTo(ox + 4 * s, oy + 5 * s); p.lineTo(ox + 4 * s, oy + 19 * s);
+                        p.moveTo(ox + 20 * s, oy + 12 * s); p.lineTo(ox + 9 * s, oy + 12 * s);
+                        p.moveTo(ox + 13 * s, oy + 8 * s); p.lineTo(ox + 9 * s, oy + 12 * s); p.lineTo(ox + 13 * s, oy + 16 * s);
+                    }
+                    case INDENT_MORE -> {
+                        p.moveTo(ox + 4 * s, oy + 5 * s); p.lineTo(ox + 4 * s, oy + 19 * s);
+                        p.moveTo(ox + 8 * s, oy + 12 * s); p.lineTo(ox + 19 * s, oy + 12 * s);
+                        p.moveTo(ox + 15 * s, oy + 8 * s); p.lineTo(ox + 19 * s, oy + 12 * s); p.lineTo(ox + 15 * s, oy + 16 * s);
+                    }
+                    case BOTTOM -> {
+                        p.moveTo(ox + 12 * s, oy + 4 * s); p.lineTo(ox + 12 * s, oy + 16 * s);
+                        p.moveTo(ox + 7 * s, oy + 11 * s); p.lineTo(ox + 12 * s, oy + 16 * s); p.lineTo(ox + 17 * s, oy + 11 * s);
+                        p.moveTo(ox + 5 * s, oy + 20 * s); p.lineTo(ox + 19 * s, oy + 20 * s);
+                    }
+                    case SAVE -> {
+                        p.moveTo(ox + 5 * s, oy + 3 * s); p.lineTo(ox + 16 * s, oy + 3 * s); p.lineTo(ox + 20 * s, oy + 7 * s);
+                        p.lineTo(ox + 20 * s, oy + 20 * s); p.lineTo(ox + 4 * s, oy + 20 * s); p.lineTo(ox + 4 * s, oy + 3 * s); p.close();
+                        p.moveTo(ox + 8 * s, oy + 3 * s); p.lineTo(ox + 8 * s, oy + 8 * s); p.lineTo(ox + 15 * s, oy + 8 * s); p.lineTo(ox + 15 * s, oy + 3 * s);
+                        p.moveTo(ox + 7 * s, oy + 20 * s); p.lineTo(ox + 7 * s, oy + 13 * s); p.lineTo(ox + 17 * s, oy + 13 * s); p.lineTo(ox + 17 * s, oy + 20 * s);
+                    }
+                }
+                if (!p.isEmpty()) canvas.drawPath(p, strokePaint);
+            }
+            @Override public void setAlpha(int alpha) { bgPaint.setAlpha(alpha); strokePaint.setAlpha(alpha); fillPaint.setAlpha(alpha); }
+            @Override public void setColorFilter(ColorFilter filter) { strokePaint.setColorFilter(filter); fillPaint.setColorFilter(filter); }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
     }
     private EditText field(String hint) { EditText view = new EditText(this); view.setHint(hint); view.setSingleLine(true); view.setTextSize(14); view.setSaveEnabled(false); return view; }
     private Spinner spinner(String[] labels) { Spinner view = new Spinner(this); ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels); view.setAdapter(adapter); return view; }
