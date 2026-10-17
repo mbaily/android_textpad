@@ -1,10 +1,11 @@
 <script>
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { EditorState, Compartment, EditorSelection, ChangeSet } from "@codemirror/state";
-  import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection } from "@codemirror/view";
+  import { EditorState, Compartment, EditorSelection, ChangeSet, StateField } from "@codemirror/state";
+  import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
+  import { filterTasks } from "./taskFilter.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -14,6 +15,7 @@
   const wrapCompartment = new Compartment();
   const guttersCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
+  const tasksFilterCompartment = new Compartment();
   const fonts = {
     mono: 'ui-monospace,"SFMono-Regular",Consolas,monospace',
     sans: "system-ui,sans-serif",
@@ -502,6 +504,80 @@
     );
   }
 
+  function getTasksFilterExtension(doc, stateDoc = doc?.state?.doc) {
+    if (!doc?.tasksOnly) return [];
+    const text = stateDoc ? stateDoc.toString() : (doc.savedText || "");
+    const filterRes = doc.taskFilterResult || filterTasks(text, 4);
+    doc.taskFilterResult = filterRes;
+    const n = stateDoc ? stateDoc.lines : 0;
+    if (!stateDoc || n === 0) return [];
+
+    const hiddenRanges = [];
+    let hideStart = -1;
+
+    for (let i = 0; i < n; i++) {
+      const visible = filterRes.isVisible[i] === 1;
+      if (!visible) {
+        if (hideStart === -1) hideStart = i;
+      } else {
+        if (hideStart !== -1) {
+          const from = stateDoc.line(hideStart + 1).from;
+          const to = stateDoc.line(i + 1).from;
+          hiddenRanges.push(Decoration.replace({ block: true }).range(from, to));
+          hideStart = -1;
+        }
+      }
+    }
+    if (hideStart !== -1) {
+      const from = stateDoc.line(hideStart + 1).from;
+      const to = stateDoc.length;
+      hiddenRanges.push(Decoration.replace({ block: true }).range(from, to));
+    }
+
+    const hiddenField = StateField.define({
+      create() {
+        return Decoration.set(hiddenRanges);
+      },
+      update(decos, tr) {
+        return decos.map(tr.changes);
+      },
+      provide: (f) => EditorView.decorations.from(f),
+    });
+
+    const contextField = EditorView.decorations.compute(["doc"], (state) => {
+      const builder = [];
+      for (let i = 1; i <= state.doc.lines; i++) {
+        let trimmed = line.text.trimStart();
+        if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
+          trimmed = trimmed.slice(2).trimStart();
+        }
+        const isCompleted = trimmed.startsWith("[X]") || trimmed.startsWith("[x]");
+        const isContext = filterRes.isContext[i - 1] === 1;
+        if (isCompleted || isContext) {
+          builder.push(Decoration.line({ class: "cm-task-context" }).range(line.from));
+        }
+      }
+      return Decoration.set(builder);
+    });
+
+    const txFilter = EditorState.transactionFilter.of((tr) => {
+      if (!tr.docChanged) return tr;
+      let altersLines = false;
+      tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+        if (inserted.lines > 1) altersLines = true;
+        const oldText = tr.startState.doc.sliceString(fromA, toA);
+        if (oldText.includes("\n")) altersLines = true;
+      });
+      if (altersLines) {
+        notice("Lines cannot be added or deleted in this view");
+        return [];
+      }
+      return tr;
+    });
+
+    return [hiddenField, contextField, txFilter];
+  }
+
   function makeState(doc, text, selection) {
     return EditorState.create({
       doc: text,
@@ -512,6 +588,7 @@
         readOnlyCompartment.of(
           readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []
         ),
+        tasksFilterCompartment.of(getTasksFilterExtension(doc)),
         rectangularSelection(),
         highlightActiveLineGutter(),
         EditorState.tabSize.of(4),
@@ -561,6 +638,13 @@
               return true;
             },
           },
+          {
+            key: "Mod-Alt-t",
+            run: () => {
+              toggleTasksFilter();
+              return true;
+            },
+          },
           ...historyKeymap,
           indentWithTab,
           ...defaultKeymap,
@@ -588,6 +672,8 @@
       savedName: metadata.name,
       savedEncoding: metadata.encoding,
       savedBom: metadata.bom,
+      tasksOnly: false,
+      taskFilterResult: null,
       state: null,
       savedDoc: null,
       scrollTop: 0,
@@ -1390,6 +1476,9 @@
   async function jumpToHashtagResult(fileId, lineNumber = null) {
     await openFile(fileId);
     if (lineNumber !== null && view && active === fileId) {
+      if (activeDoc?.tasksOnly && activeDoc.taskFilterResult && !activeDoc.taskFilterResult.isVisible[lineNumber - 1]) {
+        toggleTasksFilter(activeDoc);
+      }
       const targetLineNum = Math.max(1, Math.min(lineNumber, view.state.doc.lines));
       const line = view.state.doc.line(targetLineNum);
       view.dispatch({
@@ -1625,8 +1714,68 @@
     if (view && !readOnly) view.focus();
   }
 
+  function toggleTasksFilter(targetDoc = activeDoc) {
+    const doc = targetDoc;
+    if (!doc) return;
+    const isCurrent = doc === activeDoc && view;
+    if (doc.tasksOnly) {
+      doc.tasksOnly = false;
+      doc.taskFilterResult = null;
+      const effect = tasksFilterCompartment.reconfigure([]);
+      if (isCurrent) {
+        view.dispatch({ effects: effect });
+        doc.state = view.state;
+        view.focus();
+      } else if (doc.state) {
+        doc.state = doc.state.update({ effects: effect }).state;
+      }
+      notice("Showing all tasks");
+    } else {
+      const currentDocText = isCurrent ? view.state.doc.toString() : doc.state ? doc.state.doc.toString() : "";
+      const filterRes = filterTasks(currentDocText, 4);
+      doc.tasksOnly = true;
+      doc.taskFilterResult = filterRes;
+      const stateDoc = isCurrent ? view.state.doc : doc.state?.doc;
+      const ext = getTasksFilterExtension(doc, stateDoc);
+      const effect = tasksFilterCompartment.reconfigure(ext);
+
+      if (isCurrent) {
+        let dispatchObj = { effects: effect };
+        const sel = view.state.selection.main;
+        const currentLineNo = view.state.doc.lineAt(sel.head).number - 1;
+        if (!filterRes.isVisible[currentLineNo] && filterRes.visibleLines.length > 0) {
+          let bestLine = filterRes.visibleLines[0];
+          let minDiff = Math.abs(bestLine - currentLineNo);
+          for (const vl of filterRes.visibleLines) {
+            if (Math.abs(vl - currentLineNo) < minDiff) {
+              minDiff = Math.abs(vl - currentLineNo);
+              bestLine = vl;
+            }
+          }
+          const targetLine = view.state.doc.line(bestLine + 1);
+          dispatchObj.selection = EditorSelection.cursor(targetLine.from);
+          dispatchObj.scrollIntoView = true;
+        }
+        view.dispatch(dispatchObj);
+        doc.state = view.state;
+        view.focus();
+      } else if (doc.state) {
+        doc.state = doc.state.update({ effects: effect }).state;
+      }
+      if (filterRes.visibleLines.length === 0) {
+        notice("No uncompleted tasks found");
+      } else {
+        notice("Showing uncompleted tasks only");
+      }
+    }
+  }
+
   function insertSnippet(snippet) {
     if (!activeDoc || !view || readOnly) return;
+    if (activeDoc.tasksOnly && snippet.includes("\n")) {
+      notice("Lines cannot be added or deleted in this view");
+      return;
+    }
     const sel = view.state.selection.main;
     view.dispatch({
       changes: { from: sel.from, to: sel.to, insert: snippet },
@@ -1803,6 +1952,14 @@
     findResultText = findAllFiles ? `${index + 1}/${total} · ${doc.name}` : `${index + 1}/${total}`;
   }
 
+  function filterMatchesForDoc(doc, stateDoc, matches) {
+    if (!doc?.tasksOnly || !doc?.taskFilterResult) return matches;
+    return matches.filter((m) => {
+      const lineNo = stateDoc.lineAt(m.from).number - 1;
+      return doc.taskFilterResult.isVisible[lineNo] === 1;
+    });
+  }
+
   function findStep(forward = true) {
     if (!activeDoc || !view) return;
     if (!findQuery) {
@@ -1811,7 +1968,8 @@
       return;
     }
     const sel = view.state.selection.main;
-    const curMatches = findMatchesInText(view.state.doc.toString(), findQuery, findMatchCase);
+    const curMatchesRaw = findMatchesInText(view.state.doc.toString(), findQuery, findMatchCase);
+    const curMatches = filterMatchesForDoc(activeDoc, view.state.doc, curMatchesRaw);
 
     if (!findAllFiles) {
       if (curMatches.length === 0) {
@@ -1870,7 +2028,9 @@
         : (curDocIdx - step + openDocs.length) % openDocs.length;
       const candidate = openDocs[idx];
       const text = candidate.id === activeDoc.id ? view.state.doc.toString() : candidate.state.doc.toString();
-      const matches = findMatchesInText(text, findQuery, findMatchCase);
+      const candidateDoc = candidate.id === activeDoc.id ? view.state.doc : candidate.state.doc;
+      const rawMatches = findMatchesInText(text, findQuery, findMatchCase);
+      const matches = filterMatchesForDoc(candidate, candidateDoc, rawMatches);
       if (matches.length > 0) {
         const matchIdx = forward ? 0 : matches.length - 1;
         selectMatchInDoc(candidate, matches[matchIdx], matchIdx, matches.length);
@@ -1997,6 +2157,11 @@
         if (activeDoc) {
           event.preventDefault();
           toggleReadOnly();
+        }
+      } else if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey && (event.code === "KeyT" || event.key.toLowerCase() === "t")) {
+        if (activeDoc) {
+          event.preventDefault();
+          toggleTasksFilter();
         }
       }
     };
@@ -2203,6 +2368,9 @@
       <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] / [X])" aria-label="Toggle todo" disabled={!activeDoc || readOnly} onclick={toggleTodo}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="8.5 12.5 11 15 16 9.5"/></svg>
       </button>
+      <button id="toggle-tasks-filter" class="icon-button" class:active={activeDoc?.tasksOnly} aria-pressed={String(Boolean(activeDoc?.tasksOnly))} title={activeDoc?.tasksOnly ? "Show all tasks (Ctrl+Alt+T)" : "Show uncompleted tasks only (Ctrl+Alt+T)"} aria-label="Show uncompleted tasks only" disabled={!activeDoc} onclick={() => toggleTasksFilter()}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="6" height="6" rx="1"/><line x1="12" y1="8" x2="21" y2="8"/><rect x="3" y="13" width="6" height="6" rx="1"/><line x1="12" y1="16" x2="21" y2="16"/></svg>
+      </button>
       <button id="insert-date" class="icon-button" title="Insert date (YYYY-MM-DD)" aria-label="Insert date" disabled={!activeDoc || readOnly} onclick={() => insertSnippet(currentDateString())}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       </button>
@@ -2212,10 +2380,10 @@
       <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc || readOnly} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="3" y1="12" x2="7" y2="12"/><line x1="10" y1="12" x2="14" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/></svg>
       </button>
-      <button id="move-line-up" class="icon-button" title="Move line up (Alt+ArrowUp)" aria-label="Move line up" disabled={!activeDoc || readOnly} onclick={() => { moveLineUp(view); view.focus(); }}>
+      <button id="move-line-up" class="icon-button" title="Move line up (Alt+ArrowUp)" aria-label="Move line up" disabled={!activeDoc || readOnly || activeDoc?.tasksOnly} onclick={() => { moveLineUp(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="7" x2="11" y2="7"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/><line x1="17" y1="19" x2="17" y2="5"/><polyline points="13.5 8.5 17 5 20.5 8.5"/></svg>
       </button>
-      <button id="move-line-down" class="icon-button" title="Move line down (Alt+ArrowDown)" aria-label="Move line down" disabled={!activeDoc || readOnly} onclick={() => { moveLineDown(view); view.focus(); }}>
+      <button id="move-line-down" class="icon-button" title="Move line down (Alt+ArrowDown)" aria-label="Move line down" disabled={!activeDoc || readOnly || activeDoc?.tasksOnly} onclick={() => { moveLineDown(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="7" x2="11" y2="7"/><line x1="4" y1="12" x2="11" y2="12"/><line x1="4" y1="17" x2="11" y2="17"/><line x1="17" y1="5" x2="17" y2="19"/><polyline points="13.5 15.5 17 19 20.5 15.5"/></svg>
       </button>
       <span class="toolbar-spacer"></span>

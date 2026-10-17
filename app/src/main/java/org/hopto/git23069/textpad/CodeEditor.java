@@ -24,6 +24,9 @@ final class CodeEditor extends EditText {
     private final KeyListener editingKeys;
     DocumentBuffer buffer;
     Runnable selectionChanged, scrolled;
+    boolean tasksOnly;
+    int[] lineMap;
+    Runnable onBlockedLineAction;
     private boolean lineNumbers = true;
     private int gutterWidth;
     private Pattern searchPattern;
@@ -53,7 +56,41 @@ final class CodeEditor extends EditText {
         numbers.setTextAlign(Paint.Align.RIGHT); numbers.setTypeface(Typeface.MONOSPACE);
         matchPaint.setColor(0x668c7031); matchPaint.setStyle(Paint.Style.FILL);
         selectedMatchPaint.setColor(0xaa8c7031); selectedMatchPaint.setStyle(Paint.Style.FILL);
+        updateInputFilter();
+    }
+
+    void setTasksOnly(boolean enabled, int[] map, Runnable onBlocked) {
+        tasksOnly = enabled;
+        lineMap = map;
+        onBlockedLineAction = onBlocked;
+        updateInputFilter();
+        updateGutter();
+        invalidate();
+    }
+
+    private void updateInputFilter() {
         setFilters(new InputFilter[]{(source, start, end, dest, dstart, dend) -> {
+            if (tasksOnly) {
+                boolean altersLines = false;
+                for (int i = start; i < end; i++) {
+                    if (source.charAt(i) == '\n') {
+                        altersLines = true;
+                        break;
+                    }
+                }
+                if (!altersLines) {
+                    for (int i = dstart; i < dend; i++) {
+                        if (dest.charAt(i) == '\n') {
+                            altersLines = true;
+                            break;
+                        }
+                    }
+                }
+                if (altersLines) {
+                    if (onBlockedLineAction != null) onBlockedLineAction.run();
+                    return dest.subSequence(dstart, dend);
+                }
+            }
             if (dest.length() - (dend - dstart) + (end - start) > TextCodec.MAX_BYTES) return "";
             for (int i = start; i < end; i++) if (source.charAt(i) == '\r') return TextCodec.normalize(source.subSequence(start, end).toString());
             return null;
@@ -83,7 +120,11 @@ final class CodeEditor extends EditText {
     }
 
     void updateGutter() {
-        int digits = String.valueOf(buffer == null ? 1 : buffer.lineCount()).length();
+        int maxLine = buffer == null ? 1 : buffer.lineCount();
+        if (lineMap != null && lineMap.length > 0) {
+            maxLine = lineMap[lineMap.length - 1] + 1;
+        }
+        int digits = String.valueOf(maxLine).length();
         int width = lineNumbers ? Math.max(dp(44), (int) numbers.measureText("9".repeat(digits)) + dp(24)) : 0;
         if (width != gutterWidth || getPaddingTop() == 0) {
             gutterWidth = width;
@@ -127,7 +168,8 @@ final class CodeEditor extends EditText {
         for (int i = first; i <= last; i++) {
             int offset = layout.getLineStart(i), logical = buffer.lineAt(offset);
             if (offset == buffer.lineStart(logical)) {
-                canvas.drawText(String.valueOf(logical + 1), getScrollX() + gutterWidth - dp(10),
+                int displayLine = (lineMap != null && logical < lineMap.length) ? lineMap[logical] + 1 : logical + 1;
+                canvas.drawText(String.valueOf(displayLine), getScrollX() + gutterWidth - dp(10),
                         layout.getLineBaseline(i) + getTotalPaddingTop(), numbers);
             }
         }

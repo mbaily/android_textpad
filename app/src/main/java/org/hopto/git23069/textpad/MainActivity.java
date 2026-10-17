@@ -40,6 +40,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
+import org.hopto.git23069.textpad.core.TaskFilter;
 import org.hopto.git23069.textpad.core.TextCodec;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -63,7 +64,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
+    private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, taskFilterButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private HashtagUi activeHashtagUi;
     private EditorTab shownTab;
     private long shownState = -1;
@@ -193,6 +194,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
+        taskFilterButton = iconButton(Icon.TASK_FILTER, TEXT, "Filter uncompleted tasks", v -> toggleTasksFilter());
         dateButton = iconButton(Icon.DATE, TEXT, "Insert date", v -> insertSnippet(LocalDate.now().toString()));
         timeButton = iconButton(Icon.TIME, TEXT, "Insert time", v -> insertSnippet(currentTimeString()));
         dividerButton = iconButton(Icon.DIVIDER, TEXT, "Insert dividing line", v -> insertDivider());
@@ -203,7 +205,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
         toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(readOnlyButton); toolbar.addView(findButton); toolbar.addView(findAllButton); toolbar.addView(hashtagsButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
-        toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(timeButton); toolbar.addView(dividerButton);
+        toolbar.addView(todoButton); toolbar.addView(taskFilterButton); toolbar.addView(dateButton); toolbar.addView(timeButton); toolbar.addView(dividerButton);
         toolbar.addView(moveUpButton); toolbar.addView(moveDownButton); toolbar.addView(saveButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
@@ -218,11 +220,39 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             public void onTextChanged(CharSequence s, int start, int before, int count) { }
             public void afterTextChanged(Editable editable) {
                 if (changing || shownTab == null) return;
-                int addedCount = editable.length() - (shownTab.document.buffer.length() - count);
+                DocumentBuffer currentBuf = editor.buffer;
+                if (currentBuf == null) return;
+                int addedCount = editable.length() - (currentBuf.length() - count);
                 if (addedCount < 0) return;
-                DocumentBuffer buffer = shownTab.document.buffer;
-                buffer.edit(start, start + count, editable.subSequence(start, start + addedCount).toString());
-                shownState = buffer.state(); editor.updateGutter(); saveViewState(); updateTabLabels(); updateStatus();
+                String replacement = editable.subSequence(start, start + addedCount).toString();
+                currentBuf.edit(start, start + count, replacement);
+                if (shownTab.tasksOnly && shownTab.taskFilterResult != null && shownTab.taskFilterResult.visibleLines().length > 0) {
+                    int v = Math.max(0, Math.min(currentBuf.lineAt(start), shownTab.taskFilterResult.visibleLines().length - 1));
+                    int colStart = start - currentBuf.lineStart(v);
+                    int colEnd = colStart + count;
+                    int realLine = shownTab.taskFilterResult.visibleLines()[v];
+                    int realLineStart = shownTab.document.buffer.lineStart(realLine);
+                    int realStart = realLineStart + colStart;
+                    int realEnd = realLineStart + colEnd;
+                    shownTab.document.buffer.edit(realStart, realEnd, replacement);
+
+                    int lineStart = currentBuf.lineStart(v);
+                    int lineEnd = v + 1 < currentBuf.lineCount() ? currentBuf.lineStart(v + 1) - 1 : currentBuf.length();
+                    String lineText = currentBuf.text().substring(lineStart, lineEnd);
+                    String trimmed = lineText.stripLeading();
+                    if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
+                        trimmed = trimmed.substring(2).stripLeading();
+                    }
+                    boolean isCompleted = trimmed.startsWith("[X]") || trimmed.startsWith("[x]");
+                    boolean isContext = realLine < shownTab.taskFilterResult.isContext().length && shownTab.taskFilterResult.isContext()[realLine];
+                    if (isCompleted || isContext) {
+                        editable.setSpan(new ForegroundColorSpan(0x88e3e8df), lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    } else {
+                        ForegroundColorSpan[] spans = editable.getSpans(lineStart, lineEnd, ForegroundColorSpan.class);
+                        for (ForegroundColorSpan s : spans) editable.removeSpan(s);
+                    }
+                }
+                shownState = shownTab.document.buffer.state(); editor.updateGutter(); saveViewState(); updateTabLabels(); updateStatus();
             }
         });
     }
@@ -230,15 +260,34 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     @Override public void refresh() {
         if (editor == null) return;
         EditorTab selected = app.currentTab();
-        if (shownTab != selected || (selected != null && (shownState != selected.document.buffer.state() || editor.buffer != selected.document.buffer))) {
+        DocumentBuffer targetBuffer = selected == null ? null : (selected.tasksOnly && selected.filteredBuffer != null ? selected.filteredBuffer : selected.document.buffer);
+        if (shownTab != selected || (selected != null && (shownState != selected.document.buffer.state() || editor.buffer != targetBuffer))) {
             saveViewState();
             boolean switchTab = shownTab != selected;
             shownTab = selected; changing = true;
             if (selected != null) {
                 EditorDocument doc = selected.document;
-                boolean differentBuffer = editor.buffer != doc.buffer;
-                editor.buffer = doc.buffer;
-                if (switchTab || shownState != doc.buffer.state() || differentBuffer) editor.setText(doc.buffer.text());
+                boolean differentBuffer = editor.buffer != targetBuffer;
+                editor.buffer = targetBuffer;
+                if (selected.tasksOnly) {
+                    if (switchTab || shownState != doc.buffer.state() || selected.filteredBuffer == null || selected.taskFilterResult == null) {
+                        selected.taskFilterResult = TaskFilter.filter(doc.buffer.text(), app.settings.indent());
+                        String filteredText = buildFilteredText(doc.buffer, selected.taskFilterResult.visibleLines());
+                        selected.filteredBuffer = new DocumentBuffer(TextCodec.split(filteredText, doc.buffer.encoding(), false));
+                        editor.buffer = selected.filteredBuffer;
+                    }
+                    editor.setTasksOnly(true, selected.taskFilterResult.visibleLines(), () -> {
+                        Toast.makeText(this, "Lines cannot be added or deleted in this view", Toast.LENGTH_SHORT).show();
+                    });
+                    if (switchTab || shownState != doc.buffer.state() || differentBuffer) {
+                        editor.setText(buildFilteredSpanned(selected.filteredBuffer.text(), selected.taskFilterResult));
+                    }
+                } else {
+                    editor.setTasksOnly(false, null, null);
+                    if (switchTab || shownState != doc.buffer.state() || differentBuffer) {
+                        editor.setText(doc.buffer.text());
+                    }
+                }
                 editor.configure(app.settings, isEditable(doc));
                 int length = editor.length();
                 editor.setSelection(Math.min(length, selected.selectionStart), Math.min(length, selected.selectionEnd));
@@ -249,7 +298,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         changing = true; editor.scrollTo(selected.scrollX, selected.scrollY); changing = false;
                     }
                 });
-            } else { editor.buffer = null; editor.setText(""); shownState = -1; }
+            } else { editor.setTasksOnly(false, null, null); editor.buffer = null; editor.setText(""); shownState = -1; }
             changing = false;
         }
         editor.setVisibility(selected == null ? View.GONE : View.VISIBLE);
@@ -315,8 +364,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         boolean editable = isEditable(doc);
         setButtonEnabled(undoButton, editable && doc.buffer.canUndo());
         setButtonEnabled(todoButton, editable);
-        setButtonEnabled(moveUpButton, editable);
-        setButtonEnabled(moveDownButton, editable);
+        setButtonEnabled(taskFilterButton, doc != null);
+        taskFilterButton.setBackground(iconDrawable(Icon.TASK_FILTER, shownTab != null && shownTab.tasksOnly ? ACCENT : TEXT));
+        setButtonEnabled(moveUpButton, editable && (shownTab == null || !shownTab.tasksOnly));
+        setButtonEnabled(moveDownButton, editable && (shownTab == null || !shownTab.tasksOnly));
         setButtonEnabled(redoButton, editable && doc.buffer.canRedo());
         setButtonEnabled(timeButton, editable);
         setButtonEnabled(dateButton, editable);
@@ -335,8 +386,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         setButtonEnabled(saveButton, canSave);
         if (doc == null) { status.setText(app.opening ? "Opening file…" : "OFFLINE · READY"); location.setText("LOCAL FILES · FULLY OFFLINE"); return; }
         location.setText(doc.uri == null ? "NEW DOCUMENT · NOT SAVED" : app.store.location(doc.uri, doc.name));
-        int offset = Math.max(0, editor.getSelectionStart()), line = doc.buffer.lineAt(offset);
-        int column = offset - doc.buffer.lineStart(line) + 1;
+        int offset = Math.max(0, editor.getSelectionStart());
+        int line = (shownTab != null && shownTab.tasksOnly) ? toRealLine(shownTab, offset) : doc.buffer.lineAt(offset);
+        int column = (shownTab != null && shownTab.tasksOnly) ? toRealColumn(shownTab, offset) : offset - doc.buffer.lineStart(line) + 1;
         String baseStatus = String.format(Locale.ROOT, "Ln %d, Col %d  ·  %s%s  ·  %s%s", line + 1, column,
                 doc.buffer.encoding().label, doc.buffer.bom() ? " BOM" : "", doc.buffer.endingLabel(),
                 (!doc.writable || app.readOnlyMode) ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED");
@@ -512,6 +564,18 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void history(boolean redo) {
         EditorDocument doc = app.current(); if (!isEditable(doc)) return;
+        EditorTab tab = shownTab;
+        if (tab != null && tab.tasksOnly && tab.filteredBuffer != null) {
+            DocumentBuffer.Change change = redo ? tab.filteredBuffer.redo() : tab.filteredBuffer.undo();
+            if (change == null) return;
+            if (redo) doc.buffer.redo(); else doc.buffer.undo();
+            int start = change.start(), oldLength = redo ? change.removed().length() : change.added().length();
+            String added = redo ? change.added() : change.removed();
+            changing = true; editor.getText().replace(start, start + oldLength, added);
+            editor.setSelection(Math.min(editor.length(), start + added.length())); changing = false;
+            shownState = doc.buffer.state(); saveViewState(); editor.updateGutter(); updateTabLabels(); updateStatus();
+            return;
+        }
         DocumentBuffer.Change change = redo ? doc.buffer.redo() : doc.buffer.undo(); if (change == null) return;
         int start = change.start(), oldLength = redo ? change.removed().length() : change.added().length();
         String added = redo ? change.added() : change.removed();
@@ -544,6 +608,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void insertSnippet(String snippet) {
         EditorDocument doc = app.current(); if (!isEditable(doc)) return;
+        if (shownTab != null && shownTab.tasksOnly && snippet.contains("\n")) {
+            toast("Lines cannot be added or deleted in this view"); return;
+        }
         int start = Math.max(0, editor.getSelectionStart()), end = Math.max(start, editor.getSelectionEnd());
         if (editor.length() - (end - start) + snippet.length() > TextCodec.MAX_BYTES) {
             toast("Insertion would exceed the editor size limit."); return;
@@ -563,11 +630,17 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void insertDivider() {
+        if (shownTab != null && shownTab.tasksOnly) {
+            toast("Lines cannot be added or deleted in this view"); return;
+        }
         insertSnippet("-".repeat(app.settings.dividerDashes()));
     }
 
     private void moveLines(boolean up) {
         EditorDocument doc = app.current(); if (!isEditable(doc)) return;
+        if (shownTab != null && shownTab.tasksOnly) {
+            toast("Lines cannot be added or deleted in this view"); return;
+        }
         int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
         String text = editor.getText().toString();
         int blockStart = text.lastIndexOf('\n', Math.max(-1, selStart - 1)) + 1;
@@ -792,7 +865,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             for (int step = 1; step < app.tabs.size(); step++) {
                 int idx = forward ? (curIdx + step) % app.tabs.size() : (curIdx - step + app.tabs.size()) % app.tabs.size();
                 EditorTab candidate = app.tabs.get(idx);
-                Matcher m = pattern.matcher(candidate.document.buffer.text());
+                String candidateText = candidate.tasksOnly && candidate.filteredBuffer != null
+                        ? candidate.filteredBuffer.text()
+                        : candidate.document.buffer.text();
+                Matcher m = pattern.matcher(candidateText);
                 int cStart = -1, cEnd = -1;
                 if (forward) {
                     if (m.find(0)) { cStart = m.start(); cEnd = m.end(); }
@@ -811,12 +887,18 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
     private void replaceOne() {
         EditorDocument doc = app.current(); Pattern pattern = query(); if (!isEditable(doc) || pattern == null) return;
+        if (shownTab != null && shownTab.tasksOnly && replacement.getText().toString().contains("\n")) {
+            toast("Lines cannot be added or deleted in this view"); return;
+        }
         int start = Math.max(0, editor.getSelectionStart()), end = Math.max(start, editor.getSelectionEnd());
         if (pattern.matcher(editor.getText().subSequence(start, end)).matches()) editor.getText().replace(start, end, replacement.getText());
         findNext(true);
     }
     private void replaceAll() {
         EditorDocument doc = app.current(); Pattern pattern = query(); if (!isEditable(doc) || pattern == null) return;
+        if (shownTab != null && shownTab.tasksOnly && replacement.getText().toString().contains("\n")) {
+            toast("Lines cannot be added or deleted in this view"); return;
+        }
         Matcher matcher = pattern.matcher(editor.getText()); StringBuilder out = new StringBuilder(); int previous = 0, count = 0;
         while (matcher.find()) {
             out.append(editor.getText(), previous, matcher.start()).append(replacement.getText()); previous = matcher.end(); count++;
@@ -964,9 +1046,16 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private void jumpToLineInCurrentTab(int oneBasedLine) {
         EditorTab tab = app.currentTab();
         if (tab == null || editor == null) return;
+        if (tab.tasksOnly) {
+            int zeroLine = Math.max(0, Math.min(oneBasedLine - 1, tab.document.buffer.lineCount() - 1));
+            if (tab.taskFilterResult != null && !tab.taskFilterResult.containsLine(zeroLine)) {
+                toggleTasksFilter(tab);
+            }
+        }
         DocumentBuffer buf = tab.document.buffer;
         int zeroLine = Math.max(0, Math.min(oneBasedLine - 1, buf.lineCount() - 1));
-        int offset = Math.min(editor.length(), buf.lineStart(zeroLine));
+        int realOffset = buf.lineStart(zeroLine);
+        int offset = tab.tasksOnly ? toFilteredOffset(tab, realOffset) : Math.min(editor.length(), realOffset);
         tab.selectionStart = offset;
         tab.selectionEnd = offset;
         editor.setSelection(offset);
@@ -993,6 +1082,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 case KeyEvent.KEYCODE_Z -> { history(event.isShiftPressed()); return true; }
                 case KeyEvent.KEYCODE_Y -> { history(true); return true; }
                 case KeyEvent.KEYCODE_W -> { if (app.currentTab() != null) closeTab(app.currentTab()); return true; }
+                case KeyEvent.KEYCODE_T -> { if (event.isAltPressed()) { toggleTasksFilter(); return true; } }
             }
         }
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.getKeyCode() == KeyEvent.KEYCODE_TAB && isEditable(app.current()) && editor.hasFocus()) { indent(!event.isShiftPressed()); return true; }
@@ -1002,7 +1092,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, HASHTAG, INDENT_LESS, INDENT_MORE, TODO, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, HASHTAG, INDENT_LESS, INDENT_MORE, TODO, TASK_FILTER, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -1104,6 +1194,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 3 * s, ox + 21 * s, oy + 21 * s), 2 * s, 2 * s, strokePaint);
                         p.moveTo(ox + 8.5f * s, oy + 12.5f * s); p.lineTo(ox + 11 * s, oy + 15 * s); p.lineTo(ox + 16 * s, oy + 9.5f * s);
                     }
+                    case TASK_FILTER -> {
+                        canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 5 * s, ox + 9 * s, oy + 11 * s), 1 * s, 1 * s, strokePaint);
+                        p.moveTo(ox + 12 * s, oy + 8 * s); p.lineTo(ox + 21 * s, oy + 8 * s);
+                        canvas.drawRoundRect(new RectF(ox + 3 * s, oy + 13 * s, ox + 9 * s, oy + 19 * s), 1 * s, 1 * s, strokePaint);
+                        p.moveTo(ox + 12 * s, oy + 16 * s); p.lineTo(ox + 21 * s, oy + 16 * s);
+                    }
                     case TIME -> {
                         canvas.drawCircle(ox + 12 * s, oy + 12 * s, 9 * s, strokePaint);
                         p.moveTo(ox + 12 * s, oy + 7 * s); p.lineTo(ox + 12 * s, oy + 12 * s); p.lineTo(ox + 15.5f * s, oy + 14 * s);
@@ -1165,4 +1261,144 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private GradientDrawable rounded(int color, int radius) { GradientDrawable drawable = new GradientDrawable(); drawable.setColor(color); drawable.setCornerRadius(dp(radius)); return drawable; }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private void toast(String text) { Toast.makeText(this, text, Toast.LENGTH_SHORT).show(); }
+
+    void toggleTasksFilter() {
+        if (app.currentTab() != null) {
+            toggleTasksFilter(app.currentTab());
+        }
+    }
+
+    void toggleTasksFilter(EditorTab tab) {
+        if (tab == null) return;
+        saveViewState();
+        if (tab.tasksOnly) {
+            int currentFilteredOffset = tab.selectionStart;
+            int newRealOffset = toRealOffset(tab, currentFilteredOffset);
+            tab.tasksOnly = false;
+            tab.taskFilterResult = null;
+            tab.filteredBuffer = null;
+            tab.selectionStart = newRealOffset;
+            tab.selectionEnd = newRealOffset;
+        } else {
+            int currentRealOffset = tab.selectionStart;
+            TaskFilter.FilterResult res = TaskFilter.filter(tab.document.buffer.text(), app.settings.indent());
+            String filteredText = buildFilteredText(tab.document.buffer, res.visibleLines());
+            tab.taskFilterResult = res;
+            tab.filteredBuffer = new DocumentBuffer(TextCodec.split(filteredText, tab.document.buffer.encoding(), false));
+            tab.tasksOnly = true;
+            int newFilteredOffset = toFilteredOffset(tab, currentRealOffset);
+            tab.selectionStart = newFilteredOffset;
+            tab.selectionEnd = newFilteredOffset;
+        }
+        if (shownTab == tab) {
+            shownState = -1;
+            refresh();
+            updateStatus();
+        }
+    }
+
+    private int toRealOffset(EditorTab tab, int filteredOffset) {
+        if (tab == null || tab.filteredBuffer == null || tab.taskFilterResult == null || tab.taskFilterResult.visibleLines().length == 0) {
+            return tab != null ? Math.max(0, Math.min(filteredOffset, tab.document.buffer.length())) : 0;
+        }
+        int clampedFiltered = Math.max(0, Math.min(filteredOffset, tab.filteredBuffer.length()));
+        int v = tab.filteredBuffer.lineAt(clampedFiltered);
+        if (v >= tab.taskFilterResult.visibleLines().length) {
+            v = tab.taskFilterResult.visibleLines().length - 1;
+        }
+        int col = clampedFiltered - tab.filteredBuffer.lineStart(v);
+        int realLine = tab.taskFilterResult.visibleLines()[v];
+        int realLineStart = tab.document.buffer.lineStart(realLine);
+        int realLineEnd = realLine + 1 < tab.document.buffer.lineCount() ? tab.document.buffer.lineStart(realLine + 1) - 1 : tab.document.buffer.length();
+        int realCol = Math.min(col, Math.max(0, realLineEnd - realLineStart));
+        return realLineStart + realCol;
+    }
+
+    private int toFilteredOffset(EditorTab tab, int realOffset) {
+        if (tab == null || tab.filteredBuffer == null || tab.taskFilterResult == null || tab.taskFilterResult.visibleLines().length == 0) {
+            return 0;
+        }
+        int clampedReal = Math.max(0, Math.min(realOffset, tab.document.buffer.length()));
+        int realLine = tab.document.buffer.lineAt(clampedReal);
+        int realLineStart = tab.document.buffer.lineStart(realLine);
+        int col = clampedReal - realLineStart;
+        int v = tab.taskFilterResult.indexOf(realLine);
+        if (v < 0) {
+            int ip = -v - 1;
+            if (ip >= tab.taskFilterResult.visibleLines().length) {
+                ip = tab.taskFilterResult.visibleLines().length - 1;
+            }
+            if (ip < 0) ip = 0;
+            return tab.filteredBuffer.lineStart(ip);
+        }
+        int filteredLineStart = tab.filteredBuffer.lineStart(v);
+        int filteredLineEnd = v + 1 < tab.filteredBuffer.lineCount() ? tab.filteredBuffer.lineStart(v + 1) - 1 : tab.filteredBuffer.length();
+        int filteredCol = Math.min(col, Math.max(0, filteredLineEnd - filteredLineStart));
+        return filteredLineStart + filteredCol;
+    }
+
+    private int toRealLine(EditorTab tab, int offset) {
+        if (tab == null || tab.filteredBuffer == null || tab.taskFilterResult == null || tab.taskFilterResult.visibleLines().length == 0) {
+            return tab != null ? tab.document.buffer.lineAt(offset) : 0;
+        }
+        int clamped = Math.max(0, Math.min(offset, tab.filteredBuffer.length()));
+        int v = tab.filteredBuffer.lineAt(clamped);
+        if (v < tab.taskFilterResult.visibleLines().length) {
+            return tab.taskFilterResult.visibleLines()[v];
+        }
+        return tab.document.buffer.lineCount() - 1;
+    }
+
+    private int toRealColumn(EditorTab tab, int offset) {
+        if (tab == null || tab.filteredBuffer == null) {
+            return 1;
+        }
+        int clamped = Math.max(0, Math.min(offset, tab.filteredBuffer.length()));
+        int v = tab.filteredBuffer.lineAt(clamped);
+        return clamped - tab.filteredBuffer.lineStart(v) + 1;
+    }
+
+    private String buildFilteredText(DocumentBuffer buf, int[] visibleLines) {
+        if (buf == null || visibleLines == null || visibleLines.length == 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        String fullText = buf.text();
+        int lineCount = buf.lineCount();
+        for (int i = 0; i < visibleLines.length; i++) {
+            int line = visibleLines[i];
+            int start = buf.lineStart(line);
+            int end = (line + 1 < lineCount) ? buf.lineStart(line + 1) - 1 : fullText.length();
+            if (end < start) end = start;
+            if (i > 0) sb.append('\n');
+            sb.append(fullText, start, end);
+        }
+        return sb.toString();
+    }
+
+    private CharSequence buildFilteredSpanned(String filteredText, TaskFilter.FilterResult res) {
+        if (res == null || filteredText == null || filteredText.isEmpty()) {
+            return filteredText == null ? "" : filteredText;
+        }
+        SpannableStringBuilder ssb = new SpannableStringBuilder(filteredText);
+        int[] visible = res.visibleLines();
+        int offset = 0;
+        for (int v = 0; v < visible.length; v++) {
+            int lineEnd = filteredText.indexOf('\n', offset);
+            if (lineEnd == -1) lineEnd = filteredText.length();
+            int realLine = visible[v];
+            boolean isContext = realLine < res.isContext().length && res.isContext()[realLine];
+            String trimmed = filteredText.substring(offset, lineEnd).stripLeading();
+            if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
+                trimmed = trimmed.substring(2).stripLeading();
+            }
+            boolean isCompleted = trimmed.startsWith("[X]") || trimmed.startsWith("[x]");
+            if (isContext || isCompleted) {
+                ssb.setSpan(new ForegroundColorSpan(0x88e3e8df), offset, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            offset = lineEnd + 1;
+            if (offset > filteredText.length()) break;
+        }
+        return ssb;
+    }
 }
