@@ -184,8 +184,15 @@ def create_app(test_config=None):
     def api_documents():
         return jsonify(documents=store.list())
 
+    def client_cursor_id(payload=None):
+        candidate = (payload.get("client_id") if isinstance(payload, dict) else None) or request.headers.get("X-Textpad-Client")
+        if candidate is not None:
+            identifier(str(candidate))
+            return str(candidate)
+        return None
+
     def binary_document(document_id, revision=None):
-        metadata, raw = store.get(document_id, revision)
+        metadata, raw = store.get(document_id, revision, client_id=client_cursor_id() if revision is None else None)
         return jsonify(**metadata, content_base64=b64encode(raw).decode("ascii"))
 
     @app.get("/api/v1/documents/<document_id>")
@@ -202,7 +209,7 @@ def create_app(test_config=None):
         except (binascii.Error, ValueError) as error:
             raise ValueError("Invalid Base64 file contents.") from error
         return jsonify(store.put(document_id, payload.get("name"), raw, payload.get("base_revision"),
-                                 payload.get("request_id"), payload.get("encoding")))
+                                 payload.get("request_id"), payload.get("encoding"), client_id=client_cursor_id(payload)))
 
     @app.get("/api/v1/documents/<document_id>/revisions")
     def api_revisions(document_id):
@@ -300,7 +307,7 @@ def create_app(test_config=None):
         return jsonify(documents=store.list())
 
     def text_document(document_id, revision=None):
-        metadata, raw = store.get(document_id, revision)
+        metadata, raw = store.get(document_id, revision, client_id=client_cursor_id() if revision is None else None)
         decoded = decode(raw, metadata["encoding"])
         return jsonify(**metadata, text=decoded.text, bom=decoded.bom, line_endings=decoded.ending_label)
 
@@ -316,7 +323,11 @@ def create_app(test_config=None):
         name = filename(payload.get("name"))
         base_revision = payload.get("base_revision")
         if base_revision is not None:
-            metadata, raw = store.get(document_id, base_revision)
+            identifier(str(base_revision))
+            try:
+                metadata, raw = store.get(document_id, base_revision)
+            except NotFound:
+                metadata, raw = store.get(document_id)
             base = decode(raw, metadata["encoding"])
         else:
             try:
@@ -328,8 +339,14 @@ def create_app(test_config=None):
                     raise RequestConflict("This document already exists. Reopen it before saving.")
                 base = decode(b"")
         raw = edited(base, payload.get("text"), payload.get("encoding"), payload.get("bom"))
-        response = store.put(document_id,name,raw,base_revision,payload.get("request_id"),payload.get("encoding") or base.encoding)
-        formatted = decode(raw, response["encoding"])
+        response = store.put(document_id, name, raw, base_revision, payload.get("request_id"),
+                             payload.get("encoding") or base.encoding, client_id=client_cursor_id(payload))
+        if response.get("merged_newer_revision"):
+            _, final_raw = store.get(document_id, response["revision"])
+            formatted = decode(final_raw, response["encoding"])
+            response["text"] = formatted.text
+        else:
+            formatted = decode(raw, response["encoding"])
         response["bom"] = formatted.bom
         response["line_endings"] = formatted.ending_label
         return jsonify(response)

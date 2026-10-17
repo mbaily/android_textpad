@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
@@ -18,13 +19,14 @@ import javax.net.ssl.HttpsURLConnection;
 
 final class SyncHttpClient implements RemoteApi {
     static final String DEFAULT_ENDPOINT = "https://git23069.hopto.org/android_textpad";
-    private final String endpoint, token;
-    SyncHttpClient(String endpoint, String token) {
+    private final String endpoint, token, clientId;
+    SyncHttpClient(String endpoint, String token) { this(endpoint, token, null); }
+    SyncHttpClient(String endpoint, String token, String clientId) {
         URI uri = URI.create(endpoint);
         if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null
                 || uri.getQuery() != null || uri.getFragment() != null)
             throw new IllegalArgumentException("Use an HTTPS server address, without credentials, a query, or a fragment.");
-        this.endpoint = endpoint.replaceAll("/+$", ""); this.token = token;
+        this.endpoint = endpoint.replaceAll("/+$", ""); this.token = token; this.clientId = clientId;
     }
     @Override public List<Remote> list() throws IOException { return array(request("GET", "/api/v1/documents",null)); }
     @Override public Remote get(String id) throws IOException { return remote(request("GET",path(id),null),true); }
@@ -33,7 +35,8 @@ final class SyncHttpClient implements RemoteApi {
     @Override public List<Remote> prune(String id) throws IOException { return array(request("POST",path(id)+"/prune",new JSONObject())); }
     @Override public Remote put(String id, String name, byte[] bytes, String baseRevision, String requestId) throws IOException {
         try {
-            JSONObject body = new JSONObject().put("name",name).put("content_base64",Base64.encodeToString(bytes,Base64.NO_WRAP))
+            String normalizedName = Normalizer.normalize(name, Normalizer.Form.NFC);
+            JSONObject body = new JSONObject().put("name",normalizedName).put("content_base64",Base64.encodeToString(bytes,Base64.NO_WRAP))
                     .put("base_revision",baseRevision == null ? JSONObject.NULL : baseRevision).put("request_id",requestId);
             return remote(request("PUT",path(id),body),false);
         } catch (JSONException e) { throw new IOException("Could not encode the sync request.",e); }
@@ -66,6 +69,7 @@ final class SyncHttpClient implements RemoteApi {
         connection.setRequestMethod(method); connection.setConnectTimeout(10000); connection.setReadTimeout(20000);
         connection.setInstanceFollowRedirects(false);
         connection.setRequestProperty("Authorization","Bearer "+token); connection.setRequestProperty("Accept","application/json");
+        if (clientId != null && !clientId.isBlank()) connection.setRequestProperty("X-Textpad-Client",clientId);
         try {
             if (body != null) {
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);

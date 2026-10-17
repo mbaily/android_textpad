@@ -38,12 +38,15 @@ public class SyncInstrumentedTest {
         final Map<String,Remote> requests=new LinkedHashMap<>();
         int accepted, uploads;
         boolean loseNextReceipt;
+        byte[] nextMergedContent;
         public List<Remote> list() { return new ArrayList<>(files.values()); }
         public Remote get(String id) { return files.get(id); }
         public Remote put(String id,String name,byte[] content,String base,String request) throws java.io.IOException {
             uploads++;
             if(requests.containsKey(request)) return requests.get(request);
-            Remote remote=new Remote(id,name,String.valueOf(++accepted),hash(content),content.length,content);
+            byte[] stored = nextMergedContent != null ? nextMergedContent : content;
+            nextMergedContent = null;
+            Remote remote=new Remote(id,name,String.valueOf(++accepted),hash(stored),stored.length,stored);
             files.put(id,remote); history.computeIfAbsent(id,k -> new ArrayList<>()).add(remote); requests.put(request,remote);
             if(loseNextReceipt) { loseNextReceipt=false; throw new java.io.IOException("Connection interrupted after commit"); }
             return remote;
@@ -246,6 +249,29 @@ public class SyncInstrumentedTest {
         assertTrue(app.sync.bindings().isEmpty());
         sync();
         assertEquals("first revision",read(target));
+        app.sync.testApi=null;
+    }
+
+    @Test public void remoteRenameAndServerMergedUploadAreAdoptedAndPreserved() throws Exception {
+        Uri uri=seed("initial.txt","line 1\nline 2\n");
+        EditorDocument doc=new EditorDocument("initial.txt",new DocumentBuffer(TextCodec.decode(bytes("line 1\nline 2\n"))));
+        doc.uri=uri; doc.savedHash=SaveTransaction.hash(bytes("line 1\nline 2\n"));
+        main(() -> { app.addTab(doc); app.sync.link(doc,"merge-doc",null,null); });
+        sync();
+        // Remote client renames the file without changing content.
+        api.put("merge-doc","web-renamed.txt",bytes("line 1\nline 2\n"),"1","remote-rename");
+        sync();
+        assertEquals("web-renamed.txt",app.sync.bindings().get(0).name());
+        // Local edit uploaded while server returns 3-way merged content.
+        try(OutputStream out=app.getContentResolver().openOutputStream(uri,"wt")) { out.write(bytes("line 1\nLINE 2\n")); }
+        DocumentBuffer nextLocal=new DocumentBuffer(TextCodec.decode(bytes("line 1\nLINE 2\n")));
+        main(() -> { doc.buffer=nextLocal; doc.savedHash=SaveTransaction.hash(bytes("line 1\nLINE 2\n")); });
+        api.nextMergedContent=bytes("LINE 1\nLINE 2\n");
+        sync();
+        assertEquals("LINE 1\nLINE 2\n",read(uri));
+        assertEquals("LINE 1\nLINE 2\n",doc.buffer.text());
+        assertEquals("web-renamed.txt",api.get("merge-doc").name());
+        assertTrue(app.store.backups().stream().anyMatch(b -> b.originalUri().equals(uri.toString())));
         app.sync.testApi=null;
     }
 }

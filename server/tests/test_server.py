@@ -262,5 +262,56 @@ class ApiTests(unittest.TestCase):
         self.assertIn(b'rel="manifest"',editor_html.data)
         self.assertIn(b'name="apple-mobile-web-app-capable"',editor_html.data)
 
+    def test_non_overlapping_stale_save_merges_and_preserves_unmerged_revisions(self):
+        base=b"line 1\r\nline 2\r\nline 3\r\n"
+        r1=self.upload(base,"req-1").json
+        r2=self.upload(b"LINE 1\r\nline 2\r\nline 3\r\n","req-2",r1["revision"]).json
+        merged=self.upload(b"line 1\r\nline 2\r\nLINE 3\r\n","req-3",r1["revision"]).json
+        self.assertTrue(merged["merged_newer_revision"])
+        self.assertFalse(merged["replaced_newer_revision"])
+        self.assertEqual(r2["revision"],merged["previous_revision"])
+        self.assertIn("client_revision",merged)
+        current=self.client.get("/api/v1/documents/test-file",headers=self.headers).json
+        self.assertEqual(b"LINE 1\r\nline 2\r\nLINE 3\r\n",b64decode(current["content_base64"]))
+        client_rev=self.client.get("/api/v1/documents/test-file/revisions/"+merged["client_revision"],headers=self.headers).json
+        self.assertEqual(b"line 1\r\nline 2\r\nLINE 3\r\n",b64decode(client_rev["content_base64"]))
+        self.login()
+        web_merged=self.browser_put("test-file",{
+            "name":"notes.txt",
+            "text":"LINE 1\nLINE 2\nline 3\n",
+            "base_revision":r2["revision"],
+            "request_id":"web-merge-1",
+        })
+        self.assertEqual(200,web_merged.status_code,web_merged.data)
+        self.assertTrue(web_merged.json["merged_newer_revision"])
+        self.assertEqual("LINE 1\nLINE 2\nLINE 3\n",web_merged.json["text"])
+
+    def test_nfc_filename_normalization_and_device_cursor_pruning_protection(self):
+        from datetime import datetime, timedelta, timezone
+        nfd_name="Cafe\u0301.txt"
+        r1=self.client.put("/api/v1/documents/nfc-doc",headers={**self.headers,"X-Textpad-Client":"ios-1"},json={
+            "name":nfd_name,
+            "content_base64":b64encode(b"alpha\nbeta\ngamma\n").decode(),
+            "base_revision":None,
+            "request_id":"nfc-1",
+        }).json
+        self.assertEqual("Caf\u00e9.txt",r1["name"])
+        store=self.app.extensions["store"]
+        rev=r1["revision"]
+        for i in range(15):
+            rev=store.put("nfc-doc","Caf\u00e9.txt",f"alpha {i}\nbeta\ngamma\n".encode(),rev,f"step-{i}",client_id="web-1")["revision"]
+        now=datetime.now(timezone.utc)
+        old_iso=(now - timedelta(days=5)).isoformat(timespec="microseconds")
+        with closing(store.connect()) as db:
+            db.execute("UPDATE revisions SET created_at=? WHERE document_id='nfc-doc'",(old_iso,))
+            db.commit()
+        store.prune("nfc-doc",now=now.timestamp())
+        revs_ids={item["revision"] for item in store.revisions("nfc-doc")}
+        self.assertIn(r1["revision"],revs_ids)
+        ios_merge=store.put("nfc-doc","Caf\u00e9.txt",b"alpha\nbeta\nGAMMA\n",r1["revision"],"ios-2",client_id="ios-1")
+        self.assertTrue(ios_merge["merged_newer_revision"])
+        self.assertEqual(b"alpha 14\nbeta\nGAMMA\n",store.get("nfc-doc")[1])
+
 
 if __name__=="__main__": unittest.main()
+

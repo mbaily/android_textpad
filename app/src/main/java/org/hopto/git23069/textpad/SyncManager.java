@@ -57,11 +57,19 @@ final class SyncManager {
         } else events.stop();
     }
     void setForeground(boolean value) { foreground=value; configurationChanged(); }
+    String clientId() {
+        String id = prefs.getString("clientId", null);
+        if (id == null || !id.matches("[A-Za-z0-9_.:-]{1,128}")) {
+            id = "android-" + UUID.randomUUID();
+            prefs.edit().putString("clientId", id).apply();
+        }
+        return id;
+    }
     RemoteApi api() throws Exception {
         if (testApi != null) return testApi;
         String token = TokenVault.read(prefs);
         if (token.isBlank()) throw new IOException("Enter your server API token in Sync settings first.");
-        return new SyncHttpClient(prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT),token);
+        return new SyncHttpClient(prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT),token,clientId());
     }
     List<Binding> bindings() {
         List<Binding> bindings = new ArrayList<>();
@@ -117,8 +125,10 @@ final class SyncManager {
         catch (java.util.concurrent.TimeoutException e) { task.cancel(false); throw e; }
     }
     private void record(Binding binding, RemoteApi.Remote remote) throws IOException {
-        if (!prefs.edit().putString(binding.key+".revision",remote.revision()).putString(binding.key+".hash",remote.hash())
-                .remove(binding.key+".pendingHash").remove(binding.key+".request").commit())
+        SharedPreferences.Editor editor=prefs.edit().putString(binding.key+".revision",remote.revision()).putString(binding.key+".hash",remote.hash())
+                .remove(binding.key+".pendingHash").remove(binding.key+".request");
+        if (remote.name() != null && !remote.name().isBlank()) editor.putString(binding.key+".name",remote.name());
+        if (!editor.commit())
             throw new IOException("Could not store the sync receipt. The saved file is intact; retry sync.");
         app.main.post(() -> {
             EditorDocument doc=openDocument(binding.uri);
@@ -164,8 +174,34 @@ final class SyncManager {
                             TextCodec.decode(local); // Never upload binary or invalid text.
                             if (!enabled(binding) || stopped.getAsBoolean()) continue;
                             RemoteApi.Remote uploadedFile=remoteApi.put(binding.id,binding.name,local,binding.revision,requestId(binding,localHex));
-                            if (!localHex.equals(uploadedFile.hash())) throw new IOException("server did not acknowledge the uploaded checksum");
-                            record(binding,uploadedFile); remoteById.put(binding.id, uploadedFile); uploaded++;
+                            if (!localHex.equals(uploadedFile.hash())) {
+                                RemoteApi.Remote merged=remoteApi.get(binding.id);
+                                if (merged == null || !merged.hash().equals(uploadedFile.hash()))
+                                    throw new IOException("server did not acknowledge the uploaded checksum");
+                                DocumentBuffer mergedBuffer=new DocumentBuffer(TextCodec.decode(merged.content()));
+                                EditorDocument locked=onMain(() -> {
+                                    EditorDocument doc=openDocument(binding.uri);
+                                    if (!enabled(binding) || stopped.getAsBoolean() || (doc != null && (doc.buffer.dirty() || doc.saving))) return null;
+                                    if (doc != null) { doc.saving=true; doc.replacing=true; app.refresh(); }
+                                    return doc == null ? new EditorDocument("closed",DocumentBuffer.empty()) : doc;
+                                });
+                                if (locked == null) { deferred++; continue; }
+                                try {
+                                    if (!enabled(binding) || stopped.getAsBoolean()) { deferred++; continue; }
+                                    SaveTransaction.save(app.store.target(binding.uri),localHash,merged.content(),old -> app.store.backup(binding.uri,binding.name,old));
+                                    record(binding,merged); remoteById.put(binding.id,merged); uploaded++; downloaded++;
+                                    onMain(() -> {
+                                        EditorDocument doc=openDocument(binding.uri);
+                                        if (doc != null) {
+                                            doc.buffer=mergedBuffer; doc.savedHash=SaveTransaction.hash(merged.content());
+                                            doc.serverRevision=merged.revision(); doc.syncedHash=doc.savedHash;
+                                        }
+                                        return null;
+                                    });
+                                } finally { onMain(() -> { locked.saving=false; locked.replacing=false; app.refresh(); return null; }); }
+                            } else {
+                                record(binding,uploadedFile); remoteById.put(binding.id, uploadedFile); uploaded++;
+                            }
                         } else {
                             RemoteApi.Remote metadata=remoteById.get(binding.id);
                             if (metadata == null) { deferred++; continue; } // No remote-delete propagation.

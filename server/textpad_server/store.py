@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 import re
 import sqlite3
+import unicodedata
 
-from .codec import decode
+from .codec import decode, merge_3way
 
 METADATA = "sequence,document_id,name,sha256,size,encoding,created_at"
 RECENT_KEEP_COUNT = 10
@@ -33,8 +34,11 @@ def identifier(value):
 
 
 def filename(value):
-    if not isinstance(value, str) or not value.strip() or len(value) > 255 or value in {".", ".."} \
+    if not isinstance(value, str) or not value.strip() or value in {".", ".."} \
             or re.search(r"[/\\\x00-\x1f\x7f]", value):
+        raise ValueError("Use a filename of 1–255 characters without slashes or control characters.")
+    value = unicodedata.normalize("NFC", value.strip())
+    if not value or len(value) > 255 or value in {".", ".."}:
         raise ValueError("Use a filename of 1–255 characters without slashes or control characters.")
     value.encode("utf-8", errors="strict")
     return value
@@ -138,6 +142,11 @@ class Store:
                     request_hash TEXT NOT NULL, response TEXT NOT NULL,
                     PRIMARY KEY (document_id, request_id)
                 );
+                CREATE TABLE IF NOT EXISTS device_cursors (
+                    client_id TEXT NOT NULL, document_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY (client_id, document_id)
+                );
                 CREATE TABLE IF NOT EXISTS login_attempts (
                     address TEXT PRIMARY KEY, failures INTEGER NOT NULL, started REAL NOT NULL
                 );
@@ -158,8 +167,10 @@ class Store:
                                   ORDER BY r.created_at DESC,r.sequence DESC""").fetchall()
             return [representation(row) for row in rows]
 
-    def get(self, document_id, revision=None):
+    def get(self, document_id, revision=None, client_id=None):
         identifier(document_id)
+        if client_id is not None:
+            identifier(str(client_id))
         with closing(self.connect()) as db:
             if revision is None:
                 row = db.execute("""SELECT r.* FROM documents d JOIN revisions r ON d.current_revision=r.sequence
@@ -169,6 +180,12 @@ class Store:
                 row = db.execute("SELECT * FROM revisions WHERE document_id=? AND sequence=?", (document_id, revision)).fetchone()
             if row is None:
                 raise NotFound("Document or revision not found.")
+            if client_id is not None and revision is None:
+                now_iso = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                db.execute(
+                    "INSERT OR REPLACE INTO device_cursors VALUES(?,?,?,?)",
+                    (str(client_id), document_id, int(row["sequence"]), now_iso),
+                )
             return representation(row), bytes(row["content"])
 
     def revisions(self, document_id):
@@ -179,10 +196,13 @@ class Store:
             return [representation(row) for row in db.execute(
                 f"SELECT {METADATA} FROM revisions WHERE document_id=? ORDER BY sequence DESC", (document_id,))]
 
-    def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None):
-        identifier(document_id), identifier(request_id), filename(name)
+    def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None, client_id=None):
+        identifier(document_id), identifier(request_id)
+        name = filename(name)
         if base_revision is not None:
             identifier(str(base_revision))
+        if client_id is not None:
+            identifier(str(client_id))
         decoded = decode(content, encoding_hint)
         sha256 = hashlib.sha256(content).hexdigest()
         request_hash = hashlib.sha256(name.encode() + b"\0" + content).hexdigest()
@@ -220,21 +240,77 @@ class Store:
                         "previous_revision": revision,
                         "replaced_newer_revision": False,
                     }
+                    if client_id is not None:
+                        now_iso = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                        db.execute(
+                            "INSERT OR REPLACE INTO device_cursors VALUES(?,?,?,?)",
+                            (str(client_id), document_id, int(previous["sequence"]), now_iso),
+                        )
                     db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (document_id, request_id, request_hash, json.dumps(response)))
                     db.commit()
                     return response
                 db.execute("INSERT OR IGNORE INTO documents(id) VALUES (?)", (document_id,))
                 created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                old_revision = str(previous["sequence"]) if previous is not None else None
+                merged_raw = None
+                if previous is not None and base_revision is not None and old_revision != str(base_revision):
+                    base_row = db.execute(
+                        "SELECT content, encoding FROM revisions WHERE document_id=? AND sequence=?",
+                        (document_id, base_revision),
+                    ).fetchone()
+                    if base_row is not None:
+                        merged_raw = merge_3way(
+                            decode(bytes(base_row["content"]), base_row["encoding"]),
+                            decode(bytes(previous["content"]), previous["encoding"]),
+                            decoded,
+                        )
                 cursor = db.execute("""INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at)
                                        VALUES(?,?,?,?,?,?,?)""", (document_id,name,content,sha256,len(content),decoded.encoding,created))
-                revision = str(cursor.lastrowid)
-                db.execute("UPDATE documents SET current_revision=? WHERE id=?", (cursor.lastrowid, document_id))
-                old_revision = str(previous["sequence"]) if previous is not None else None
-                response = {"id":document_id,"name":name,"revision":revision,"sha256":sha256,"size":len(content),
-                            "updated_at":created,"encoding":decoded.encoding,"previous_revision":old_revision,
-                            "replaced_newer_revision":old_revision is not None and old_revision != base_revision}
+                client_seq = cursor.lastrowid
+                if merged_raw is not None:
+                    merged_sha256 = hashlib.sha256(merged_raw).hexdigest()
+                    merged_created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                    merged_cursor = db.execute(
+                        """INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at)
+                           VALUES(?,?,?,?,?,?,?)""",
+                        (document_id, name, merged_raw, merged_sha256, len(merged_raw), decoded.encoding, merged_created),
+                    )
+                    final_seq = merged_cursor.lastrowid
+                    db.execute("UPDATE documents SET current_revision=? WHERE id=?", (final_seq, document_id))
+                    response = {
+                        "id": document_id,
+                        "name": name,
+                        "revision": str(final_seq),
+                        "sha256": merged_sha256,
+                        "size": len(merged_raw),
+                        "updated_at": merged_created,
+                        "encoding": decoded.encoding,
+                        "previous_revision": old_revision,
+                        "client_revision": str(client_seq),
+                        "replaced_newer_revision": False,
+                        "merged_newer_revision": True,
+                    }
+                else:
+                    final_seq = client_seq
+                    db.execute("UPDATE documents SET current_revision=? WHERE id=?", (final_seq, document_id))
+                    response = {
+                        "id": document_id,
+                        "name": name,
+                        "revision": str(final_seq),
+                        "sha256": sha256,
+                        "size": len(content),
+                        "updated_at": created,
+                        "encoding": decoded.encoding,
+                        "previous_revision": old_revision,
+                        "replaced_newer_revision": old_revision is not None and old_revision != base_revision,
+                    }
+                if client_id is not None:
+                    db.execute(
+                        "INSERT OR REPLACE INTO device_cursors VALUES(?,?,?,?)",
+                        (str(client_id), document_id, int(final_seq), response["updated_at"]),
+                    )
                 db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (document_id,request_id,request_hash,json.dumps(response)))
-                self._prune_document(db, document_id, cursor.lastrowid)
+                self._prune_document(db, document_id, final_seq)
                 db.commit()
             except BaseException:
                 db.rollback()
@@ -251,13 +327,23 @@ class Store:
                 data = json.loads(row["response"])
             except (TypeError, ValueError):
                 continue
-            if data.get("replaced_newer_revision") and data.get("previous_revision") is not None:
+            if data.get("replaced_newer_revision") or data.get("merged_newer_revision"):
                 updated_ts = parse_timestamp(data.get("updated_at", ""))
                 if (now - updated_ts) <= CONFLICT_KEEP_SECONDS:
-                    try:
-                        protected.add(int(data["previous_revision"]))
-                    except (TypeError, ValueError):
-                        pass
+                    for key in ("previous_revision", "client_revision"):
+                        if data.get(key) is not None:
+                            try:
+                                protected.add(int(data[key]))
+                            except (TypeError, ValueError):
+                                pass
+        cursor_rows = db.execute("SELECT revision, updated_at FROM device_cursors WHERE document_id=?", (document_id,)).fetchall()
+        for row in cursor_rows:
+            updated_ts = parse_timestamp(row["updated_at"])
+            if (now - updated_ts) <= CONFLICT_KEEP_SECONDS:
+                try:
+                    protected.add(int(row["revision"]))
+                except (TypeError, ValueError):
+                    pass
         return protected
 
     def _prune_document(self, db, document_id, current_revision=None, now=None):

@@ -31,6 +31,17 @@
     if (savedCollapsed !== null) initialCollapsed = savedCollapsed === "true";
   } catch {}
 
+  let clientId = "web-client";
+  try {
+    const storedClient = localStorage.getItem("textpad.editor.clientId");
+    if (storedClient && /^[A-Za-z0-9_-]{1,128}$/.test(storedClient)) {
+      clientId = storedClient;
+    } else {
+      clientId = `web-${crypto.randomUUID()}`;
+      localStorage.setItem("textpad.editor.clientId", clientId);
+    }
+  } catch {}
+
   const documents = new SvelteMap();
   let files = $state([]);
   let fileFilter = $state("");
@@ -77,6 +88,7 @@
   let reconnectTimer = null;
   let reconnectAttempts = 0;
   let dbPromise = null;
+  let syncChannel = null;
 
   const IDB_NAME = "textpad.editor.offline";
   const IDB_VERSION = 1;
@@ -323,7 +335,12 @@
       response = await fetch(apiBase + path, {
         ...options,
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, ...options.headers },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+          "X-Textpad-Client": clientId,
+          ...options.headers,
+        },
       });
     } catch {
       apiOnline = false;
@@ -469,7 +486,12 @@
         highlightActiveLineGutter(),
         EditorState.tabSize.of(4),
         EditorView.cspNonce.of(nonce),
-        EditorView.contentAttributes.of({ "aria-label": "Document text", spellcheck: "false" }),
+        EditorView.contentAttributes.of({
+          "aria-label": "Document text",
+          spellcheck: "false",
+          autocorrect: "off",
+          autocapitalize: "off",
+        }),
         EditorView.theme({ "&": { color: "#e3e8df" } }, { dark: true }),
         wrapCompartment.of(preferences.wrap ? EditorView.lineWrapping : []),
         guttersCompartment.of(preferences.lines ? lineNumbers() : []),
@@ -676,7 +698,7 @@
       ],
     });
     if (!result) return;
-    const name = (result.filename ?? "").trim();
+    const name = (result.filename ?? "").trim().normalize("NFC");
     if (!name || /[/\\\x00-\x1f]/.test(name)) {
       notice("Choose a filename without slashes or control characters.", true);
       return;
@@ -731,6 +753,27 @@
     if (active === id) activate(documents.keys().next().value || null);
   }
 
+  function applyCleanDocMetadata(doc, metadata) {
+    const before = doc.state.doc;
+    captureViewState(doc);
+    const selection = doc.state.selection.main;
+    const next = createDocModel(metadata);
+    const bounds = diffBounds(before.toString(), metadata.text);
+    const nextSelection = EditorSelection.range(
+      mapDocPos(before, next.state.doc, bounds, selection.anchor),
+      mapDocPos(before, next.state.doc, bounds, selection.head)
+    );
+    const nextState = makeState(next, metadata.text, nextSelection);
+    next.state = nextState;
+    next.savedDoc = nextState.doc;
+    next.scrollTop = doc.scrollTop;
+    next.scrollLeft = doc.scrollLeft;
+    next.scrollSnapshot = mapScrollSnapshot(doc.scrollSnapshot, before, nextState.doc, bounds);
+    documents.set(doc.id, next);
+    if (active === doc.id) activate(doc.id);
+    return next;
+  }
+
   async function save(doc = activeDoc) {
     if (!doc || doc.saving || !doc.dirty) return;
     const state = doc.state;
@@ -758,30 +801,43 @@
     doc.saving = true;
     try {
       const result = await api(`/documents/${doc.id}`, { method: "PUT", body: JSON.stringify(pending.body) });
+      const storedText = typeof result.text === "string" ? result.text : pending.body.text;
       doc.revision = result.revision;
       doc.sha256 = result.sha256;
       doc.size = result.size;
       doc.updated_at = result.updated_at;
       doc.line_endings = result.line_endings;
       doc.savedDoc = pending.doc;
-      doc.savedName = pending.body.name;
+      doc.savedName = result.name || pending.body.name;
+      doc.name = doc.savedName;
       doc.savedEncoding = pending.body.encoding;
       doc.savedBom = pending.body.bom;
       doc.pending = null;
       doc.pendingSync = false;
       doc.remoteChanged = false;
       await idbRemoveOutbox(doc.id);
-      await idbStoreDocument({
+      const fullMetadata = {
         ...result,
-        text: pending.body.text,
+        text: storedText,
         bom: doc.savedBom,
         line_endings: doc.line_endings,
-      });
+      };
+      await idbStoreDocument(fullMetadata);
       files = [result, ...files.filter((file) => file.id !== result.id)];
       doc.dirty = isDocDirty(doc);
-      if (result.replaced_newer_revision) {
+      if (result.merged_newer_revision) {
+        if (!doc.dirty && typeof result.text === "string") {
+          doc = applyCleanDocMetadata(doc, fullMetadata);
+        } else {
+          doc.remoteChanged = true;
+        }
+        notice("Merged your edits with a newer server revision. Both versions remain in History.");
+      } else if (result.replaced_newer_revision) {
         notice("Saved as the latest revision. The displaced server version is available in History.");
       }
+      try {
+        syncChannel?.postMessage({ type: "changed", id: doc.id });
+      } catch {}
       await refreshFiles();
     } catch (error) {
       if (error.offline) {
@@ -818,6 +874,9 @@
         };
         files = [summary, ...files.filter((file) => file.id !== doc.id)];
         doc.dirty = isDocDirty(doc);
+        try {
+          syncChannel?.postMessage({ type: "changed", id: doc.id });
+        } catch {}
         notice("Saved offline in this browser. Changes will sync automatically when reconnected.");
         return;
       }
@@ -846,25 +905,10 @@
       if (current) current.remoteChanged = true;
       return;
     }
-    captureViewState(doc);
-    const selection = doc.state.selection.main;
-    const next = createDocModel(metadata);
-    const bounds = diffBounds(before.toString(), metadata.text);
-    const nextSelection = EditorSelection.range(
-      mapDocPos(before, next.state.doc, bounds, selection.anchor),
-      mapDocPos(before, next.state.doc, bounds, selection.head)
-    );
-    const nextState = makeState(next, metadata.text, nextSelection);
-    next.state = nextState;
-    next.savedDoc = nextState.doc;
-    next.scrollTop = doc.scrollTop;
-    next.scrollLeft = doc.scrollLeft;
-    next.scrollSnapshot = mapScrollSnapshot(doc.scrollSnapshot, before, nextState.doc, bounds);
-    documents.set(doc.id, next);
-    if (active === doc.id) activate(doc.id);
+    applyCleanDocMetadata(doc, metadata);
   }
 
-  async function flushOutbox() {
+  async function runFlushOutbox() {
     const outbox = await idbGetAll("outbox");
     pendingSyncCount = outbox.length;
     if (!outbox.length) return;
@@ -872,13 +916,15 @@
       const openDoc = documents.get(item.id);
       if (openDoc?.saving) continue;
       const result = await api(`/documents/${item.id}`, { method: "PUT", body: JSON.stringify(item.body) });
+      const storedText = typeof result.text === "string" ? result.text : item.body.text;
       await idbRemoveOutbox(item.id);
-      await idbStoreDocument({
+      const fullMetadata = {
         ...result,
-        text: item.body.text,
+        text: storedText,
         bom: item.body.bom,
         line_endings: result.line_endings,
-      });
+      };
+      await idbStoreDocument(fullMetadata);
       if (openDoc) {
         openDoc.revision = result.revision;
         openDoc.sha256 = result.sha256;
@@ -891,11 +937,26 @@
           openDoc.pending = null;
         }
         openDoc.dirty = isDocDirty(openDoc);
+        if (result.merged_newer_revision && !openDoc.dirty && typeof result.text === "string") {
+          applyCleanDocMetadata(openDoc, fullMetadata);
+        }
       }
-      if (result.replaced_newer_revision) {
+      if (result.merged_newer_revision) {
+        notice("Merged offline edits with a newer server revision. Both versions remain in History.");
+      } else if (result.replaced_newer_revision) {
         notice("Saved as the latest revision. The displaced server version is available in History.");
       }
+      try {
+        syncChannel?.postMessage({ type: "changed", id: item.id });
+      } catch {}
     }
+  }
+
+  async function flushOutbox() {
+    if (typeof navigator !== "undefined" && navigator.locks?.request) {
+      return navigator.locks.request("textpad.editor.outbox", runFlushOutbox);
+    }
+    return runFlushOutbox();
   }
 
   async function cacheDocumentsInBackground(remoteFiles) {
@@ -908,7 +969,7 @@
       try {
         const res = await fetch(`${apiBase}/documents/${encodeURIComponent(remote.id)}`, {
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, "X-Textpad-Client": clientId },
         });
         if (res.ok) {
           const data = await res.json();
@@ -948,7 +1009,7 @@
         const outbox = await idbGetAll("outbox");
         pendingSyncCount = outbox.length;
         if (cachedFiles.length > 0 || files.length > 0) {
-          if (cachedFiles.length > 0 && files.length === 0) {
+          if (cachedFiles.length > 0) {
             cachedFiles.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
             files = cachedFiles;
           }
@@ -1087,7 +1148,7 @@
       ],
     });
     if (result) {
-      const name = (result.filename ?? "").trim();
+      const name = (result.filename ?? "").trim().normalize("NFC");
       if (!name || /[/\\\x00-\x1f]/.test(name)) {
         notice("Choose a filename without slashes or control characters.", true);
         return;
@@ -1579,13 +1640,28 @@
         refreshFiles().catch(failure);
       }
     };
+    const onPageShow = () => {
+      connectEvents();
+      refreshFiles().catch(failure);
+    };
+
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        syncChannel = new BroadcastChannel("textpad.editor.sync");
+        syncChannel.onmessage = (event) => {
+          if (event.data?.type === "changed") {
+            refreshFiles().catch(failure);
+          }
+        };
+      }
+    } catch {}
 
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     window.addEventListener("pagehide", closeEvents);
-    window.addEventListener("pageshow", connectEvents);
+    window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     const pollInterval = setInterval(() => {
@@ -1599,8 +1675,12 @@
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("pagehide", closeEvents);
-      window.removeEventListener("pageshow", connectEvents);
+      window.removeEventListener("pageshow", onPageShow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      try {
+        syncChannel?.close();
+      } catch {}
+      syncChannel = null;
       closeEvents();
       view?.destroy();
     };

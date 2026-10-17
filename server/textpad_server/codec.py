@@ -106,3 +106,49 @@ def edited(base, text, encoding=None, bom=None):
     if len(raw) > MAX_BYTES:
         raise InvalidText("The saved file would exceed 10 MiB.")
     return raw
+
+
+def merge_3way(base, current, incoming):
+    if base.text == current.text or base.text == incoming.text or current.text == incoming.text:
+        return None
+    base_lines = base.text.split("\n")
+    curr_lines = current.text.split("\n")
+    inc_lines = incoming.text.split("\n")
+    curr_hunks = [
+        (i1, i2, curr_lines[j1:j2])
+        for tag, i1, i2, j1, j2 in SequenceMatcher(None, base_lines, curr_lines, autojunk=False).get_opcodes()
+        if tag != "equal"
+    ]
+    inc_hunks = [
+        (i1, i2, inc_lines[j1:j2])
+        for tag, i1, i2, j1, j2 in SequenceMatcher(None, base_lines, inc_lines, autojunk=False).get_opcodes()
+        if tag != "equal"
+    ]
+    if not curr_hunks or not inc_hunks:
+        return None
+    for a in curr_hunks:
+        for b in inc_hunks:
+            if a == b:
+                continue
+            first, second = (a, b) if (a[0], a[1]) <= (b[0], b[1]) else (b, a)
+            if not (first[1] < second[0] or (first[1] == second[0] and first[0] < first[1] and second[0] < second[1])):
+                return None
+    combined = []
+    for hunk in sorted(curr_hunks + inc_hunks, key=lambda item: (item[0], item[1])):
+        if not combined or combined[-1] != hunk:
+            combined.append(hunk)
+    merged_lines = []
+    cursor = 0
+    for i1, i2, rep in combined:
+        merged_lines.extend(base_lines[cursor:i1])
+        merged_lines.extend(rep)
+        cursor = i2
+    merged_lines.extend(base_lines[cursor:])
+    merged_text = "\n".join(merged_lines)
+    if merged_text == current.text or merged_text == incoming.text:
+        return None
+    try:
+        return edited(incoming, merged_text, incoming.encoding, incoming.bom)
+    except InvalidText:
+        return None
+
