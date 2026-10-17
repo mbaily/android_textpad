@@ -7,8 +7,8 @@ import java.util.regex.Pattern;
 
 /**
  * Filters document lines to show only uncompleted tasks, their ancestors/headings,
- * plain notes indented directly under uncompleted tasks, and all heading blocks
- * consisting of a blank line, a nonblank title, and a line of dashes.
+ * plain notes indented directly under uncompleted tasks, and heading blocks
+ * (blank line, nonblank title, line of dashes) for sections with uncompleted tasks.
  */
 public final class TaskFilter {
     private static final Pattern DIVIDER = Pattern.compile("[ \\t]*-+[ \\t]*");
@@ -113,9 +113,17 @@ public final class TaskFilter {
             parents[i] = -1;
         }
 
+        boolean[] dividerHeadings = new boolean[n];
+        for (int i = 0; i + 2 < n; i++) {
+            dividerHeadings[i] = types[i] == LineType.BLANK && types[i + 1] != LineType.BLANK
+                    && DIVIDER.matcher(lines[i + 2]).matches();
+        }
+
+        int sectionStart = 0;
         for (int i = 0; i < n; i++) {
+            if (dividerHeadings[i] || types[i] == LineType.HEADER) sectionStart = i;
             if (types[i] == LineType.BLANK) continue;
-            for (int k = i - 1; k >= 0; k--) {
+            for (int k = i - 1; k >= sectionStart; k--) {
                 if (types[k] != LineType.BLANK && indents[k] < indents[i]) {
                     parents[i] = k;
                     break;
@@ -135,11 +143,16 @@ public final class TaskFilter {
             }
         }
 
-        // Preserve each complete blank/title/divider block regardless of task indentation.
-        for (int i = 2; i < n; i++) {
-            if (types[i - 2] == LineType.BLANK && types[i - 1] != LineType.BLANK
-                    && DIVIDER.matcher(lines[i]).matches()) {
-                for (int h = i - 2; h <= i; h++) {
+        // A section ends at the next divider heading or Markdown heading.
+        int sectionHeading = -1;
+        for (int i = 0; i < n; i++) {
+            if (dividerHeadings[i]) {
+                sectionHeading = i;
+            } else if (types[i] == LineType.HEADER && i != sectionHeading + 1) {
+                sectionHeading = -1;
+            }
+            if (isUncompleted[i] && sectionHeading >= 0) {
+                for (int h = sectionHeading; h <= sectionHeading + 2; h++) {
                     isVisible[h] = true;
                     isContext[h] = true;
                 }

@@ -86,11 +86,11 @@ def main():
         toggle.click()
         expect(lines).to_have_text(["Plain notes", "[X] Finished task", ""])
 
-        # Heading blocks remain visible above unindented tasks and completed sections.
+        # Heading blocks remain visible above unindented tasks; completed sections stay hidden.
         page.locator(".file-item").filter(has_text="Divider headings.txt").click()
         toggle.click()
-        expect(lines).to_have_text(["", "Shopping", "-----", "[ ] Milk", "", "Finished section", "---"])
-        expect(editor.locator(".cm-task-context")).to_have_text(["", "Shopping", "-----", "", "Finished section", "---"])
+        expect(lines).to_have_text(["", "Shopping", "-----", "[ ] Milk"])
+        expect(editor.locator(".cm-task-context")).to_have_text(["", "Shopping", "-----"])
         expect(page.locator("#save")).to_be_disabled()
         lines.nth(1).click()
         page.keyboard.press("Home")
@@ -105,7 +105,7 @@ def main():
         page.locator("#toggle-todo").click()
         toggle.click()
         toggle.click()
-        expect(lines).to_have_text(["", "Shopping", "-----", "", "Finished section", "---"])
+        expect(editor).to_have_text("")
         expect(page.locator("#notice-text")).to_have_text("No uncompleted tasks found")
 
         page.get_by_role("tab", name="Filter tasks.txt", exact=True).click()

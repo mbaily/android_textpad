@@ -304,7 +304,7 @@ public class EditorInstrumentedTest {
     @Test public void tasksViewKeepsDividerHeadingsAndMapsHeadingEditsToTheFullText() throws Exception {
         String original = "Unrelated notes\n\nShopping\n-----\n[ ] Milk\n[X] Bread\n"
                 + "\nFinished section\n---\n[X] Done\n";
-        String filtered = "\nShopping\n-----\n[ ] Milk\n\nFinished section\n---";
+        String filtered = "\nShopping\n-----\n[ ] Milk";
         Uri uri = seed("divider-headings.txt", original.replace("\n", "\r\n").getBytes(StandardCharsets.UTF_8));
         try (var scenario = launch(uri)) {
             waitFor(() -> app.current() != null);
@@ -313,7 +313,7 @@ public class EditorInstrumentedTest {
                 View toggle = button(activity.getWindow().getDecorView(), "Filter uncompleted tasks");
                 toggle.performClick();
                 assertEquals(filtered, editor.getText().toString());
-                assertArrayEquals(new int[]{1, 2, 3, 4, 6, 7, 8}, editor.lineMap);
+                assertArrayEquals(new int[]{1, 2, 3, 4}, editor.lineMap);
                 assertFalse(app.current().buffer.dirty());
                 editor.getText().replace(1, 1 + "Shopping".length(), "Groceries");
                 assertEquals(original.replace("Shopping", "Groceries"), app.current().buffer.text());

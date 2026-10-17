@@ -133,12 +133,34 @@ public class TaskFilterTest {
     }
 
     @Test
-    public void dividerHeadingsStayVisibleWithoutAnyUncompletedTasks() {
+    public void dividerHeadingsAreHiddenWithoutAnyUncompletedTasks() {
         String doc = "Unrelated\n\nFinished section\n---\n[X] Done\n\nEmpty section\n-\n";
         TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
-        assertArrayEquals(new int[]{1, 2, 3, 5, 6, 7}, res.visibleLines());
-        for (int line : res.visibleLines()) assertTrue(res.isContext()[line]);
+        assertArrayEquals(new int[]{}, res.visibleLines());
         for (boolean uncompleted : res.isUncompleted()) assertFalse(uncompleted);
+    }
+
+    @Test
+    public void dividerHeadingsOnlyApplyToTasksBeforeTheNextHeading() {
+        String doc = "\nFinished\n---\n[X] Done\n\nOpen\n---\n[ ] Todo\n\nEmpty\n---\n";
+        assertArrayEquals(new int[]{4, 5, 6, 7}, TaskFilter.filter(doc, 4).visibleLines());
+        String markdownBoundary = "\nFinished\n---\n[X] Done\n# Open section\n[ ] Todo\n";
+        assertArrayEquals(new int[]{4, 5}, TaskFilter.filter(markdownBoundary, 4).visibleLines());
+        String indentedMarkdownBoundary = "\nFinished\n---\n    # Open section\n    [ ] Todo\n";
+        assertArrayEquals(new int[]{3, 4}, TaskFilter.filter(indentedMarkdownBoundary, 4).visibleLines());
+    }
+
+    @Test
+    public void markdownTitlesCanAlsoHaveDividers() {
+        assertArrayEquals(new int[]{0, 1, 2, 3}, TaskFilter.filter("\n# Shopping\n---\n[ ] Milk\n", 4).visibleLines());
+    }
+
+    @Test
+    public void dividerSectionsDoNotInheritTasksOrNotesFromEarlierSections() {
+        String completedSection = "[ ] Previous task\n    Previous note\n\n    Finished section\n    ---\n    [X] Done\n    Hidden note\n";
+        assertArrayEquals(new int[]{0, 1}, TaskFilter.filter(completedSection, 4).visibleLines());
+        String openSection = "[X] Previous project\n\n    Open section\n    ---\n    [ ] Child\n";
+        assertArrayEquals(new int[]{1, 2, 3, 4}, TaskFilter.filter(openSection, 4).visibleLines());
     }
 
 }

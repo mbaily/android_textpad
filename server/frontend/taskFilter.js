@@ -65,9 +65,16 @@ export function filterTasks(text, tabSize = 4) {
     parents[i] = -1;
   }
 
+  const dividerHeadings = new Uint8Array(n);
+  for (let i = 0; i + 2 < n; i++) {
+    dividerHeadings[i] = types[i] === "BLANK" && types[i + 1] !== "BLANK" && /^[ \t]*-+[ \t]*$/.test(lines[i + 2]) ? 1 : 0;
+  }
+
+  let sectionStart = 0;
   for (let i = 0; i < n; i++) {
+    if (dividerHeadings[i] || types[i] === "HEADER") sectionStart = i;
     if (types[i] === "BLANK") continue;
-    for (let k = i - 1; k >= 0; k--) {
+    for (let k = i - 1; k >= sectionStart; k--) {
       if (types[k] !== "BLANK" && indents[k] < indents[i]) {
         parents[i] = k;
         break;
@@ -87,10 +94,16 @@ export function filterTasks(text, tabSize = 4) {
     }
   }
 
-  // Preserve each complete blank/title/divider block regardless of task indentation.
-  for (let i = 2; i < n; i++) {
-    if (types[i - 2] === "BLANK" && types[i - 1] !== "BLANK" && /^[ \t]*-+[ \t]*$/.test(lines[i])) {
-      for (let h = i - 2; h <= i; h++) {
+  // A section ends at the next divider heading or Markdown heading.
+  let sectionHeading = -1;
+  for (let i = 0; i < n; i++) {
+    if (dividerHeadings[i]) {
+      sectionHeading = i;
+    } else if (types[i] === "HEADER" && i !== sectionHeading + 1) {
+      sectionHeading = -1;
+    }
+    if (isUncompleted[i] && sectionHeading >= 0) {
+      for (let h = sectionHeading; h <= sectionHeading + 2; h++) {
         isVisible[h] = 1;
         isContext[h] = 1;
       }

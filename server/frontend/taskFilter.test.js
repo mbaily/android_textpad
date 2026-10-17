@@ -35,9 +35,28 @@ test("divider headings coexist with Markdown headings and task notes", () => {
   assert.equal(result.isVisible[11], 0);
 });
 
-test("divider headings stay visible without any uncompleted tasks", () => {
+test("divider headings are hidden without any uncompleted tasks", () => {
   const result = filterTasks("Unrelated\n\nFinished section\n---\n[X] Done\n\nEmpty section\n-\n");
-  assert.deepEqual(result.visibleLines, [1, 2, 3, 5, 6, 7]);
-  for (const line of result.visibleLines) assert.equal(result.isContext[line], 1);
+  assert.deepEqual(result.visibleLines, []);
   assert.equal(result.isUncompleted.some(Boolean), false);
+});
+
+test("divider headings only apply to tasks before the next heading", () => {
+  const text = "\nFinished\n---\n[X] Done\n\nOpen\n---\n[ ] Todo\n\nEmpty\n---\n";
+  assert.deepEqual(filterTasks(text).visibleLines, [4, 5, 6, 7]);
+  const markdownBoundary = "\nFinished\n---\n[X] Done\n# Open section\n[ ] Todo\n";
+  assert.deepEqual(filterTasks(markdownBoundary).visibleLines, [4, 5]);
+  const indentedMarkdownBoundary = "\nFinished\n---\n    # Open section\n    [ ] Todo\n";
+  assert.deepEqual(filterTasks(indentedMarkdownBoundary).visibleLines, [3, 4]);
+});
+
+test("Markdown titles can also have dividers", () => {
+  assert.deepEqual(filterTasks("\n# Shopping\n---\n[ ] Milk\n").visibleLines, [0, 1, 2, 3]);
+});
+
+test("divider sections do not inherit tasks or notes from earlier sections", () => {
+  const completedSection = "[ ] Previous task\n    Previous note\n\n    Finished section\n    ---\n    [X] Done\n    Hidden note\n";
+  assert.deepEqual(filterTasks(completedSection).visibleLines, [0, 1]);
+  const openSection = "[X] Previous project\n\n    Open section\n    ---\n    [ ] Child\n";
+  assert.deepEqual(filterTasks(openSection).visibleLines, [1, 2, 3, 4]);
 });
