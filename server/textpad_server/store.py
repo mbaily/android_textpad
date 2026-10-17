@@ -10,7 +10,7 @@ import unicodedata
 
 from .codec import decode, merge_3way
 
-METADATA = "sequence,document_id,name,sha256,size,encoding,created_at"
+METADATA = "sequence,document_id,name,sha256,size,encoding,created_at,source"
 RECENT_KEEP_COUNT = 10
 RECENT_KEEP_SECONDS = 3600
 HOURLY_KEEP_SECONDS = 24 * 3600
@@ -33,6 +33,20 @@ def identifier(value):
     return value
 
 
+def infer_source(client_id=None, explicit_source=None):
+    if explicit_source:
+        return identifier(str(explicit_source))
+    if client_id:
+        cid = str(client_id).lower()
+        if cid.startswith("web"):
+            return "web"
+        if cid.startswith("android"):
+            return "android"
+        if cid.startswith("ios"):
+            return "ios"
+    return "api"
+
+
 def filename(value):
     if not isinstance(value, str) or not value.strip() or value in {".", ".."} \
             or re.search(r"[/\\\x00-\x1f\x7f]", value):
@@ -45,9 +59,12 @@ def filename(value):
 
 
 def representation(row):
-    return {"id": row["document_id"], "name": row["name"], "revision": str(row["sequence"]),
+    item = {"id": row["document_id"], "name": row["name"], "revision": str(row["sequence"]),
             "sha256": row["sha256"], "size": row["size"], "updated_at": row["created_at"],
             "encoding": row["encoding"]}
+    if "source" in row.keys() and row["source"]:
+        item["source"] = row["source"]
+    return item
 
 
 def parse_timestamp(value):
@@ -134,7 +151,8 @@ class Store:
                     document_id TEXT NOT NULL REFERENCES documents(id),
                     name TEXT NOT NULL, content BLOB NOT NULL,
                     sha256 TEXT NOT NULL, size INTEGER NOT NULL,
-                    encoding TEXT NOT NULL, created_at TEXT NOT NULL
+                    encoding TEXT NOT NULL, created_at TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS revisions_document ON revisions(document_id, sequence DESC);
                 CREATE TABLE IF NOT EXISTS receipts (
@@ -152,6 +170,9 @@ class Store:
                 );
                 PRAGMA user_version=1;
             """)
+            cols = {row[1] for row in db.execute("PRAGMA table_info(revisions)")}
+            if "source" not in cols:
+                db.execute("ALTER TABLE revisions ADD COLUMN source TEXT NOT NULL DEFAULT ''")
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=20, isolation_level=None)
@@ -196,13 +217,14 @@ class Store:
             return [representation(row) for row in db.execute(
                 f"SELECT {METADATA} FROM revisions WHERE document_id=? ORDER BY sequence DESC", (document_id,))]
 
-    def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None, client_id=None):
+    def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None, client_id=None, source=None):
         identifier(document_id), identifier(request_id)
         name = filename(name)
         if base_revision is not None:
             identifier(str(base_revision))
         if client_id is not None:
             identifier(str(client_id))
+        rev_source = infer_source(client_id, source)
         decoded = decode(content, encoding_hint)
         sha256 = hashlib.sha256(content).hexdigest()
         request_hash = hashlib.sha256(name.encode() + b"\0" + content).hexdigest()
@@ -216,7 +238,7 @@ class Store:
                     db.rollback()
                     return json.loads(receipt["response"])
                 previous = db.execute(
-                    """SELECT r.sequence, r.name, r.content, r.sha256, r.size, r.encoding, r.created_at
+                    """SELECT r.sequence, r.name, r.content, r.sha256, r.size, r.encoding, r.created_at, r.source
                        FROM documents d JOIN revisions r ON d.current_revision=r.sequence
                        WHERE d.id=?""",
                     (document_id,),
@@ -237,6 +259,7 @@ class Store:
                         "size": previous["size"],
                         "updated_at": previous["created_at"],
                         "encoding": previous["encoding"],
+                        "source": previous["source"] or rev_source,
                         "previous_revision": revision,
                         "replaced_newer_revision": False,
                     }
@@ -264,16 +287,16 @@ class Store:
                             decode(bytes(previous["content"]), previous["encoding"]),
                             decoded,
                         )
-                cursor = db.execute("""INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at)
-                                       VALUES(?,?,?,?,?,?,?)""", (document_id,name,content,sha256,len(content),decoded.encoding,created))
+                cursor = db.execute("""INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at,source)
+                                       VALUES(?,?,?,?,?,?,?,?)""", (document_id,name,content,sha256,len(content),decoded.encoding,created,rev_source))
                 client_seq = cursor.lastrowid
                 if merged_raw is not None:
                     merged_sha256 = hashlib.sha256(merged_raw).hexdigest()
                     merged_created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
                     merged_cursor = db.execute(
-                        """INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at)
-                           VALUES(?,?,?,?,?,?,?)""",
-                        (document_id, name, merged_raw, merged_sha256, len(merged_raw), decoded.encoding, merged_created),
+                        """INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at,source)
+                           VALUES(?,?,?,?,?,?,?,?)""",
+                        (document_id, name, merged_raw, merged_sha256, len(merged_raw), decoded.encoding, merged_created, "merge"),
                     )
                     final_seq = merged_cursor.lastrowid
                     db.execute("UPDATE documents SET current_revision=? WHERE id=?", (final_seq, document_id))
@@ -285,6 +308,7 @@ class Store:
                         "size": len(merged_raw),
                         "updated_at": merged_created,
                         "encoding": decoded.encoding,
+                        "source": "merge",
                         "previous_revision": old_revision,
                         "client_revision": str(client_seq),
                         "replaced_newer_revision": False,
@@ -301,6 +325,7 @@ class Store:
                         "size": len(content),
                         "updated_at": created,
                         "encoding": decoded.encoding,
+                        "source": rev_source,
                         "previous_revision": old_revision,
                         "replaced_newer_revision": old_revision is not None and old_revision != base_revision,
                     }

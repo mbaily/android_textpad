@@ -156,7 +156,7 @@ final class SyncManager {
         CompletableFuture<Boolean> completion=new CompletableFuture<>(); running=completion;
         busy=true; status="Syncing…"; app.refresh();
         app.io.execute(() -> {
-            int uploaded=0, downloaded=0, deferred=0; List<String> errors=new ArrayList<>();
+            int uploaded=0, downloaded=0, deferred=0, mergedCount=0, conflictCount=0; List<String> errors=new ArrayList<>();
             try {
                 Map<String,RemoteApi.Remote> remoteById=new LinkedHashMap<>();
                 for (var remote : remoteApi.list()) remoteById.put(remote.id(),remote);
@@ -189,7 +189,7 @@ final class SyncManager {
                                 try {
                                     if (!enabled(binding) || stopped.getAsBoolean()) { deferred++; continue; }
                                     SaveTransaction.save(app.store.target(binding.uri),localHash,merged.content(),old -> app.store.backup(binding.uri,binding.name,old));
-                                    record(binding,merged); remoteById.put(binding.id,merged); uploaded++; downloaded++;
+                                    record(binding,merged); remoteById.put(binding.id,merged); uploaded++; downloaded++; mergedCount++;
                                     onMain(() -> {
                                         EditorDocument doc=openDocument(binding.uri);
                                         if (doc != null) {
@@ -201,6 +201,7 @@ final class SyncManager {
                                 } finally { onMain(() -> { locked.saving=false; locked.replacing=false; app.refresh(); return null; }); }
                             } else {
                                 record(binding,uploadedFile); remoteById.put(binding.id, uploadedFile); uploaded++;
+                                if (uploadedFile.replacedNewerRevision()) conflictCount++;
                             }
                         } else {
                             RemoteApi.Remote metadata=remoteById.get(binding.id);
@@ -233,6 +234,8 @@ final class SyncManager {
                 }
             } catch (Exception e) { errors.add(message(e)); }
             String summary=uploaded+" uploaded · "+downloaded+" downloaded · "+deferred+" pending";
+            if (mergedCount > 0) summary+=" · "+mergedCount+" merged";
+            if (conflictCount > 0) summary+=" · "+conflictCount+" conflict kept in history";
             if (!errors.isEmpty()) summary+="\n"+String.join("\n",errors);
             String result=summary;
             boolean retry=!errors.isEmpty();

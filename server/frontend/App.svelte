@@ -321,6 +321,10 @@
     return { "utf-8": "UTF-8", "utf-16-le": "UTF-16 LE", "utf-16-be": "UTF-16 BE", ascii: "ASCII" }[value] || value;
   }
 
+  function sourceLabel(value) {
+    return { web: "Web", android: "Android", ios: "iOS", merge: "Auto-merged", restore: "Restored", api: "Sync" }[value] || value;
+  }
+
   function notice(text, error = false, expired = false) {
     noticeState = { visible: true, text, error, expired };
   }
@@ -650,6 +654,49 @@
     }
   }
 
+  async function fetchDocument(id) {
+    const cached = await idbGet("documents", id);
+    const headers = {};
+    if (cached?.revision && cached?.sha256 && typeof cached?.text === "string") {
+      headers["If-None-Match"] = `"${cached.revision}:${cached.sha256}"`;
+    }
+    let response;
+    try {
+      response = await fetch(`${apiBase}/documents/${encodeURIComponent(id)}`, {
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+          "X-Textpad-Client": clientId,
+          ...headers,
+        },
+      });
+    } catch {
+      apiOnline = false;
+      const error = new Error("Connection lost. Your open edits are still here. Reconnect and retry.");
+      error.offline = true;
+      throw error;
+    }
+    if (response.status === 304 && cached) {
+      apiOnline = true;
+      return cached;
+    }
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(`The server returned HTTP ${response.status}. Your edits are still open.`);
+    }
+    if (!response.ok) {
+      const error = new Error(data.error || `Server returned HTTP ${response.status}.`);
+      error.expired = response.status === 401;
+      throw error;
+    }
+    apiOnline = true;
+    await idbStoreDocument(data);
+    return data;
+  }
+
   async function openFile(id) {
     opening = id;
     closeSidebarOnMobile();
@@ -665,8 +712,7 @@
         if (opening === id) activate(id);
         return;
       }
-      const metadata = await api(`/documents/${encodeURIComponent(id)}`);
-      await idbStoreDocument(metadata);
+      const metadata = await fetchDocument(id);
       if (!documents.has(id)) documents.set(id, createDocModel(metadata));
       if (opening === id) activate(id);
       const remote = files.find((file) => file.id === id);
@@ -833,7 +879,7 @@
         }
         notice("Merged your edits with a newer server revision. Both versions remain in History.");
       } else if (result.replaced_newer_revision) {
-        notice("Saved as the latest revision. The displaced server version is available in History.");
+        notice(`Saved as the latest revision. Overlapping revision ${result.previous_revision} was preserved in History.`);
       }
       try {
         syncChannel?.postMessage({ type: "changed", id: doc.id });
@@ -898,14 +944,56 @@
       return;
     }
     const before = doc.state.doc;
-    const metadata = await api(`/documents/${doc.id}`);
-    await idbStoreDocument(metadata);
+    const metadata = await fetchDocument(doc.id);
     if (documents.get(doc.id) !== doc || doc.saving || !doc.state.doc.eq(before) || (!prompt && doc.dirty)) {
       const current = documents.get(doc.id);
       if (current) current.remoteChanged = true;
       return;
     }
     applyCleanDocMetadata(doc, metadata);
+  }
+
+  async function mergeRemoteFile(doc = activeDoc) {
+    if (!doc || doc.revision === null || doc.saving) return;
+    if (!doc.dirty) {
+      await reloadFile(doc, false);
+      return;
+    }
+    const before = doc.state.doc;
+    const result = await api(`/documents/${doc.id}/merge`, {
+      method: "POST",
+      body: JSON.stringify({
+        text: before.toString(),
+        base_revision: doc.revision,
+      }),
+    });
+    if (documents.get(doc.id) !== doc || doc.saving || !doc.state.doc.eq(before)) return;
+    if (!result.merged) {
+      notice("Changes overlap on the same lines. Save to keep your version (preserving the remote revision in History), or reload remote.", true);
+      return;
+    }
+    captureViewState(doc);
+    const selection = doc.state.selection.main;
+    const bounds = diffBounds(before.toString(), result.text);
+    const serverState = EditorState.create({ doc: result.server_text ?? result.text });
+    const tempMerged = EditorState.create({ doc: result.text });
+    const nextSelection = EditorSelection.range(
+      mapDocPos(before, tempMerged.doc, bounds, selection.anchor),
+      mapDocPos(before, tempMerged.doc, bounds, selection.head)
+    );
+    const nextState = makeState(doc, result.text, nextSelection);
+    doc.state = nextState;
+    doc.savedDoc = serverState.doc;
+    doc.revision = result.revision;
+    doc.sha256 = result.sha256;
+    doc.size = result.size;
+    doc.updated_at = result.updated_at;
+    doc.line_endings = result.line_endings;
+    doc.remoteChanged = false;
+    doc.dirty = isDocDirty(doc, nextState.doc);
+    doc.scrollSnapshot = mapScrollSnapshot(doc.scrollSnapshot, before, nextState.doc, bounds);
+    if (active === doc.id) activate(doc.id);
+    notice("Merged newer server changes into your unsaved buffer.");
   }
 
   async function runFlushOutbox() {
@@ -944,7 +1032,7 @@
       if (result.merged_newer_revision) {
         notice("Merged offline edits with a newer server revision. Both versions remain in History.");
       } else if (result.replaced_newer_revision) {
-        notice("Saved as the latest revision. The displaced server version is available in History.");
+        notice(`Saved as the latest revision. Overlapping revision ${result.previous_revision} was preserved in History.`);
       }
       try {
         syncChannel?.postMessage({ type: "changed", id: item.id });
@@ -1862,6 +1950,7 @@
 
     <div id="remote-notice" class="remote-notice" class:hidden={!activeDoc?.remoteChanged} role="status">
       A newer server revision is available. Your unsaved edits are kept. Saving makes them the latest revision.
+      <button id="merge-remote" class="text-button" title="Merge server version into unsaved edits" onclick={() => mergeRemoteFile().catch(failure)}>Merge</button>
       <button id="reload-remote" class="icon-button" title="Reload server version" aria-label="Reload server version" onclick={() => reloadFile().catch(failure)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
@@ -1950,7 +2039,7 @@
           class:active={selectedRevision?.revision === revision.revision}
           onclick={() => selectHistoryRevision(revision)}
         >
-          Revision {revision.revision}{revision.revision === activeDoc?.revision ? " · current" : ""}
+          Revision {revision.revision}{revision.source ? ` · ${sourceLabel(revision.source)}` : ""}{revision.revision === activeDoc?.revision ? " · current" : ""}
           <span class="small">{date(revision.updated_at)} · {bytes(revision.size)}</span>
         </button>
       {/each}

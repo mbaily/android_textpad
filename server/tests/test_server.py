@@ -312,6 +312,58 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(ios_merge["merged_newer_revision"])
         self.assertEqual(b"alpha 14\nbeta\nGAMMA\n",store.get("nfc-doc")[1])
 
+    def test_intraline_merge_endpoint_etag_gzip_and_source_attribution(self):
+        import gzip as gz
+        base=b"The quick brown fox jumps over the lazy dog\n"
+        r1=self.client.put("/api/v1/documents/intra-doc",headers={**self.headers,"X-Textpad-Client":"android-1"},json={
+            "name":"fox.txt",
+            "content_base64":b64encode(base).decode(),
+            "base_revision":None,
+            "request_id":"intra-1",
+        }).json
+        self.assertEqual("android",r1["source"])
+        r2=self.client.put("/api/v1/documents/intra-doc",headers={**self.headers,"X-Textpad-Client":"ios-1"},json={
+            "name":"fox.txt",
+            "content_base64":b64encode(b"The FAST brown fox jumps over the lazy dog\n").decode(),
+            "base_revision":r1["revision"],
+            "request_id":"intra-2",
+        }).json
+        self.assertEqual("ios",r2["source"])
+        self.login()
+        preview=self.client.post("/editor/api/documents/intra-doc/merge",headers={"X-CSRF-Token":self.csrf},json={
+            "text":"The quick brown fox jumps over the SLEEPY dog\n",
+            "base_revision":r1["revision"],
+        }).json
+        self.assertTrue(preview["merged"])
+        self.assertEqual("The FAST brown fox jumps over the SLEEPY dog\n",preview["text"])
+        self.assertEqual("The FAST brown fox jumps over the lazy dog\n",preview["server_text"])
+        saved=self.browser_put("intra-doc",{
+            "name":"fox.txt",
+            "text":"The quick brown fox jumps over the SLEEPY dog\n",
+            "base_revision":r1["revision"],
+            "request_id":"intra-3",
+        }).json
+        self.assertTrue(saved["merged_newer_revision"])
+        self.assertEqual("merge",saved["source"])
+        self.assertEqual("The FAST brown fox jumps over the SLEEPY dog\n",saved["text"])
+        # ETag and 304 Not Modified
+        get_res=self.client.get("/api/v1/documents/intra-doc",headers=self.headers)
+        self.assertEqual(200,get_res.status_code)
+        etag=get_res.headers.get("ETag")
+        self.assertTrue(etag)
+        not_mod=self.client.get("/api/v1/documents/intra-doc",headers={**self.headers,"If-None-Match":etag})
+        self.assertEqual(304,not_mod.status_code)
+        self.assertEqual(b"",not_mod.data)
+        # Gzip compression on large payload
+        big_raw=(b"repetitive line of text for compression\n"*200)
+        self.upload(big_raw,"big-1",doc="big-doc")
+        gz_res=self.client.get("/api/v1/documents/big-doc",headers={**self.headers,"Accept-Encoding":"gzip"})
+        self.assertEqual(200,gz_res.status_code)
+        self.assertEqual("gzip",gz_res.headers.get("Content-Encoding"))
+        decompressed=__import__("json").loads(gz.decompress(gz_res.data))
+        self.assertEqual(big_raw,b64decode(decompressed["content_base64"]))
+
 
 if __name__=="__main__": unittest.main()
+
 

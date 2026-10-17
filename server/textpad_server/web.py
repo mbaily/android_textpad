@@ -2,6 +2,7 @@ from base64 import b64decode, b64encode
 import binascii
 from contextlib import closing, suppress
 from datetime import timedelta
+import gzip
 import hashlib
 import hmac
 import io
@@ -20,7 +21,7 @@ from simple_websocket import ConnectionClosed
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from .codec import MAX_BYTES, InvalidText, decode, edited
+from .codec import MAX_BYTES, InvalidText, decode, edited, merge_3way
 from .events import ChangeSignal
 from .store import NotFound, RequestConflict, Store, filename, identifier
 
@@ -115,6 +116,21 @@ def create_app(test_config=None):
             f"{style_src}; "
             f"connect-src 'self' {'wss' if url.scheme == 'https' else 'ws'}://{url.netloc}; "
             "img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+        if (
+            response.status_code == 200
+            and not response.direct_passthrough
+            and "Content-Encoding" not in response.headers
+            and "gzip" in request.headers.get("Accept-Encoding", "").lower()
+            and response.mimetype in {"application/json", "text/html", "text/css", "application/javascript", "application/manifest+json"}
+        ):
+            body = response.get_data()
+            if len(body) >= 1024:
+                compressed = gzip.compress(body, compresslevel=6)
+                if len(compressed) < len(body):
+                    response.set_data(compressed)
+                    response.headers["Content-Encoding"] = "gzip"
+                    response.headers["Content-Length"] = str(len(compressed))
+                    response.headers.add("Vary", "Accept-Encoding")
         return response
 
     sockets = Sock(app)
@@ -191,9 +207,26 @@ def create_app(test_config=None):
             return str(candidate)
         return None
 
+    def doc_etag(metadata):
+        return f'"{metadata["revision"]}:{metadata["sha256"]}"'
+
+    def etag_matches(etag):
+        header = request.headers.get("If-None-Match", "")
+        if not header:
+            return False
+        candidates = [item.strip().removeprefix("W/") for item in header.split(",") if item.strip()]
+        return "*" in candidates or etag in candidates
+
     def binary_document(document_id, revision=None):
         metadata, raw = store.get(document_id, revision, client_id=client_cursor_id() if revision is None else None)
-        return jsonify(**metadata, content_base64=b64encode(raw).decode("ascii"))
+        etag = doc_etag(metadata)
+        if etag_matches(etag):
+            res = app.response_class("", status=304)
+            res.headers["ETag"] = etag
+            return res
+        res = jsonify(**metadata, content_base64=b64encode(raw).decode("ascii"))
+        res.headers["ETag"] = etag
+        return res
 
     @app.get("/api/v1/documents/<document_id>")
     def api_document(document_id):
@@ -209,7 +242,8 @@ def create_app(test_config=None):
         except (binascii.Error, ValueError) as error:
             raise ValueError("Invalid Base64 file contents.") from error
         return jsonify(store.put(document_id, payload.get("name"), raw, payload.get("base_revision"),
-                                 payload.get("request_id"), payload.get("encoding"), client_id=client_cursor_id(payload)))
+                                 payload.get("request_id"), payload.get("encoding"), client_id=client_cursor_id(payload),
+                                 source=payload.get("source")))
 
     @app.get("/api/v1/documents/<document_id>/revisions")
     def api_revisions(document_id):
@@ -308,8 +342,15 @@ def create_app(test_config=None):
 
     def text_document(document_id, revision=None):
         metadata, raw = store.get(document_id, revision, client_id=client_cursor_id() if revision is None else None)
+        etag = doc_etag(metadata)
+        if etag_matches(etag):
+            res = app.response_class("", status=304)
+            res.headers["ETag"] = etag
+            return res
         decoded = decode(raw, metadata["encoding"])
-        return jsonify(**metadata, text=decoded.text, bom=decoded.bom, line_endings=decoded.ending_label)
+        res = jsonify(**metadata, text=decoded.text, bom=decoded.bom, line_endings=decoded.ending_label)
+        res.headers["ETag"] = etag
+        return res
 
     @app.get("/editor/api/documents/<document_id>")
     def browser_document(document_id):
@@ -340,7 +381,8 @@ def create_app(test_config=None):
                 base = decode(b"")
         raw = edited(base, payload.get("text"), payload.get("encoding"), payload.get("bom"))
         response = store.put(document_id, name, raw, base_revision, payload.get("request_id"),
-                             payload.get("encoding") or base.encoding, client_id=client_cursor_id(payload))
+                             payload.get("encoding") or base.encoding, client_id=client_cursor_id(payload),
+                             source="web")
         if response.get("merged_newer_revision"):
             _, final_raw = store.get(document_id, response["revision"])
             formatted = decode(final_raw, response["encoding"])
@@ -350,6 +392,35 @@ def create_app(test_config=None):
         response["bom"] = formatted.bom
         response["line_endings"] = formatted.ending_label
         return jsonify(response)
+
+    @app.post("/editor/api/documents/<document_id>/merge")
+    def browser_merge(document_id):
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON merge request.")
+        text = payload.get("text")
+        base_revision = payload.get("base_revision")
+        if not isinstance(text, str) or base_revision is None:
+            raise ValueError("Provide text and base_revision to merge.")
+        identifier(str(base_revision))
+        curr_meta, curr_raw = store.get(document_id, client_id=client_cursor_id(payload))
+        curr_decoded = decode(curr_raw, curr_meta["encoding"])
+        if str(base_revision) == curr_meta["revision"] or curr_decoded.text == text:
+            return jsonify(**curr_meta, merged=True, text=text, server_text=curr_decoded.text,
+                           bom=curr_decoded.bom, line_endings=curr_decoded.ending_label)
+        base_meta, base_raw = store.get(document_id, str(base_revision))
+        base_decoded = decode(base_raw, base_meta["encoding"])
+        if base_decoded.text == text:
+            return jsonify(**curr_meta, merged=True, text=curr_decoded.text, server_text=curr_decoded.text,
+                           bom=curr_decoded.bom, line_endings=curr_decoded.ending_label)
+        incoming_raw = edited(base_decoded, text, curr_decoded.encoding, curr_decoded.bom)
+        incoming_decoded = decode(incoming_raw, curr_decoded.encoding)
+        merged_raw = merge_3way(base_decoded, curr_decoded, incoming_decoded)
+        if merged_raw is None:
+            return jsonify(merged=False, revision=curr_meta["revision"])
+        merged_decoded = decode(merged_raw, curr_meta["encoding"])
+        return jsonify(**curr_meta, merged=True, text=merged_decoded.text, server_text=curr_decoded.text,
+                       bom=merged_decoded.bom, line_endings=merged_decoded.ending_label)
 
     @app.get("/editor/api/documents/<document_id>/revisions")
     def browser_revisions(document_id):
@@ -366,7 +437,8 @@ def create_app(test_config=None):
             raise ValueError("Send a JSON revision to restore.")
         metadata, raw = store.get(document_id, str(payload.get("revision")))
         return jsonify(store.put(document_id,metadata["name"],raw,payload.get("base_revision"),
-                                 payload.get("request_id"),metadata["encoding"]))
+                                 payload.get("request_id"),metadata["encoding"],client_id=client_cursor_id(payload),
+                                 source="restore"))
 
     @app.post("/editor/api/documents/<document_id>/prune")
     def browser_prune(document_id):

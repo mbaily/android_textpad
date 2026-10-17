@@ -108,33 +108,107 @@ def edited(base, text, encoding=None, bom=None):
     return raw
 
 
+def _hunks(base_seq, target_seq):
+    return [
+        (i1, i2, target_seq[j1:j2])
+        for tag, i1, i2, j1, j2 in SequenceMatcher(None, base_seq, target_seq, autojunk=False).get_opcodes()
+        if tag != "equal"
+    ]
+
+
+def _compatible_boundary(a, b):
+    first, second = (a, b) if (a[0], a[1]) <= (b[0], b[1]) else (b, a)
+    return first[1] < second[0] or (first[1] == second[0] and first[0] < first[1] and second[0] < second[1])
+
+
+def _merge_line_tokens(base_line, curr_line, inc_line):
+    if base_line == curr_line or base_line == inc_line or curr_line == inc_line:
+        return None
+    base_tokens = re.findall(r"\w+|\s+|[^\w\s]+", base_line)
+    if len(base_tokens) < 2:
+        return None
+    curr_tokens = re.findall(r"\w+|\s+|[^\w\s]+", curr_line)
+    inc_tokens = re.findall(r"\w+|\s+|[^\w\s]+", inc_line)
+    curr_hunks = _hunks(base_tokens, curr_tokens)
+    inc_hunks = _hunks(base_tokens, inc_tokens)
+    if not curr_hunks or not inc_hunks:
+        return None
+    for h in curr_hunks + inc_hunks:
+        if h[0] == 0 and h[1] == len(base_tokens):
+            return None
+    for a in curr_hunks:
+        for b in inc_hunks:
+            if a == b:
+                continue
+            if not _compatible_boundary(a, b):
+                return None
+    combined = []
+    for hunk in sorted(curr_hunks + inc_hunks, key=lambda item: (item[0], item[1])):
+        if not combined or combined[-1] != hunk:
+            combined.append(hunk)
+    merged = []
+    cursor = 0
+    for i1, i2, rep in combined:
+        merged.extend(base_tokens[cursor:i1])
+        merged.extend(rep)
+        cursor = i2
+    merged.extend(base_tokens[cursor:])
+    result = "".join(merged)
+    if result == curr_line or result == inc_line:
+        return None
+    return result
+
+
 def merge_3way(base, current, incoming):
     if base.text == current.text or base.text == incoming.text or current.text == incoming.text:
         return None
     base_lines = base.text.split("\n")
     curr_lines = current.text.split("\n")
     inc_lines = incoming.text.split("\n")
-    curr_hunks = [
-        (i1, i2, curr_lines[j1:j2])
-        for tag, i1, i2, j1, j2 in SequenceMatcher(None, base_lines, curr_lines, autojunk=False).get_opcodes()
-        if tag != "equal"
-    ]
-    inc_hunks = [
-        (i1, i2, inc_lines[j1:j2])
-        for tag, i1, i2, j1, j2 in SequenceMatcher(None, base_lines, inc_lines, autojunk=False).get_opcodes()
-        if tag != "equal"
-    ]
+    curr_hunks = _hunks(base_lines, curr_lines)
+    inc_hunks = _hunks(base_lines, inc_lines)
     if not curr_hunks or not inc_hunks:
         return None
-    for a in curr_hunks:
-        for b in inc_hunks:
+    intraline_replacements = {}
+    for idx_a, a in enumerate(curr_hunks):
+        for idx_b, b in enumerate(inc_hunks):
             if a == b:
                 continue
-            first, second = (a, b) if (a[0], a[1]) <= (b[0], b[1]) else (b, a)
-            if not (first[1] < second[0] or (first[1] == second[0] and first[0] < first[1] and second[0] < second[1])):
+            if _compatible_boundary(a, b):
+                continue
+            if (
+                a[0] == b[0]
+                and a[1] == b[1]
+                and (a[1] - a[0]) == len(a[2]) == len(b[2]) >= 1
+            ):
+                merged_block = []
+                for k in range(a[1] - a[0]):
+                    base_line = base_lines[a[0] + k]
+                    curr_line = a[2][k]
+                    inc_line = b[2][k]
+                    if curr_line == inc_line:
+                        merged_block.append(curr_line)
+                    elif base_line == curr_line:
+                        merged_block.append(inc_line)
+                    elif base_line == inc_line:
+                        merged_block.append(curr_line)
+                    else:
+                        merged_line = _merge_line_tokens(base_line, curr_line, inc_line)
+                        if merged_line is None:
+                            return None
+                        merged_block.append(merged_line)
+                intraline_replacements[(idx_a, idx_b)] = (a[0], a[1], merged_block)
+            else:
                 return None
+    used_a = {idx_a for idx_a, _ in intraline_replacements}
+    used_b = {idx_b for _, idx_b in intraline_replacements}
+    all_hunks = (
+        [h for i, h in enumerate(curr_hunks) if i not in used_a]
+        + [h for i, h in enumerate(inc_hunks) if i not in used_b]
+        + list(intraline_replacements.values())
+    )
     combined = []
-    for hunk in sorted(curr_hunks + inc_hunks, key=lambda item: (item[0], item[1])):
+    for hunk in sorted(all_hunks, key=lambda item: (item[0], item[1])):
         if not combined or combined[-1] != hunk:
             combined.append(hunk)
     merged_lines = []
@@ -151,4 +225,5 @@ def merge_3way(base, current, incoming):
         return edited(incoming, merged_text, incoming.encoding, incoming.bom)
     except InvalidText:
         return None
+
 

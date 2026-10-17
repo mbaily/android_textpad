@@ -148,9 +148,21 @@ final class SyncUi {
     private void history(RemoteApi.Remote document) {
         request(api -> api.revisions(document.id()),revisions -> showRevisionsDialog(document,revisions));
     }
+    private static String sourceLabel(String source) {
+        if (source == null || source.isBlank()) return "";
+        return " · " + switch (source) {
+            case "web" -> "Web";
+            case "android" -> "Android";
+            case "ios" -> "iOS";
+            case "merge" -> "Auto-merged";
+            case "restore" -> "Restored";
+            case "api" -> "Sync";
+            default -> source;
+        };
+    }
     private void showRevisionsDialog(RemoteApi.Remote document,List<RemoteApi.Remote> revisions) {
         new AlertDialog.Builder(activity).setTitle("Revisions · "+document.name()).setItems(revisions.stream()
-                .map(r -> "Revision "+r.revision()+" · "+r.size()+" bytes").toArray(String[]::new),(d,i) -> {
+                .map(r -> "Revision "+r.revision()+sourceLabel(r.source())+" · "+r.size()+" bytes").toArray(String[]::new),(d,i) -> {
             RemoteApi.Remote revision=revisions.get(i);
             new AlertDialog.Builder(activity).setTitle("Revision "+revision.revision()).setItems(
                     new String[]{"View full screen…","Download to a local file…","Restore on server…"},(dialog,which) -> {

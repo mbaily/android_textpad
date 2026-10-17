@@ -15,6 +15,7 @@ import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.zip.GZIPInputStream;
 import javax.net.ssl.HttpsURLConnection;
 
 final class SyncHttpClient implements RemoteApi {
@@ -61,7 +62,7 @@ final class SyncHttpClient implements RemoteApi {
             byte[] bytes = withContent ? Base64.decode(json.getString("content_base64"),Base64.DEFAULT) : null;
             if (bytes != null && (bytes.length != size || !HexFormat.of().formatHex(SaveTransaction.hash(bytes)).equals(hash)))
                 throw new IOException("Downloaded contents did not match the server checksum.");
-            return new Remote(id,json.getString("name"),rev,hash,size,bytes);
+            return new Remote(id,json.getString("name"),rev,hash,size,bytes,json.optString("source",""),json.optBoolean("replaced_newer_revision",false));
         } catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned an invalid document.",e); }
     }
     private JSONObject request(String method, String path, JSONObject body) throws IOException {
@@ -69,6 +70,7 @@ final class SyncHttpClient implements RemoteApi {
         connection.setRequestMethod(method); connection.setConnectTimeout(10000); connection.setReadTimeout(20000);
         connection.setInstanceFollowRedirects(false);
         connection.setRequestProperty("Authorization","Bearer "+token); connection.setRequestProperty("Accept","application/json");
+        connection.setRequestProperty("Accept-Encoding","gzip");
         if (clientId != null && !clientId.isBlank()) connection.setRequestProperty("X-Textpad-Client",clientId);
         try {
             if (body != null) {
@@ -83,7 +85,9 @@ final class SyncHttpClient implements RemoteApi {
                 throw new IOException("No Textpad sync API was found at "+endpoint+" (HTTP 404). Check Sync → Actions → Server settings. "
                         +"For git23069.hopto.org, use "+DEFAULT_ENDPOINT+".");
             if (status < 200 || status >= 300) throw new IOException("Sync server returned HTTP "+status+".");
-            try (InputStream in = connection.getInputStream(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            try (InputStream rawIn = connection.getInputStream();
+                 InputStream in = "gzip".equalsIgnoreCase(connection.getContentEncoding()) ? new GZIPInputStream(rawIn) : rawIn;
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
                 byte[] block = new byte[32768]; int n;
                 while ((n = in.read(block)) != -1) {
                     if (out.size()+n > 16*1024*1024) throw new IOException("The server response is too large.");
