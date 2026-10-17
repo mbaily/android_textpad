@@ -1731,7 +1731,6 @@
       } else if (doc.state) {
         doc.state = doc.state.update({ effects: effect }).state;
       }
-      notice("Showing all tasks");
     } else {
       const currentDocText = isCurrent ? view.state.doc.toString() : doc.state ? doc.state.doc.toString() : "";
       const filterRes = filterTasks(currentDocText, 4);
@@ -1766,8 +1765,6 @@
       }
       if (!filterRes.isUncompleted.some((value) => value === 1)) {
         notice("No uncompleted tasks found");
-      } else {
-        notice("Showing uncompleted tasks only");
       }
     }
   }
