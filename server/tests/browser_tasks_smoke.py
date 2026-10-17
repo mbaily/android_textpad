@@ -89,6 +89,24 @@ def main():
         toggle.click()
         expect(lines).to_have_text(original.replace("apples", "pears").split("\n"))
         expect(page.locator("#save")).to_be_disabled()
+
+        # Removing the filter must reveal the cursor after hundreds of hidden lines expand.
+        page.locator("#new-file").click()
+        page.get_by_role("textbox", name="Filename", exact=True).fill("Task cursor.txt")
+        page.locator("#modal-actions").get_by_role("button", name="Create", exact=True).click()
+        editor.click()
+        page.keyboard.insert_text("[ ] First task\n" + "[X] Completed before target\n" * 250
+                                  + "[ ] Task to keep visible\n" + "[X] Completed after target\n" * 250)
+        toggle.click()
+        expect(lines).to_have_text(["[ ] First task", "[ ] Task to keep visible"])
+        lines.last.click()
+        page.keyboard.press("End")
+        expect(page.locator("#cursor-status")).to_contain_text("Ln 252, Col 25")
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-pressed", "false")
+        expect(page.locator("#cursor-status")).to_contain_text("Ln 252, Col 25")
+        expect(lines.filter(has_text="[ ] Task to keep visible")).to_be_in_viewport()
+
         assert not errors, errors
         browser.close()
     print("Browser task-view checks passed")

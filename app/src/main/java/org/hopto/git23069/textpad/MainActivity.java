@@ -1298,6 +1298,15 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         if (shownTab == tab) {
             shownState = -1;
             refresh(false);
+            if (!tab.tasksOnly) {
+                // Run after refresh restores the scroll position from the filtered view.
+                editor.post(() -> {
+                    if (shownTab == tab && !tab.tasksOnly) {
+                        editor.bringPointIntoView(Math.max(0, editor.getSelectionStart()));
+                        saveViewState();
+                    }
+                });
+            }
             updateStatus();
         }
     }

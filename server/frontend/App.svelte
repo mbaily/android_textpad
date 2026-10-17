@@ -1725,7 +1725,7 @@
       doc.taskFilterResult = null;
       const effect = tasksFilterCompartment.reconfigure([]);
       if (isCurrent) {
-        view.dispatch({ effects: effect });
+        view.dispatch({ effects: effect, scrollIntoView: true });
         doc.state = view.state;
         view.focus();
       } else if (doc.state) {

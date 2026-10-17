@@ -301,6 +301,46 @@ public class EditorInstrumentedTest {
         }
     }
 
+    @Test public void leavingTasksViewScrollsToTheCursorInTheFullDocument() throws Exception {
+        String original = "[ ] First task\n" + "[X] Completed before target\n".repeat(250)
+                + "[ ] Task to keep visible\n" + "[X] Completed after target\n".repeat(250);
+        int realCursor = original.indexOf("keep visible") + "keep visible".length();
+        Uri uri = seed("task-cursor.txt", original.getBytes(StandardCharsets.UTF_8));
+        AtomicReference<CodeEditor> shownEditor = new AtomicReference<>();
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                shownEditor.set(editor);
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+            });
+            waitFor(() -> shownEditor.get().getLayout() != null && !shownEditor.get().isLayoutRequested());
+            scenario.onActivity(activity -> {
+                CodeEditor editor = shownEditor.get();
+                assertEquals("[ ] First task\n[ ] Task to keep visible", editor.getText().toString());
+                editor.setSelection(editor.length());
+                editor.scrollTo(0, 0);
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                assertEquals(realCursor, editor.getSelectionStart());
+                assertEquals(original, editor.getText().toString());
+            });
+            waitFor(() -> {
+                CodeEditor editor = shownEditor.get();
+                android.text.Layout layout = editor.getLayout();
+                if (layout == null || editor.isLayoutRequested()) return false;
+                int line = layout.getLineForOffset(editor.getSelectionStart());
+                int top = layout.getLineTop(line) + editor.getTotalPaddingTop() - editor.getScrollY();
+                int bottom = layout.getLineBottom(line) + editor.getTotalPaddingTop() - editor.getScrollY();
+                return top >= editor.getTotalPaddingTop() && bottom <= editor.getHeight() - editor.getTotalPaddingBottom();
+            });
+            scenario.onActivity(activity -> {
+                assertEquals(realCursor, shownEditor.get().getSelectionStart());
+                assertFalse(app.current().buffer.dirty());
+                assertTrue(shownEditor.get().getScrollY() > 0);
+            });
+        }
+    }
+
     @Test public void tenMiBFileOpensEditsAndSavesOnDevice() throws Exception {
         byte[] bytes = new byte[TextCodec.MAX_BYTES]; java.util.Arrays.fill(bytes,(byte) 'a');
         // Keep paragraphs reasonably short; long-line behavior is exercised by the first paragraph.
