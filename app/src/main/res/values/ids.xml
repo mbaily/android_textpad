@@ -1,1 +1,6 @@
-<resources><item name="editor" type="id" /></resources>
+<resources>
+    <item name="editor" type="id" />
+    <item name="recent_files" type="id" />
+    <item name="recent_file_list" type="id" />
+    <item name="recent_files_empty" type="id" />
+</resources>

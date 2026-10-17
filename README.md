@@ -2,7 +2,7 @@
 
 A native, dark-by-default text editor for **Android 16 / API 36 and later**. The Debian server hosts APK downloads, the sync API, and a desktop browser editor for synced files.
 
-<img src="docs/screenshots/home.png" width="260" alt="Textpad empty state on Android 16"> <img src="docs/screenshots/editor.png" width="260" alt="Textpad editing a Unicode text file">
+<img src="docs/screenshots/home.png" width="260" alt="Textpad recent files on Android 16"> <img src="docs/screenshots/editor.png" width="260" alt="Textpad editing a Unicode text file">
 
 ## Download
 
@@ -26,6 +26,7 @@ The build script also finds the isolated toolchain installed for this workspace 
 ## Editor
 
 - New, Open, Save, Save As, Save to existing file, recent files, read-only documents, and Android's standard file picker. The original selected file is edited in place.
+- The entry screen shows up to 30 recent files for one-tap reopening. Android uses its saved file history; the browser remembers opened/saved files on this device and fills the list with recently updated synced files. File lists also work with the browser's existing offline cache.
 - Multiple tabs, including multiple views of one file. Text and undo history are shared; selections and scrolling belong to each tab. Long-press a tab for its file location and details.
 - Unsaved dots and Save/Discard/Cancel when closing a modified tab. No Quit action, persistent tabs, drafts, or crash recovery. Rotation preserves the live editing session. Process termination loses unsaved edits.
 - Undo/redo, literal find/replace with case matching, replace all, selection/clipboard, indentation, word wrap, line-number toggles, font families and sizes.

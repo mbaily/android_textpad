@@ -22,6 +22,7 @@ public class EditorInstrumentedTest {
         app = (TextpadApplication) InstrumentationRegistry.getInstrumentation().getTargetContext().getApplicationContext();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
             app.tabs.clear(); app.selectedTab = -1; app.events.clear(); app.exiting = false; app.readOnlyMode = false; app.settings.prefs.edit().clear().commit();
+            app.getSharedPreferences("files", 0).edit().remove("recent").commit();
         });
     }
     private Uri seed(String name, byte[] contents) throws Exception {
@@ -59,6 +60,61 @@ public class EditorInstrumentedTest {
             View found = findViewWithHint(group.getChildAt(i), hint); if (found != null) return found;
         }
         return null;
+    }
+
+    @Test public void entryScreenShowsAnEmptyRecentListAndCanCreateADocument() throws Exception {
+        try (var scenario = launch(null)) {
+            scenario.onActivity(activity -> {
+                View home = activity.findViewById(R.id.recent_files);
+                assertEquals(View.VISIBLE, home.getVisibility());
+                assertEquals("No recent files yet.", ((android.widget.TextView) activity.findViewById(R.id.recent_files_empty)).getText().toString());
+                assertTrue(button(home, "Open file").isEnabled());
+                button(home, "New document").performClick();
+                assertNotNull(app.current());
+                assertEquals(View.GONE, home.getVisibility());
+                app.close(app.currentTab().id);
+                assertEquals(View.VISIBLE, home.getVisibility());
+                assertNotNull(activity.findViewById(R.id.recent_files_empty));
+            });
+        }
+    }
+
+    @Test public void entryScreenOpensRecentFilesAndRemembersTheirOrderAcrossRecreation() throws Exception {
+        Uri notes = seed("Notes.txt", "A recent note".getBytes(StandardCharsets.UTF_8));
+        Uri shopping = seed("Shopping.txt", "[ ] Milk".getBytes(StandardCharsets.UTF_8));
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            app.store.remember(notes, "Notes.txt");
+            app.store.remember(shopping, "Shopping.txt");
+        });
+        try (var scenario = launch(null)) {
+            scenario.onActivity(activity -> {
+                ViewGroup list = activity.findViewById(R.id.recent_file_list);
+                assertEquals(2, list.getChildCount());
+                assertEquals("Open recent file: Shopping.txt", list.getChildAt(0).getContentDescription());
+                button(list, "Open recent file: Notes.txt").performClick();
+            });
+            waitFor(() -> app.current() != null && DocumentStore.same(notes, app.current().uri));
+            scenario.onActivity(activity -> {
+                assertEquals("A recent note", ((CodeEditor) activity.findViewById(R.id.editor)).getText().toString());
+                app.close(app.currentTab().id);
+                ViewGroup list = activity.findViewById(R.id.recent_file_list);
+                assertEquals(2, list.getChildCount());
+                assertEquals("Open recent file: Notes.txt", list.getChildAt(0).getContentDescription());
+            });
+            scenario.recreate();
+            scenario.onActivity(activity -> {
+                ViewGroup list = activity.findViewById(R.id.recent_file_list);
+                assertEquals(2, list.getChildCount());
+                assertEquals("Open recent file: Notes.txt", list.getChildAt(0).getContentDescription());
+                button(list, "Open recent file: Shopping.txt").performClick();
+            });
+            waitFor(() -> app.current() != null && DocumentStore.same(shopping, app.current().uri));
+            scenario.onActivity(activity -> {
+                assertEquals("[ ] Milk", ((CodeEditor) activity.findViewById(R.id.editor)).getText().toString());
+                app.close(app.currentTab().id);
+                assertEquals(2, ((ViewGroup) activity.findViewById(R.id.recent_file_list)).getChildCount());
+            });
+        }
     }
 
     @Test public void nativeEditorSavesUnicodeAndMixedTerminatorsThroughSaf() throws Exception {

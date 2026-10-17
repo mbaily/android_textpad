@@ -19,6 +19,8 @@ ssh <user>@<your-server> 'sudo cat /etc/android-textpad/api-token'
 
 The editor targets Chrome on a desktop or laptop. It lists the files stored in the server's SQLite database. Open files in tabs, create files, edit and rename them, search/replace, undo/redo, change font/wrapping/line-number settings, download saved bytes, and preview or restore older revisions. The sidebar toggle beside the tabs hides or shows the file list and remembers your choice in that browser. **Connect Android** supplies the endpoint and API token for the app's sync settings.
 
+When no file is open, the entry screen lists up to 30 recent files. Files opened or saved in this browser appear first, followed by other synced files in last-updated order. Opening history survives reloads on this device; cached files can be reopened offline. New unsaved documents are not added until saved.
+
 Saving creates a server revision available to synced devices. WebSocket notifications refresh a clean open browser tab when another client saves; a dirty tab keeps its edits and reports the newer server version. The last save accepted by the server wins, and all displaced revisions remain in history. Closing a dirty tab offers Save/Discard/Cancel; leaving the page warns about unsaved edits. Open tabs and unsaved buffers live only in that browser session; no drafts are persisted.
 
 Browser operations access server copies only. They do not browse the Android device's local storage. Android still requires each saved local file to be explicitly linked for sync. There is no remote-delete API.
@@ -106,11 +108,14 @@ npm run build --prefix server/frontend
 # Requires Playwright and Chrome in the selected Python environment:
 PYTHONPATH=server python3 server/tests/browser_smoke.py
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
+PYTHONPATH=server python3 server/tests/browser_recents_smoke.py
 ```
 
 The Chrome smoke test starts an isolated temporary server/database, verifies live WebSocket updates without manual refresh, and exercises editing, Unicode/newline preservation, remote updates with clean/dirty buffers, revision restore, tabs, undo/redo, search, settings, rename, downloads, close confirmation, and logout. Backend tests cover the API contract, authentication/CSRF, byte-exact encodings, 10 MiB boundaries, concurrent writes, idempotent retries, history, and online backups. Event tests also verify zero periodic SQLite reads while idle, notification only after commit, rollback/retry suppression, coalescing, saves during delivery, disconnect cleanup, and real two-worker delivery/replacement under Gunicorn.
 
 The task-view smoke test checks filtering, dimmed context, divider headings above unindented tasks and at the start of a file, line-edit restrictions, tab switching, empty results, keeping the cursor visible when returning to the full document, and saving edits while preserving hidden text and CRLF line endings. JavaScript unit tests also cover the heading recognition rule, including whitespace, divider lengths, section boundaries, and hiding sections without open tasks.
+
+The recent-file smoke test checks reopening from the entry screen, order and persistence across reloads, renamed files, mobile layout, offline reopening, and starting a new file from an empty list.
 
 `LiveSyncInstrumentedTest` is an optional real Android-to-HTTPS contract test. Normal runs skip it. To opt in, supply `files/live-sync-test.json` (token and a fresh disposable `document_id`) and `files/live-sync-ca.crt` to the test application's private directory, then run that class with instrumentation argument `liveTextpadServer=true`. It trusts only the supplied public CA for that test, preserves hostname verification, checks Unicode/UTF-16 bytes, history and retry ordering, automatic WebSocket pulls, deferred dirty buffers, and a real HTTPS background-worker pull, and removes its local credential files afterward. Remove only its known disposable document from the server after verification.
 

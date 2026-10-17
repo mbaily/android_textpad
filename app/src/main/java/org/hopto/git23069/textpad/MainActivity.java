@@ -3,6 +3,7 @@ package org.hopto.git23069.textpad;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
@@ -12,6 +13,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.DocumentsContract;
@@ -21,6 +23,7 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -58,7 +61,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private static final int BG = 0xff101313, SURFACE = 0xff19201d, TEXT = 0xffe3e8df, MUTED = 0xff94a298, ACCENT = 0xffa9d98b;
     static final int SYNC_DOT_SYNCED = ACCENT, SYNC_DOT_SYNCING = 0xff7bb8d9, SYNC_DOT_PENDING = 0xffd9a57b;
     private TextpadApplication app;
-    private LinearLayout root, tabBar, findPanel, empty;
+    private LinearLayout root, tabBar, findPanel, empty, recentFileList;
+    private List<DocumentStore.Recent> shownRecentFiles;
     private HorizontalScrollView tabScroll;
     private TextView location, status, findTitle, findResult;
     private CodeEditor editor;
@@ -173,15 +177,17 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
         android.widget.FrameLayout body = new android.widget.FrameLayout(this);
         editor = new CodeEditor(this); body.addView(editor, new android.widget.FrameLayout.LayoutParams(-1, -1));
-        empty = column(); empty.setGravity(Gravity.CENTER); empty.setPadding(dp(32), dp(24), dp(32), dp(24));
-        TextView emblem = label("T_", 56, ACCENT); emblem.setTypeface(Typeface.MONOSPACE); emblem.setGravity(Gravity.CENTER); empty.addView(emblem);
-        TextView welcome = label("Your files. Your words.", 24, TEXT); welcome.setGravity(Gravity.CENTER); empty.addView(welcome);
-        TextView intro = label("Open a text file or start a fresh page.\nEverything you write stays on your device\nuntil you choose to sync it.", 14, MUTED);
-        intro.setGravity(Gravity.CENTER); intro.setLineSpacing(dp(4), 1); intro.setPadding(0, dp(16), 0, dp(24)); empty.addView(intro);
-        LinearLayout emptyActions = row(); emptyActions.addView(iconButton(Icon.NEW, ACCENT, "New document", v -> app.newDocument()));
-        emptyActions.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
-        emptyActions.addView(iconButton(Icon.HASHTAG, TEXT, "Hashtags & Errands", v -> showHashtags(false)));
-        empty.addView(emptyActions);
+        empty = column(); empty.setId(R.id.recent_files); empty.setPadding(dp(20), dp(16), dp(20), 0);
+        LinearLayout recentHeader = row(); recentHeader.setGravity(Gravity.CENTER_VERTICAL);
+        TextView recentTitle = label("Recent files", 22, TEXT);
+        recentHeader.addView(recentTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        recentHeader.addView(iconButton(Icon.NEW, ACCENT, "New document", v -> app.newDocument()));
+        recentHeader.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
+        empty.addView(recentHeader);
+        ScrollView recentScroll = new ScrollView(this); recentScroll.setFillViewport(true);
+        recentFileList = column(); recentFileList.setId(R.id.recent_file_list); recentFileList.setPadding(0, dp(12), 0, dp(20));
+        recentScroll.addView(recentFileList);
+        empty.addView(recentScroll, new LinearLayout.LayoutParams(-1, 0, 1));
         body.addView(empty, new android.widget.FrameLayout.LayoutParams(-1, -1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -308,6 +314,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         }
         editor.setVisibility(selected == null ? View.GONE : View.VISIBLE);
         empty.setVisibility(selected == null ? View.VISIBLE : View.GONE);
+        if (selected == null) updateRecentFiles();
         if (selected != null && ((editor.getKeyListener() != null) != isEditable(selected.document)))
             editor.configure(app.settings, isEditable(selected.document));
         updateTabLabels(); updateStatus();
@@ -565,6 +572,40 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         if (recent.isEmpty()) { toast("No recent files yet."); return; }
         String[] labels = recent.stream().map(r -> r.name() + "\n" + app.store.location(r.uri(), r.name())).toArray(String[]::new);
         new AlertDialog.Builder(this).setTitle("Recent files").setItems(labels, (d, i) -> { saveViewState(); app.open(recent.get(i).uri()); }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void updateRecentFiles() {
+        List<DocumentStore.Recent> recent = app.store.recents();
+        if (!recent.equals(shownRecentFiles)) {
+            shownRecentFiles = recent;
+            recentFileList.removeAllViews();
+            if (recent.isEmpty()) {
+                TextView message = label("No recent files yet.", 14, MUTED);
+                message.setId(R.id.recent_files_empty); message.setPadding(0, dp(12), 0, 0);
+                recentFileList.addView(message);
+            }
+            for (DocumentStore.Recent file : recent) {
+                String location = app.store.location(file.uri(), file.name());
+                SpannableStringBuilder text = new SpannableStringBuilder(file.name());
+                if (!location.equals(file.name())) {
+                    int detailStart = text.length() + 1;
+                    text.append('\n').append(location);
+                    text.setSpan(new ForegroundColorSpan(MUTED), detailStart, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    text.setSpan(new RelativeSizeSpan(.78f), detailStart, text.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
+                Button item = new Button(this); item.setText(text); item.setAllCaps(false); item.setTextColor(TEXT); item.setTextSize(16);
+                item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); item.setPadding(dp(16), dp(12), dp(16), dp(12));
+                item.setMinHeight(dp(72)); item.setMaxLines(3); item.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                item.setBackground(new RippleDrawable(ColorStateList.valueOf(0x22a9d98b), rounded(SURFACE, 10), null));
+                item.setContentDescription("Open recent file: " + file.name() + (location.equals(file.name()) ? "" : ", " + location));
+                item.setOnClickListener(v -> { saveViewState(); app.open(file.uri()); });
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = dp(8);
+                recentFileList.addView(item, params);
+            }
+        }
+        for (int i = 0; i < recentFileList.getChildCount(); i++) {
+            if (recentFileList.getChildAt(i) instanceof Button item) item.setEnabled(!app.opening);
+        }
     }
 
     private void history(boolean redo) {

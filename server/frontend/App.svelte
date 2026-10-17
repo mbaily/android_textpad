@@ -16,6 +16,7 @@
   const guttersCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
   const tasksFilterCompartment = new Compartment();
+  const recentFilesKey = `textpad.editor.recentFiles:${prefix}`;
   const fonts = {
     mono: 'ui-monospace,"SFMono-Regular",Consolas,monospace',
     sans: "system-ui,sans-serif",
@@ -46,6 +47,13 @@
 
   const documents = new SvelteMap();
   let files = $state([]);
+  let fileListLoaded = $state(false);
+  let initialRecentFileIds = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem(recentFilesKey) || "[]");
+    if (Array.isArray(saved)) initialRecentFileIds = [...new Set(saved.filter((id) => typeof id === "string"))].slice(0, 30);
+  } catch {}
+  let recentFileIds = $state(initialRecentFileIds);
   let fileFilter = $state("");
   let active = $state(null);
   let sidebarCollapsed = $state(initialCollapsed);
@@ -287,6 +295,11 @@
   const filteredFiles = $derived.by(() => {
     const q = fileFilter.toLocaleLowerCase();
     return files.filter((file) => file.name.toLocaleLowerCase().includes(q));
+  });
+  const recentFiles = $derived.by(() => {
+    const available = new Map(files.map((file) => [file.id, file]));
+    const ids = [...new Set([...recentFileIds, ...files.map((file) => file.id)])];
+    return ids.map((id) => available.get(id)).filter(Boolean).slice(0, 30);
   });
   const connectionLabel = $derived(
     apiOnline
@@ -737,11 +750,20 @@
     doc.scrollSnapshot = view.scrollSnapshot();
   }
 
+  function rememberRecentFile(id) {
+    if (recentFileIds[0] === id) return;
+    recentFileIds = [id, ...recentFileIds.filter((previous) => previous !== id)].slice(0, 30);
+    try {
+      localStorage.setItem(recentFilesKey, JSON.stringify(recentFileIds));
+    } catch {}
+  }
+
   function activate(id) {
     captureViewState();
     active = id;
     const doc = id ? documents.get(id) ?? null : null;
     viewDocument = doc;
+    if (doc && (doc.revision || doc.pendingSync)) rememberRecentFile(doc.id);
     if (doc && view) {
       view.setState(doc.state);
       if (findOpen) syncSearchHighlight();
@@ -986,6 +1008,7 @@
       };
       await idbStoreDocument(fullMetadata);
       files = [result, ...files.filter((file) => file.id !== result.id)];
+      rememberRecentFile(doc.id);
       doc.dirty = isDocDirty(doc);
       if (result.merged_newer_revision) {
         if (!doc.dirty && typeof result.text === "string") {
@@ -1035,6 +1058,7 @@
           encoding: offlineMeta.encoding,
         };
         files = [summary, ...files.filter((file) => file.id !== doc.id)];
+        rememberRecentFile(doc.id);
         doc.dirty = isDocDirty(doc);
         try {
           syncChannel?.postMessage({ type: "changed", id: doc.id });
@@ -1250,6 +1274,7 @@
       }
       throw error;
     } finally {
+      fileListLoaded = true;
       polling = false;
       if (refreshAgain) {
         refreshAgain = false;
@@ -2460,13 +2485,26 @@
           </div>
         </dialog>
       {/if}
-      <div id="welcome" class="welcome" class:hidden={!!activeDoc}>
-        <span class="welcome-mark" aria-hidden="true">T_</span>
-        <h2>Your synced files,<br>ready to edit.</h2>
-        <p>Choose a document from the sidebar,<br>or start a new file on your server.</p>
-        <button id="welcome-new" class="primary icon-button" title="New server file" aria-label="New server file" onclick={newFile}>+</button>
-        <p class="small muted">Files saved here are available to your synced devices.</p>
-      </div>
+      <section id="welcome" class="recent-files-home" class:hidden={!!activeDoc} aria-labelledby="recent-files-title">
+        <div class="recent-files-heading">
+          <h2 id="recent-files-title">Recent files</h2>
+          <button id="welcome-new" class="primary" aria-label="New server file" onclick={newFile}>New file</button>
+        </div>
+        {#if recentFiles.length > 0}
+          <ul id="recent-file-list" class="recent-file-list" aria-label="Recent files">
+            {#each recentFiles as file (file.id)}
+              <li>
+                <button class="recent-file" data-id={file.id} title={file.name} onclick={() => openFile(file.id)}>
+                  <span class="recent-file-name">{file.name}</span>
+                  <span class="recent-file-meta">{bytes(file.size)} · Updated {date(file.updated_at)}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p id="recent-files-empty" class="recent-files-empty" role="status">{fileListLoaded ? "No recent files yet." : "Loading recent files…"}</p>
+        {/if}
+      </section>
       <div id="editor-host" class="editor-host" class:hidden={!activeDoc} aria-label="Document editor" bind:this={editorHost}></div>
     </div>
 
