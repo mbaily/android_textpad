@@ -111,8 +111,8 @@ public class TaskFilterTest {
     }
 
     @Test
-    public void dividerHeadingRequiresABlankThenANonblankTitleThenOnlyDashes() {
-        for (String prefix : new String[]{"Shopping\n---", "Notes\nShopping\n---", "\n\n---",
+    public void dividerHeadingRequiresABlankExceptAtFileStart() {
+        for (String prefix : new String[]{"Notes\nShopping\n---", "\n\n---",
                 "\nShopping\n-- text --", "\nShopping\n- - -", "\nShopping\n===", "\nShopping\n"}) {
             String doc = prefix + "\n[ ] Milk\n";
             TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
@@ -161,6 +161,25 @@ public class TaskFilterTest {
         assertArrayEquals(new int[]{0, 1}, TaskFilter.filter(completedSection, 4).visibleLines());
         String openSection = "[X] Previous project\n\n    Open section\n    ---\n    [ ] Child\n";
         assertArrayEquals(new int[]{1, 2, 3, 4}, TaskFilter.filter(openSection, 4).visibleLines());
+    }
+
+    @Test
+    public void dividerHeadingAtFileStartDoesNotNeedABlankLine() {
+        for (String title : new String[]{"Shopping", " \tShopping ", "# Shopping"}) {
+            TaskFilter.FilterResult res = TaskFilter.filter(title + "\r\n  ---\t\r\n[ ] Milk\r\n[X] Bread\r\n", 4);
+            assertArrayEquals(new int[]{0, 1, 2}, res.visibleLines());
+            assertTrue(res.isContext()[0]);
+            assertTrue(res.isContext()[1]);
+            assertTrue(res.isUncompleted()[2]);
+        }
+    }
+
+    @Test
+    public void dividerHeadingAtFileStartStillRequiresAnOpenTaskInItsOwnSection() {
+        assertArrayEquals(new int[]{}, TaskFilter.filter("Shopping\n---", 4).visibleLines());
+        assertArrayEquals(new int[]{}, TaskFilter.filter("Shopping\n---\n[X] Bread\n", 4).visibleLines());
+        String doc = "Shopping\n---\n[X] Bread\n\nNext section\n---\n[ ] Milk\n";
+        assertArrayEquals(new int[]{3, 4, 5, 6}, TaskFilter.filter(doc, 4).visibleLines());
     }
 
 }

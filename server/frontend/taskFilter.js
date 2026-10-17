@@ -65,14 +65,16 @@ export function filterTasks(text, tabSize = 4) {
     parents[i] = -1;
   }
 
-  const dividerHeadings = new Uint8Array(n);
-  for (let i = 0; i + 2 < n; i++) {
-    dividerHeadings[i] = types[i] === "BLANK" && types[i + 1] !== "BLANK" && /^[ \t]*-+[ \t]*$/.test(lines[i + 2]) ? 1 : 0;
+  const dividerHeadingEnds = new Int32Array(n).fill(-1);
+  for (let title = 0; title + 1 < n; title++) {
+    if (types[title] !== "BLANK" && (title === 0 || types[title - 1] === "BLANK") && /^[ \t]*-+[ \t]*$/.test(lines[title + 1])) {
+      dividerHeadingEnds[Math.max(0, title - 1)] = title + 1;
+    }
   }
 
   let sectionStart = 0;
   for (let i = 0; i < n; i++) {
-    if (dividerHeadings[i] || types[i] === "HEADER") sectionStart = i;
+    if (dividerHeadingEnds[i] >= 0 || types[i] === "HEADER") sectionStart = i;
     if (types[i] === "BLANK") continue;
     for (let k = i - 1; k >= sectionStart; k--) {
       if (types[k] !== "BLANK" && indents[k] < indents[i]) {
@@ -97,13 +99,13 @@ export function filterTasks(text, tabSize = 4) {
   // A section ends at the next divider heading or Markdown heading.
   let sectionHeading = -1;
   for (let i = 0; i < n; i++) {
-    if (dividerHeadings[i]) {
+    if (dividerHeadingEnds[i] >= 0) {
       sectionHeading = i;
-    } else if (types[i] === "HEADER" && i !== sectionHeading + 1) {
+    } else if (types[i] === "HEADER" && (sectionHeading < 0 || i !== dividerHeadingEnds[sectionHeading] - 1)) {
       sectionHeading = -1;
     }
     if (isUncompleted[i] && sectionHeading >= 0) {
-      for (let h = sectionHeading; h <= sectionHeading + 2; h++) {
+      for (let h = sectionHeading; h <= dividerHeadingEnds[sectionHeading]; h++) {
         isVisible[h] = 1;
         isContext[h] = 1;
       }

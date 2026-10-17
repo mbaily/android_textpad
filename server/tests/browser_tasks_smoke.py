@@ -15,6 +15,7 @@ def main():
     visible = ["# Shopping", "[X] Finished project", "    [ ] Buy milk",
                "        Remember organic", "[ ] Buy apples"]
     heading_text = "Unrelated notes\n\nShopping\n-----\n[ ] Milk\n[X] Bread\n\nFinished section\n---\n[X] Done\n"
+    top_heading_text = "Shopping\n---\n[ ] Milk\n[X] Bread\n\nFinished section\n---\n[X] Done\n"
     with fixture() as base, sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=True, args=["--no-sandbox"])
         context = browser.new_context(viewport={"width": 1440, "height": 960})
@@ -23,6 +24,7 @@ def main():
             ("filter-tasks", "Filter tasks.txt", original),
             ("no-open-tasks", "No open tasks.txt", "Plain notes\n[X] Finished task\n"),
             ("divider-headings", "Divider headings.txt", heading_text),
+            ("top-heading", "Top heading.txt", top_heading_text),
         ]:
             response = context.request.put(base + "/api/v1/documents/" + doc_id, headers=headers, data={
                 "name": name, "content_base64": base64.b64encode(text.replace("\n", "\r\n").encode()).decode(),
@@ -107,6 +109,15 @@ def main():
         toggle.click()
         expect(editor).to_have_text("")
         expect(page.locator("#notice-text")).to_have_text("No uncompleted tasks found")
+
+        # The start of the file replaces the need for a preceding blank line.
+        page.locator(".file-item").filter(has_text="Top heading.txt").click()
+        toggle.click()
+        expect(lines).to_have_text(["Shopping", "---", "[ ] Milk"])
+        expect(editor.locator(".cm-task-context")).to_have_text(["Shopping", "---"])
+        expect(page.locator("#save")).to_be_disabled()
+        toggle.click()
+        expect(lines).to_have_text(top_heading_text.split("\n"))
 
         page.get_by_role("tab", name="Filter tasks.txt", exact=True).click()
         expect(toggle).to_have_attribute("aria-pressed", "true")

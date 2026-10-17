@@ -324,6 +324,26 @@ public class EditorInstrumentedTest {
         }
     }
 
+    @Test public void tasksViewKeepsDividerHeadingsAtFileStartWithoutAddingABlankLine() throws Exception {
+        String original = "Shopping\n---\n[ ] Milk\n[X] Bread\n\nFinished section\n---\n[X] Done\n";
+        Uri uri = seed("top-heading.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                View toggle = button(activity.getWindow().getDecorView(), "Filter uncompleted tasks");
+                toggle.performClick();
+                assertEquals("Shopping\n---\n[ ] Milk", editor.getText().toString());
+                assertArrayEquals(new int[]{0, 1, 2}, editor.lineMap);
+                assertFalse(app.current().buffer.dirty());
+                editor.getText().replace(0, "Shopping".length(), "Groceries");
+                assertEquals(original.replace("Shopping", "Groceries"), app.current().buffer.text());
+                toggle.performClick();
+                assertEquals(original.replace("Shopping", "Groceries"), editor.getText().toString());
+            });
+        }
+    }
+
     @Test public void leavingTasksViewScrollsToTheCursorInTheFullDocument() throws Exception {
         String original = "[ ] First task\n" + "[X] Completed before target\n".repeat(250)
                 + "[ ] Task to keep visible\n" + "[X] Completed after target\n".repeat(250);

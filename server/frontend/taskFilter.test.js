@@ -17,8 +17,8 @@ test("divider headings accept whitespace, CRLF, and any configured dash count", 
   }
 });
 
-test("divider headings require a blank, nonblank title, and a line of only dashes", () => {
-  for (const prefix of ["Shopping\n---", "Notes\nShopping\n---", "\n\n---",
+test("divider headings require a blank away from file start and a dash-only divider", () => {
+  for (const prefix of ["Notes\nShopping\n---", "\n\n---",
     "\nShopping\n-- text --", "\nShopping\n- - -", "\nShopping\n===", "\nShopping\n"]) {
     const text = prefix + "\n[ ] Milk\n";
     assert.deepEqual(filterTasks(text).visibleLines, [text.split("\n").length - 2]);
@@ -59,4 +59,21 @@ test("divider sections do not inherit tasks or notes from earlier sections", () 
   assert.deepEqual(filterTasks(completedSection).visibleLines, [0, 1]);
   const openSection = "[X] Previous project\n\n    Open section\n    ---\n    [ ] Child\n";
   assert.deepEqual(filterTasks(openSection).visibleLines, [1, 2, 3, 4]);
+});
+
+test("a divider heading at the start of the file does not need a blank line", () => {
+  for (const title of ["Shopping", " \tShopping ", "# Shopping"]) {
+    const result = filterTasks(`${title}\r\n  ---\t\r\n[ ] Milk\r\n[X] Bread\r\n`);
+    assert.deepEqual(result.visibleLines, [0, 1, 2]);
+    assert.equal(result.isContext[0], 1);
+    assert.equal(result.isContext[1], 1);
+    assert.equal(result.isUncompleted[2], 1);
+  }
+});
+
+test("a divider heading at file start still requires an open task in its own section", () => {
+  assert.deepEqual(filterTasks("Shopping\n---").visibleLines, []);
+  assert.deepEqual(filterTasks("Shopping\n---\n[X] Bread\n").visibleLines, []);
+  const text = "Shopping\n---\n[X] Bread\n\nNext section\n---\n[ ] Milk\n";
+  assert.deepEqual(filterTasks(text).visibleLines, [3, 4, 5, 6]);
 });
