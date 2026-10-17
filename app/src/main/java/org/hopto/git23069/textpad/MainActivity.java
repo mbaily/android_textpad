@@ -122,6 +122,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         TextView title = label("Textpad", 23, TEXT); title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         TextView subtitle = label("A LITTLE SPACE TO WRITE", 9, MUTED); subtitle.setLetterSpacing(.15f);
         brand.addView(title); brand.addView(subtitle); header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+        saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
+        header.addView(saveButton);
         header.addView(iconButton(Icon.NEW, TEXT, "New document", v -> { saveViewState(); app.newDocument(); }));
         header.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
         Button menu = iconButton(Icon.MENU, TEXT, "More options", this::showMenu); header.addView(menu);
@@ -202,11 +204,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         moveDownButton = iconButton(Icon.MOVE_LINE_DOWN, TEXT, "Move line down", v -> moveLines(false));
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
         readOnlyButton = iconButton(Icon.READ_ONLY, TEXT, "Toggle read-only mode", v -> toggleReadOnly());
-        saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
         toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(readOnlyButton); toolbar.addView(findButton); toolbar.addView(findAllButton); toolbar.addView(hashtagsButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
         toolbar.addView(todoButton); toolbar.addView(taskFilterButton); toolbar.addView(dateButton); toolbar.addView(timeButton); toolbar.addView(dividerButton);
-        toolbar.addView(moveUpButton); toolbar.addView(moveDownButton); toolbar.addView(saveButton);
+        toolbar.addView(moveUpButton); toolbar.addView(moveDownButton);
         tools.addView(toolbar); root.addView(tools);
         status = label("OFFLINE · READY", 11, MUTED); status.setSingleLine(true); status.setPadding(dp(16), dp(5), dp(16), dp(9));
         root.addView(status);
