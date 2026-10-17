@@ -66,7 +66,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private EditorTab shownTab;
     private long shownState = -1;
-    private boolean changing, started, dialogVisible, findAllFiles, readOnlyMode;
+    private boolean changing, started, dialogVisible, findAllFiles;
     private final Map<Long, TextView> tabNames = new HashMap<>();
     private final Map<Long, LinearLayout> tabViews = new HashMap<>();
     private final Runnable autosave = new Runnable() {
@@ -86,8 +86,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         app = (TextpadApplication) getApplication();
+        if (state != null) app.readOnlyMode = state.getBoolean("readOnlyMode", app.readOnlyMode);
         buildUi();
         if (state == null) handleIntent(getIntent());
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putBoolean("readOnlyMode", app.readOnlyMode);
     }
 
     @Override protected void onStart() { super.onStart(); started = true; app.attach(this); scheduleAutosave(); app.sync.setForeground(true); app.sync.syncAll(false); }
@@ -250,11 +256,11 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private boolean isEditable(EditorDocument doc) {
-        return doc != null && doc.writable && !doc.replacing && !readOnlyMode;
+        return doc != null && doc.writable && !doc.replacing && !app.readOnlyMode;
     }
 
     private void toggleReadOnly() {
-        readOnlyMode = !readOnlyMode;
+        app.readOnlyMode = !app.readOnlyMode;
         EditorDocument doc = app.current();
         if (doc != null) {
             saveViewState();
@@ -266,7 +272,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             editor.setSelection(Math.min(len, selStart), Math.min(len, selEnd));
             editor.scrollTo(sx, sy);
             changing = false;
-            if (readOnlyMode) {
+            if (app.readOnlyMode) {
                 var imm = getSystemService(android.view.inputmethod.InputMethodManager.class);
                 if (imm != null) imm.hideSoftInputFromWindow(editor.getWindowToken(), 0);
             }
@@ -317,7 +323,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         setButtonEnabled(indentMoreButton, editable);
         setButtonEnabled(bottomButton, doc != null);
         setButtonEnabled(readOnlyButton, doc != null);
-        readOnlyButton.setBackground(iconDrawable(Icon.READ_ONLY, readOnlyMode ? ACCENT : TEXT));
+        readOnlyButton.setBackground(iconDrawable(Icon.READ_ONLY, app.readOnlyMode ? ACCENT : TEXT));
         if (replaceOneButton != null) setButtonEnabled(replaceOneButton, editable);
         if (replaceAllButton != null) setButtonEnabled(replaceAllButton, editable);
         boolean canSave = doc != null && !doc.saving && !doc.replacing && doc.buffer.dirty();
@@ -329,7 +335,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         int column = offset - doc.buffer.lineStart(line) + 1;
         String baseStatus = String.format(Locale.ROOT, "Ln %d, Col %d  ·  %s%s  ·  %s%s", line + 1, column,
                 doc.buffer.encoding().label, doc.buffer.bom() ? " BOM" : "", doc.buffer.endingLabel(),
-                (!doc.writable || readOnlyMode) ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED");
+                (!doc.writable || app.readOnlyMode) ? "  ·  READ ONLY" : doc.buffer.dirty() ? "  ·  UNSAVED" : doc.uri == null ? "  ·  NEW" : "  ·  SAVED");
         if (doc.syncEnabled) {
             SpannableStringBuilder sb = new SpannableStringBuilder(baseStatus).append("  ·  ●");
             boolean synced = !doc.buffer.dirty() && doc.savedHash != null && doc.syncedHash != null && Arrays.equals(doc.savedHash, doc.syncedHash);

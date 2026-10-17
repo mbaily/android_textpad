@@ -41,7 +41,7 @@ public final class TextpadApplication extends Application {
     SyncManager sync;
     long selectedTab = -1, nextTab = 1;
     int untitled = 1;
-    boolean opening, exiting;
+    boolean opening, exiting, readOnlyMode;
     PendingSave pendingSave;
     TextCodec.Encoding nextOpenEncoding;
 

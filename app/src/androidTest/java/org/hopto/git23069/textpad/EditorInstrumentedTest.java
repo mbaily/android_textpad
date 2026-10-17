@@ -21,7 +21,7 @@ public class EditorInstrumentedTest {
     @Before public void reset() {
         app = (TextpadApplication) InstrumentationRegistry.getInstrumentation().getTargetContext().getApplicationContext();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            app.tabs.clear(); app.selectedTab = -1; app.events.clear(); app.settings.prefs.edit().clear().commit();
+            app.tabs.clear(); app.selectedTab = -1; app.events.clear(); app.readOnlyMode = false; app.settings.prefs.edit().clear().commit();
         });
     }
     private Uri seed(String name, byte[] contents) throws Exception {
@@ -100,12 +100,17 @@ public class EditorInstrumentedTest {
                 editor.setSelection(editor.length()); editor.getText().append("😀");
                 app.selectedTab = app.tabs.get(0).id; app.refresh();
                 assertEquals(3,editor.getSelectionStart()); assertTrue(editor.getText().toString().endsWith("😀"));
+                button(activity.getWindow().getDecorView(),"Toggle read-only mode").performClick();
+                assertNull(editor.getKeyListener());
             });
             scenario.recreate();
             scenario.onActivity(activity -> {
                 CodeEditor editor = activity.findViewById(R.id.editor);
                 assertEquals(2,app.tabs.size()); assertEquals(3,editor.getSelectionStart());
                 assertTrue(editor.getText().toString().endsWith("😀")); assertTrue(app.current().buffer.dirty());
+                assertTrue(app.readOnlyMode);
+                assertNull(editor.getKeyListener());
+                assertFalse(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
             });
         }
     }
