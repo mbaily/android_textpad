@@ -232,6 +232,7 @@ final class SyncManager {
                         }
                     } catch (Exception e) { errors.add(binding.name+": "+message(e)); }
                 }
+                syncErrands(remoteApi);
             } catch (Exception e) { errors.add(message(e)); }
             String summary=uploaded+" uploaded · "+downloaded+" downloaded · "+deferred+" pending";
             if (mergedCount > 0) summary+=" · "+mergedCount+" merged";
@@ -247,6 +248,25 @@ final class SyncManager {
             });
         });
         return completion;
+    }
+    void syncErrands(RemoteApi remoteApi) {
+        try {
+            if (app.settings.errandsDirty()) {
+                RemoteApi.Errands saved = remoteApi.putErrands(app.settings.errandsHashtags());
+                app.settings.setErrandsHashtags(saved.hashtags(), saved.updatedAt(), false);
+            } else {
+                RemoteApi.Errands remote = remoteApi.getErrands();
+                if (!remote.updatedAt().isEmpty() || !remote.hashtags().isEmpty()) {
+                    app.settings.setErrandsHashtags(remote.hashtags(), remote.updatedAt(), false);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+    void syncErrandsInBackground(Runnable onComplete) {
+        app.io.execute(() -> {
+            try { syncErrands(api()); } catch (Exception ignored) {}
+            if (onComplete != null) app.main.post(onComplete);
+        });
     }
     static String message(Exception e) { return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(); }
 }

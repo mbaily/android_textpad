@@ -58,6 +58,35 @@ def filename(value):
     return value
 
 
+HASHTAG_RE = re.compile(r"(?:^|(?<=[\s(\[{\"']))#([A-Za-z_][A-Za-z0-9_-]*)(?=$|\s|[.,;:!?)\]}\"'])")
+TAG_TOKEN_RE = re.compile(r"#?([A-Za-z_][A-Za-z0-9_-]*)")
+
+
+def normalize_hashtags(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        tokens = TAG_TOKEN_RE.findall(value)
+    elif isinstance(value, (list, tuple, set)):
+        tokens = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("Hashtags must be strings.")
+            tokens.extend(TAG_TOKEN_RE.findall(item))
+    else:
+        raise ValueError("Provide hashtags as a list or string.")
+    seen = []
+    seen_set = set()
+    for token in tokens:
+        norm = token.lower()
+        if len(norm) <= 64 and norm not in seen_set:
+            seen_set.add(norm)
+            seen.append(norm)
+            if len(seen) >= 200:
+                break
+    return seen
+
+
 def representation(row):
     item = {"id": row["document_id"], "name": row["name"], "revision": str(row["sequence"]),
             "sha256": row["sha256"], "size": row["size"], "updated_at": row["created_at"],
@@ -167,6 +196,9 @@ class Store:
                 );
                 CREATE TABLE IF NOT EXISTS login_attempts (
                     address TEXT PRIMARY KEY, failures INTEGER NOT NULL, started REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
                 PRAGMA user_version=1;
             """)
@@ -544,6 +576,106 @@ class Store:
         with closing(self.connect()) as source, closing(sqlite3.connect(destination)) as target:
             source.backup(target)
         destination.chmod(0o600)
+
+    def get_errands(self):
+        with closing(self.connect()) as db:
+            row = db.execute("SELECT value, updated_at FROM settings WHERE key='errands'").fetchone()
+            if row is None:
+                return {"hashtags": [], "updated_at": ""}
+            try:
+                tags = normalize_hashtags(json.loads(row["value"]))
+            except (TypeError, ValueError):
+                tags = []
+            return {"hashtags": tags, "updated_at": row["updated_at"]}
+
+    def put_errands(self, hashtags):
+        tags = normalize_hashtags(hashtags)
+        encoded = json.dumps(tags)
+        changed = False
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                existing = db.execute("SELECT value, updated_at FROM settings WHERE key='errands'").fetchone()
+                if existing is not None and existing["value"] == encoded:
+                    db.rollback()
+                    return {"hashtags": tags, "updated_at": existing["updated_at"]}
+                now_iso = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                db.execute(
+                    "INSERT OR REPLACE INTO settings(key, value, updated_at) VALUES('errands', ?, ?)",
+                    (encoded, now_iso),
+                )
+                db.commit()
+                changed = True
+            except BaseException:
+                db.rollback()
+                raise
+        if changed and self.on_commit is not None:
+            self.on_commit()
+        return {"hashtags": tags, "updated_at": now_iso}
+
+    def search_hashtags(self, tags=None, hide_completed=False, exclude_ids=()):
+        targets = set(normalize_hashtags(tags)) if tags else set()
+        excluded = {str(x) for x in (exclude_ids or ())}
+        discovered = []
+        discovered_set = set()
+        matches = []
+        with closing(self.connect()) as db:
+            rows = db.execute(
+                """SELECT r.sequence, r.document_id, r.name, r.content, r.encoding, r.created_at
+                   FROM documents d JOIN revisions r ON d.current_revision=r.sequence
+                   ORDER BY r.created_at DESC, r.sequence DESC"""
+            ).fetchall()
+        for row in rows:
+            doc_id = row["document_id"]
+            if doc_id in excluded:
+                continue
+            try:
+                text = decode(bytes(row["content"]), row["encoding"]).text
+            except InvalidText:
+                continue
+            for m in HASHTAG_RE.finditer(text):
+                tag_norm = m.group(1).lower()
+                if tag_norm not in discovered_set:
+                    discovered_set.add(tag_norm)
+                    discovered.append(tag_norm)
+            if not targets:
+                continue
+            file_tags = []
+            file_tags_set = set()
+            line_matches = []
+            offset = 0
+            for idx, line in enumerate(text.split("\n"), start=1):
+                stripped = line.lstrip(" \t")
+                if not hide_completed or not (stripped.startswith("[X]") or stripped.startswith("[x]")):
+                    line_tags = []
+                    line_tags_set = set()
+                    for m in HASHTAG_RE.finditer(line):
+                        found = m.group(1).lower()
+                        if found in targets:
+                            if found not in line_tags_set:
+                                line_tags_set.add(found)
+                                line_tags.append(found)
+                            if found not in file_tags_set:
+                                file_tags_set.add(found)
+                                file_tags.append(found)
+                    if line_tags:
+                        line_matches.append({
+                            "line_number": idx,
+                            "offset": offset,
+                            "text": line,
+                            "matched_tags": line_tags,
+                        })
+                offset += len(line) + 1
+            if line_matches:
+                matches.append({
+                    "id": doc_id,
+                    "name": row["name"],
+                    "revision": str(row["sequence"]),
+                    "updated_at": row["created_at"],
+                    "matched_tags": file_tags,
+                    "lines": line_matches,
+                })
+        return {"all_hashtags": discovered, "results": matches}
 
     def remove_revision(self, document_id, revision):
         identifier(document_id), identifier(str(revision))

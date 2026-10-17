@@ -15,4 +15,8 @@ interface RemoteApi {
     List<Remote> revisions(String id) throws IOException;
     Remote revision(String id, String revision) throws IOException;
     default List<Remote> prune(String id) throws IOException { return revisions(id); }
+    record Errands(List<String> hashtags, String updatedAt) {}
+    default Errands getErrands() throws IOException { return new Errands(List.of(), ""); }
+    default Errands putErrands(List<String> hashtags) throws IOException { return new Errands(hashtags, ""); }
 }
+

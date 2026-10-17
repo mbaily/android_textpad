@@ -73,11 +73,24 @@ public final class TextpadApplication extends Application {
     }
 
     void open(Uri uri) {
-        open(uri, null);
+        open(uri, null, null, false);
     }
     void open(Uri uri, TextCodec.Encoding explicitEncoding) {
-        // Opening the same URI again intentionally adds another view of its shared buffer.
-        for (EditorTab tab : tabs) if (DocumentStore.same(uri, tab.document.uri)) { addTab(tab.document); return; }
+        open(uri, explicitEncoding, null, false);
+    }
+    void focusOrOpen(Uri uri, Runnable afterOpen) {
+        open(uri, null, afterOpen, true);
+    }
+    private void open(Uri uri, TextCodec.Encoding explicitEncoding, Runnable afterOpen, boolean reuseTab) {
+        // Opening the same URI again intentionally adds another view of its shared buffer unless reuseTab is requested.
+        for (EditorTab tab : tabs) {
+            if (DocumentStore.same(uri, tab.document.uri)) {
+                if (reuseTab) { selectedTab = tab.id; refresh(); }
+                else addTab(tab.document);
+                if (afterOpen != null) afterOpen.run();
+                return;
+            }
+        }
         if (opening) { notice("Opening a file", "Please wait until the current file has opened."); return; }
         opening = true; refresh();
         io.execute(() -> {
@@ -96,8 +109,16 @@ public final class TextpadApplication extends Application {
                 store.remember(uri, info.name());
                 main.post(() -> {
                     opening = false;
-                    for (EditorTab existing : tabs) if (DocumentStore.same(existing.document.uri, uri)) { addTab(existing.document); return; }
+                    for (EditorTab existing : tabs) {
+                        if (DocumentStore.same(existing.document.uri, uri)) {
+                            if (reuseTab) { selectedTab = existing.id; refresh(); }
+                            else addTab(existing.document);
+                            if (afterOpen != null) afterOpen.run();
+                            return;
+                        }
+                    }
                     addTab(doc);
+                    if (afterOpen != null) afterOpen.run();
                 });
             } catch (Exception e) { main.post(() -> { opening = false; refresh(); notice("Could not open file", e.getMessage()); }); }
         });

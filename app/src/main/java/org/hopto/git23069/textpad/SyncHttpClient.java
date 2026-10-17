@@ -42,6 +42,28 @@ final class SyncHttpClient implements RemoteApi {
             return remote(request("PUT",path(id),body),false);
         } catch (JSONException e) { throw new IOException("Could not encode the sync request.",e); }
     }
+    @Override public Errands getErrands() throws IOException {
+        return parseErrands(request("GET", "/api/v1/errands", null));
+    }
+    @Override public Errands putErrands(List<String> hashtags) throws IOException {
+        try {
+            JSONArray arr = new JSONArray();
+            if (hashtags != null) for (String t : hashtags) arr.put(t);
+            JSONObject body = new JSONObject().put("hashtags", arr);
+            return parseErrands(request("PUT", "/api/v1/errands", body));
+        } catch (JSONException e) { throw new IOException("Could not encode the errands request.", e); }
+    }
+    private Errands parseErrands(JSONObject json) {
+        List<String> tags = new ArrayList<>();
+        JSONArray arr = json.optJSONArray("hashtags");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                String s = arr.optString(i, "");
+                if (!s.isBlank()) tags.add(s);
+            }
+        }
+        return new Errands(tags, json.optString("updated_at", ""));
+    }
     private String path(String id) { return "/api/v1/documents/"+segment(id); }
     private String segment(String value) {
         if (!value.matches("[A-Za-z0-9_-]{1,128}")) throw new IllegalArgumentException("Invalid server document or revision ID.");

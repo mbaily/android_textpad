@@ -206,9 +206,148 @@ final class DocumentStore {
     }
 
     static boolean same(Uri a, Uri b) { return a != null && b != null && identity(a).equals(identity(b)); }
-    private static String identity(Uri uri) {
+    static String identity(Uri uri) {
         try { return uri.getAuthority() + ":" + DocumentsContract.getDocumentId(uri); }
         catch (IllegalArgumentException e) { return uri.normalizeScheme().toString(); }
     }
     String key(Uri uri) { return HexFormat.of().formatHex(SaveTransaction.hash(identity(uri).getBytes(StandardCharsets.UTF_8))); }
+
+    static boolean isLikelyTextName(String name, String mime) {
+        if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) return false;
+        if (mime != null && (mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/")
+                || mime.equals("application/pdf") || mime.equals("application/zip")
+                || mime.equals("application/vnd.android.package-archive"))) {
+            return false;
+        }
+        if (name == null || name.isEmpty() || name.startsWith(".")) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        for (String ext : new String[]{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".pdf",
+                ".zip", ".tar", ".gz", ".7z", ".rar", ".apk", ".aab", ".dex", ".so", ".mp3", ".mp4",
+                ".mkv", ".avi", ".mov", ".ogg", ".wav", ".flac", ".ttf", ".otf", ".woff", ".woff2", ".sqlite3", ".db"}) {
+            if (lower.endsWith(ext)) return false;
+        }
+        return true;
+    }
+
+    static String parentDocumentId(Uri uri) {
+        if (uri == null) return null;
+        try {
+            String docId = DocumentsContract.getDocumentId(uri);
+            int slash = docId.lastIndexOf('/');
+            if (slash > 0) return docId.substring(0, slash);
+            int colon = docId.indexOf(':');
+            if (colon >= 0 && colon + 1 < docId.length()) return docId.substring(0, colon + 1);
+        } catch (IllegalArgumentException ignored) {}
+        return null;
+    }
+
+    static File localParentDirectory(Uri uri) {
+        if (uri == null) return null;
+        if ("file".equalsIgnoreCase(uri.getScheme()) && uri.getPath() != null) {
+            return new File(uri.getPath()).getParentFile();
+        }
+        try {
+            String docId = DocumentsContract.getDocumentId(uri);
+            if (docId.startsWith("raw:")) docId = docId.substring(4);
+            if (docId.startsWith("/")) return new File(docId).getParentFile();
+            if (docId.startsWith("primary:")) {
+                File f = new File("/storage/emulated/0/" + docId.substring(8));
+                return f.getParentFile();
+            }
+        } catch (IllegalArgumentException ignored) {}
+        return null;
+    }
+
+    List<Recent> discoverSiblingAndTreeFiles(List<Uri> openUris, List<Uri> searchTrees) {
+        Map<String, Recent> found = new LinkedHashMap<>();
+        java.util.Set<String> scannedDirs = new java.util.HashSet<>();
+
+        // 1. Scan local filesystem parent directories of open files when accessible
+        for (Uri openUri : openUris) {
+            if (openUri == null) continue;
+            File parent = localParentDirectory(openUri);
+            if (parent != null && scannedDirs.add("file:" + parent.getAbsolutePath())) {
+                File[] children = parent.listFiles();
+                if (children != null) {
+                    for (File child : children) {
+                        if (child.isFile() && child.canRead() && child.length() <= TextCodec.MAX_BYTES
+                                && isLikelyTextName(child.getName(), null)) {
+                            Uri u = Uri.fromFile(child);
+                            found.putIfAbsent(identity(u), new Recent(child.getName(), u));
+                        }
+                    }
+                }
+            }
+            // 2. Try SAF parent directory via matching searchTree or direct provider query
+            String parentDocId = parentDocumentId(openUri);
+            String authority = openUri.getAuthority();
+            if (parentDocId != null && authority != null && scannedDirs.add("saf:" + authority + ":" + parentDocId)) {
+                Uri matchedTree = null;
+                for (Uri tree : searchTrees) {
+                    if (authority.equals(tree.getAuthority())) {
+                        try {
+                            String treeDocId = DocumentsContract.getTreeDocumentId(tree);
+                            if (parentDocId.equals(treeDocId) || parentDocId.startsWith(treeDocId)) {
+                                matchedTree = tree;
+                                break;
+                            }
+                        } catch (IllegalArgumentException ignored) {}
+                    }
+                }
+                if (matchedTree != null) {
+                    queryChildrenInto(matchedTree, parentDocId, true, found);
+                } else {
+                    try {
+                        Uri childrenUri = DocumentsContract.buildChildDocumentsUri(authority, parentDocId);
+                        queryChildrenUri(openUri, false, childrenUri, found);
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+
+        // 3. Scan granted folder trees (top-level files)
+        for (Uri tree : searchTrees) {
+            if (tree == null) continue;
+            try {
+                String treeDocId = DocumentsContract.getTreeDocumentId(tree);
+                String authority = tree.getAuthority();
+                if (authority != null && treeDocId != null && scannedDirs.add("saf:" + authority + ":" + treeDocId)) {
+                    queryChildrenInto(tree, treeDocId, true, found);
+                }
+            } catch (Exception ignored) {}
+        }
+        return new ArrayList<>(found.values());
+    }
+
+    private void queryChildrenInto(Uri treeUri, String parentDocId, boolean usingTree, Map<String, Recent> found) {
+        try {
+            Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId);
+            queryChildrenUri(treeUri, usingTree, childrenUri, found);
+        } catch (Exception ignored) {}
+    }
+
+    private void queryChildrenUri(Uri baseUri, boolean usingTree, Uri childrenUri, Map<String, Recent> found) {
+        String[] projection = {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+                DocumentsContract.Document.COLUMN_SIZE
+        };
+        try (Cursor c = resolver.query(childrenUri, projection, null, null, null)) {
+            if (c == null) return;
+            while (c.moveToNext()) {
+                String docId = c.isNull(0) ? null : c.getString(0);
+                String name = c.isNull(1) ? null : c.getString(1);
+                String mime = c.isNull(2) ? null : c.getString(2);
+                long size = c.isNull(3) ? 0L : c.getLong(3);
+                if (docId == null || name == null || size > TextCodec.MAX_BYTES) continue;
+                if (!isLikelyTextName(name, mime)) continue;
+                Uri childUri = usingTree
+                        ? DocumentsContract.buildDocumentUriUsingTree(baseUri, docId)
+                        : DocumentsContract.buildDocumentUri(baseUri.getAuthority(), docId);
+                found.putIfAbsent(identity(childUri), new Recent(name, childUri));
+            }
+        } catch (Exception ignored) {}
+    }
 }
+

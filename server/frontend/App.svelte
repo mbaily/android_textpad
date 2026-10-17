@@ -71,6 +71,32 @@
   let findResultText = $state("");
   let findInputEl = $state(null);
 
+  let initialErrands = { hashtags: [], updated_at: "", dirty: false };
+  try {
+    const savedErrands = JSON.parse(localStorage.getItem("textpad.editor.errands") || "{}");
+    if (Array.isArray(savedErrands.hashtags)) {
+      initialErrands = {
+        hashtags: savedErrands.hashtags,
+        updated_at: savedErrands.updated_at || "",
+        dirty: Boolean(savedErrands.dirty),
+      };
+    }
+  } catch {}
+
+  let hashtagsPanelOpen = $state(false);
+  let hashtagsTab = $state("search");
+  let hashtagQuery = $state("");
+  let hashtagMatchMode = $state("lines");
+  let hashtagHideCompleted = $state(false);
+  let errandsTags = $state(initialErrands.hashtags);
+  let errandsUpdatedAt = $state(initialErrands.updated_at);
+  let errandsDirty = $state(initialErrands.dirty);
+  let editingErrands = $state(false);
+  let errandsInput = $state("");
+  let discoveredHashtags = $state([]);
+  let hashtagResults = $state([]);
+  let hashtagSearching = $state(false);
+
   let cursorLine = $state(1);
   let cursorCol = $state(1);
   let lineCount = $state(1);
@@ -1103,6 +1129,7 @@
     polling = true;
     try {
       await flushOutbox();
+      await syncErrands();
       const result = await api("/documents");
       files = result.documents;
       await idbSyncFileList(files);
@@ -1116,6 +1143,7 @@
         await reloadFile(doc, false);
       }
       syncEditorMetrics();
+      if (hashtagsPanelOpen) runHashtagSearch();
       cacheDocumentsInBackground(files);
     } catch (error) {
       if (error.offline) {
@@ -1128,6 +1156,7 @@
             files = cachedFiles;
           }
           syncEditorMetrics();
+          if (hashtagsPanelOpen) runHashtagSearch();
           return;
         }
       }
@@ -1138,6 +1167,237 @@
         refreshAgain = false;
         refreshFiles().catch(failure);
       }
+    }
+  }
+
+  const HASHTAG_TEXT_RE = /(?:^|(?<=[\s(\[{"']))#([A-Za-z_][A-Za-z0-9_-]*)(?=$|\s|[.,;:!?)\]}"'])/g;
+  const TAG_TOKEN_JS_RE = /#?([A-Za-z_][A-Za-z0-9_-]*)/g;
+
+  function parseTagListJs(input) {
+    if (!input) return [];
+    const str = Array.isArray(input) ? input.join(" ") : String(input);
+    const seen = new Set();
+    const out = [];
+    for (const m of str.matchAll(TAG_TOKEN_JS_RE)) {
+      const norm = m[1].toLowerCase();
+      if (norm && norm.length <= 64 && !seen.has(norm)) {
+        seen.add(norm);
+        out.push(norm);
+      }
+    }
+    return out;
+  }
+
+  function formatTagListJs(tags) {
+    return (tags || []).map((t) => `#${t}`).join(" ");
+  }
+
+  function saveLocalErrands(tags, updatedAt, dirty) {
+    errandsTags = tags;
+    errandsUpdatedAt = updatedAt || "";
+    errandsDirty = Boolean(dirty);
+    try {
+      localStorage.setItem(
+        "textpad.editor.errands",
+        JSON.stringify({ hashtags: errandsTags, updated_at: errandsUpdatedAt, dirty: errandsDirty })
+      );
+    } catch {}
+  }
+
+  async function syncErrands() {
+    try {
+      if (errandsDirty) {
+        const saved = await api("/errands", { method: "PUT", body: JSON.stringify({ hashtags: errandsTags }) });
+        saveLocalErrands(saved.hashtags || [], saved.updated_at || "", false);
+      } else {
+        const remote = await api("/errands");
+        if (Array.isArray(remote.hashtags)) {
+          saveLocalErrands(remote.hashtags, remote.updated_at || "", false);
+        }
+      }
+    } catch (error) {
+      if (!error.offline) throw error;
+    }
+  }
+
+  async function saveErrandsFromInput() {
+    const parsed = parseTagListJs(errandsInput);
+    editingErrands = false;
+    saveLocalErrands(parsed, errandsUpdatedAt, true);
+    runHashtagSearch();
+    try {
+      const saved = await api("/errands", { method: "PUT", body: JSON.stringify({ hashtags: parsed }) });
+      saveLocalErrands(saved.hashtags || parsed, saved.updated_at || "", false);
+      try {
+        syncChannel?.postMessage({ type: "changed", id: "errands" });
+      } catch {}
+    } catch (error) {
+      if (error.offline) {
+        notice("Saved errands hashtags offline. They will sync when reconnected.");
+        return;
+      }
+      failure(error);
+    }
+  }
+
+  function toggleQueryHashtag(tag) {
+    const current = parseTagListJs(hashtagQuery);
+    const next = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
+    hashtagQuery = formatTagListJs(next);
+    runHashtagSearch();
+  }
+
+  function scanDocTextForHashtags(docId, docName, text, targetsSet, hideCompleted, discoveredSet, discoveredList) {
+    for (const m of text.matchAll(HASHTAG_TEXT_RE)) {
+      const found = m[1].toLowerCase();
+      if (!discoveredSet.has(found)) {
+        discoveredSet.add(found);
+        discoveredList.push(found);
+      }
+    }
+    if (!targetsSet.size) return null;
+    const fileTags = [];
+    const fileTagsSet = new Set();
+    const lines = [];
+    const rawLines = text.split("\n");
+    let offset = 0;
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i];
+      const stripped = line.replace(/^[ \t]+/, "");
+      if (!hideCompleted || !(stripped.startsWith("[X]") || stripped.startsWith("[x]"))) {
+        const lineTags = [];
+        const lineTagsSet = new Set();
+        for (const m of line.matchAll(HASHTAG_TEXT_RE)) {
+          const found = m[1].toLowerCase();
+          if (targetsSet.has(found)) {
+            if (!lineTagsSet.has(found)) {
+              lineTagsSet.add(found);
+              lineTags.push(found);
+            }
+            if (!fileTagsSet.has(found)) {
+              fileTagsSet.add(found);
+              fileTags.push(found);
+            }
+          }
+        }
+        if (lineTags.length > 0) {
+          lines.push({ line_number: i + 1, offset, text: line, matched_tags: lineTags });
+        }
+      }
+      offset += line.length + 1;
+    }
+    if (lines.length === 0) return null;
+    return { id: docId, name: docName, matched_tags: fileTags, lines };
+  }
+
+  async function runHashtagSearch() {
+    const activeTargets = hashtagsTab === "errands" ? errandsTags : parseTagListJs(hashtagQuery);
+    const targetsSet = new Set(activeTargets);
+    const hideCompleted = hashtagHideCompleted;
+    hashtagSearching = true;
+    try {
+      const discoveredSet = new Set();
+      const discoveredList = [];
+      const results = [];
+      const openIds = [];
+
+      // 1. Scan all open tabs (including unsaved edits in memory)
+      for (const doc of documents.values()) {
+        openIds.push(doc.id);
+        const text = active === doc.id && view ? view.state.doc.toString() : doc.state.doc.toString();
+        const match = scanDocTextForHashtags(
+          doc.id,
+          doc.name,
+          text,
+          targetsSet,
+          hideCompleted,
+          discoveredSet,
+          discoveredList
+        );
+        if (match) results.push(match);
+      }
+
+      // 2. Scan remaining synced/recent server files (online via API, or offline via IndexedDB)
+      let remoteScanned = false;
+      if (apiOnline) {
+        try {
+          const serverRes = await api("/hashtags", {
+            method: "POST",
+            body: JSON.stringify({
+              tags: activeTargets,
+              hide_completed: hideCompleted,
+              exclude_ids: openIds,
+            }),
+          });
+          for (const t of serverRes.all_hashtags || []) {
+            if (!discoveredSet.has(t)) {
+              discoveredSet.add(t);
+              discoveredList.push(t);
+            }
+          }
+          for (const r of serverRes.results || []) {
+            results.push(r);
+          }
+          remoteScanned = true;
+        } catch (err) {
+          if (!err.offline) throw err;
+        }
+      }
+
+      if (!remoteScanned) {
+        const openIdSet = new Set(openIds);
+        const cachedDocs = await idbGetAll("documents");
+        for (const cached of cachedDocs) {
+          if (!cached?.id || openIdSet.has(cached.id) || typeof cached.text !== "string") continue;
+          const match = scanDocTextForHashtags(
+            cached.id,
+            cached.name || "Untitled.txt",
+            cached.text,
+            targetsSet,
+            hideCompleted,
+            discoveredSet,
+            discoveredList
+          );
+          if (match) results.push(match);
+        }
+      }
+
+      discoveredHashtags = discoveredList;
+      hashtagResults = results;
+    } catch (error) {
+      failure(error);
+    } finally {
+      hashtagSearching = false;
+    }
+  }
+
+  function openHashtagsPanel(tab = "search") {
+    closeHistory();
+    hashtagsTab = tab;
+    hashtagsPanelOpen = true;
+    if (tab === "errands" && errandsTags.length === 0) {
+      editingErrands = true;
+      errandsInput = "";
+    }
+    runHashtagSearch();
+  }
+
+  function closeHashtagsPanel() {
+    hashtagsPanelOpen = false;
+    editingErrands = false;
+  }
+
+  async function jumpToHashtagResult(fileId, lineNumber = null) {
+    await openFile(fileId);
+    if (lineNumber !== null && view && active === fileId) {
+      const targetLineNum = Math.max(1, Math.min(lineNumber, view.state.doc.lines));
+      const line = view.state.doc.line(targetLineNum);
+      view.dispatch({
+        selection: EditorSelection.cursor(line.from),
+        effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+      });
+      view.focus();
+      syncEditorMetrics();
     }
   }
 
@@ -1152,6 +1412,7 @@
   async function showHistory() {
     const doc = activeDoc;
     if (!doc?.revision) return;
+    closeHashtagsPanel();
     historyDocument = doc.id;
     selectedRevision = null;
     previewText = "";
@@ -1707,6 +1968,7 @@
 
     applyPreferences();
     refreshFiles().catch(failure);
+    syncErrands().catch(() => {});
     connectEvents();
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register(`${prefix}/editor/sw.js`, { scope: `${prefix}/editor/` }).catch(() => {});
@@ -1742,6 +2004,7 @@
       closeEvents();
       connectEvents();
       refreshFiles().catch(failure);
+      syncErrands().catch(() => {});
     };
     const onOffline = () => {
       apiOnline = false;
@@ -1927,6 +2190,9 @@
       </button>
       <button id="find-all" class="icon-button" title="Find in open files (Ctrl+Shift+F)" aria-label="Find in open files" disabled={!activeDoc} onclick={() => openFind(true)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h10"/><path d="M4 10h6"/><path d="M4 14h5"/><circle cx="15.5" cy="14.5" r="4.5"/><path d="m19 18 3 3"/></svg>
+      </button>
+      <button id="hashtags" class="icon-button" class:active={hashtagsPanelOpen} aria-pressed={String(hashtagsPanelOpen)} title="Hashtags & Errands" aria-label="Hashtags & Errands" onclick={() => hashtagsPanelOpen ? closeHashtagsPanel() : openHashtagsPanel(hashtagsTab)}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
       <button id="indent-less" class="icon-button" title="Decrease indentation" aria-label="Decrease indentation" disabled={!activeDoc || readOnly} onclick={() => { indentLess(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="5" x2="4" y2="19"/><line x1="20" y1="12" x2="9" y2="12"/><polyline points="13 8 9 12 13 16"/></svg>
@@ -2114,6 +2380,198 @@
       </div>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <pre id="preview-text" tabindex="0">{previewText}</pre>
+    </div>
+  </aside>
+
+  <aside id="hashtags-panel" class="hashtags-panel" class:hidden={!hashtagsPanelOpen} aria-label="Hashtags and Errands">
+    <div class="history-heading">
+      <h2>Hashtags &amp; Errands</h2>
+      <div>
+        <button id="refresh-hashtags" class="icon-button" title="Refresh hashtag search" aria-label="Refresh hashtag search" onclick={runHashtagSearch}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+        </button>
+        <button id="close-hashtags" class="icon-button" aria-label="Close hashtags" onclick={closeHashtagsPanel}>×</button>
+      </div>
+    </div>
+
+    <div class="hashtag-tabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        class:active={hashtagsTab === "search"}
+        aria-selected={String(hashtagsTab === "search")}
+        onclick={() => { hashtagsTab = "search"; runHashtagSearch(); }}
+      >Search</button>
+      <button
+        type="button"
+        role="tab"
+        class:active={hashtagsTab === "errands"}
+        aria-selected={String(hashtagsTab === "errands")}
+        onclick={() => {
+          hashtagsTab = "errands";
+          if (errandsTags.length === 0) {
+            editingErrands = true;
+            errandsInput = "";
+          }
+          runHashtagSearch();
+        }}
+      >Errands{errandsTags.length ? ` (${errandsTags.length})` : ""}</button>
+    </div>
+
+    <div class="hashtag-controls">
+      {#if hashtagsTab === "search"}
+        <input
+          id="hashtag-query-input"
+          class="hashtag-input"
+          type="search"
+          placeholder="Search hashtags (e.g. #chemist #bunnings)…"
+          aria-label="Hashtags to search"
+          bind:value={hashtagQuery}
+          oninput={runHashtagSearch}
+        >
+        {#if discoveredHashtags.length > 0}
+          <div class="tag-chips" aria-label="Discovered hashtags">
+            {#each discoveredHashtags as tag (tag)}
+              {@const selected = parseTagListJs(hashtagQuery).includes(tag)}
+              <button
+                type="button"
+                class="tag-chip"
+                class:active={selected}
+                onclick={() => toggleQueryHashtag(tag)}
+              >#{tag}</button>
+            {/each}
+          </div>
+        {/if}
+      {:else}
+        <div class="errands-box">
+          <div class="errands-box-header">
+            <span class="small muted">Errands hashtags (matches any)</span>
+            {#if !editingErrands}
+              <button
+                id="edit-errands"
+                type="button"
+                class="text-button small"
+                onclick={() => {
+                  errandsInput = formatTagListJs(errandsTags);
+                  editingErrands = true;
+                }}
+              >Edit</button>
+            {/if}
+          </div>
+          {#if editingErrands}
+            <textarea
+              id="errands-textarea"
+              aria-label="Errands hashtags"
+              placeholder="#chemist #bunnings #postoffice #groceries"
+              bind:value={errandsInput}
+            ></textarea>
+            {#if discoveredHashtags.length > 0}
+              <div class="tag-chips" aria-label="Tap to add or remove hashtag">
+                {#each discoveredHashtags as tag (tag)}
+                  {@const inDraft = parseTagListJs(errandsInput).includes(tag)}
+                  <button
+                    type="button"
+                    class="tag-chip"
+                    class:active={inDraft}
+                    onclick={() => {
+                      const current = parseTagListJs(errandsInput);
+                      const idx = current.indexOf(tag);
+                      if (idx >= 0) current.splice(idx, 1);
+                      else current.push(tag);
+                      errandsInput = formatTagListJs(current);
+                    }}
+                  >#{tag}</button>
+                {/each}
+              </div>
+            {/if}
+            <div class="errands-actions">
+              <button type="button" class="text-button small" onclick={() => (editingErrands = false)}>Cancel</button>
+              <button id="save-errands" type="button" class="primary small" onclick={saveErrandsFromInput}>Save Errands</button>
+            </div>
+          {:else if errandsTags.length > 0}
+            <div class="tag-chips">
+              {#each errandsTags as tag (tag)}
+                <span class="tag-chip active">#{tag}</span>
+              {/each}
+            </div>
+          {:else}
+            <p class="small muted">No errands hashtags configured yet. Add tags like #chemist or #bunnings to see all your errands in one place.</p>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="hashtag-filter-row">
+        <div class="mode-switch" role="group" aria-label="Match mode">
+          <button
+            type="button"
+            class:active={hashtagMatchMode === "lines"}
+            onclick={() => (hashtagMatchMode = "lines")}
+          >Line matching</button>
+          <button
+            type="button"
+            class:active={hashtagMatchMode === "files"}
+            onclick={() => (hashtagMatchMode = "files")}
+          >File matching</button>
+        </div>
+        <label class="inline small">
+          <input
+            id="hashtag-hide-completed"
+            type="checkbox"
+            bind:checked={hashtagHideCompleted}
+            onchange={runHashtagSearch}
+          >
+          Hide [X]
+        </label>
+      </div>
+    </div>
+
+    <div id="hashtag-results" class="hashtag-results" aria-live="polite">
+      {#if hashtagSearching}
+        <p class="small muted">Searching open &amp; synced files…</p>
+      {:else if hashtagsTab === "errands" && errandsTags.length === 0}
+        <p class="small muted">Save your errands hashtags above to view matching lines or files.</p>
+      {:else if hashtagsTab === "search" && parseTagListJs(hashtagQuery).length === 0}
+        <p class="small muted">Select or type one or more hashtags above to search across open and synced files.</p>
+      {:else if hashtagResults.length === 0}
+        <p class="small muted">No matching {hashtagMatchMode === "lines" ? "lines" : "files"} found.</p>
+      {:else if hashtagMatchMode === "files"}
+        {#each hashtagResults as fileMatch (fileMatch.id)}
+          <div class="hashtag-file-group">
+            <button
+              type="button"
+              class="hashtag-file-header"
+              onclick={() => jumpToHashtagResult(fileMatch.id, null)}
+            >
+              <span class="hashtag-file-name">{fileMatch.name}</span>
+              <span class="hashtag-file-meta">
+                {(fileMatch.matched_tags || []).map((t) => `#${t}`).join(" ")} · {fileMatch.lines.length} {fileMatch.lines.length === 1 ? "line" : "lines"}
+              </span>
+            </button>
+          </div>
+        {/each}
+      {:else}
+        {#each hashtagResults as fileMatch (fileMatch.id)}
+          <div class="hashtag-file-group">
+            <button
+              type="button"
+              class="hashtag-file-header"
+              onclick={() => jumpToHashtagResult(fileMatch.id, null)}
+            >
+              <span class="hashtag-file-name">{fileMatch.name}</span>
+              <span class="hashtag-file-meta">{fileMatch.lines.length} {fileMatch.lines.length === 1 ? "line" : "lines"}</span>
+            </button>
+            {#each fileMatch.lines as line (line.line_number)}
+              <button
+                type="button"
+                class="hashtag-line-item"
+                onclick={() => jumpToHashtagResult(fileMatch.id, line.line_number)}
+              >
+                <span class="hashtag-line-num">Line {line.line_number}</span>{line.text}
+              </button>
+            {/each}
+          </div>
+        {/each}
+      {/if}
     </div>
   </aside>
 </div>

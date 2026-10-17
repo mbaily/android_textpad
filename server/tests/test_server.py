@@ -393,7 +393,42 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(200,missing_merge.status_code)
         self.assertFalse(missing_merge.json["merged"])
 
+    def test_hashtags_search_and_errands_sync(self):
+        self.login()
+        self.browser_put("todo-doc",{
+            "name":"errands.txt",
+            "text":"[ ] Pick up prescription #chemist\n[X] Buy screws #bunnings\n[ ] Mail package (#postoffice) and #chemist\nIgnore https://example.com#chemist and #123\n",
+            "base_revision":None,
+            "request_id":"h-1",
+        })
+        self.browser_put("notes-doc",{
+            "name":"notes.txt",
+            "text":"General note about #groceries and #bunnings\n",
+            "base_revision":None,
+            "request_id":"h-2",
+        })
+        # Errands API (browser & mobile token)
+        self.assertEqual([],self.client.get("/api/v1/errands",headers=self.headers).json["hashtags"])
+        saved_errands=self.client.put("/editor/api/errands",headers={"X-CSRF-Token":self.csrf},
+                                      json={"hashtags":["#Chemist","bunnings","#chemist"]}).json
+        self.assertEqual(["chemist","bunnings"],saved_errands["hashtags"])
+        self.assertTrue(saved_errands["updated_at"])
+        self.assertEqual(["chemist","bunnings"],self.client.get("/api/v1/errands",headers=self.headers).json["hashtags"])
+        mobile_saved=self.client.put("/api/v1/errands",headers=self.headers,json={"hashtags":"postoffice, #chemist"}).json
+        self.assertEqual(["postoffice","chemist"],mobile_saved["hashtags"])
+        # Hashtag search across server documents
+        res_all=self.client.post("/editor/api/hashtags",headers={"X-CSRF-Token":self.csrf},
+                                 json={"tags":["chemist","bunnings"],"hide_completed":False,"exclude_ids":[]}).json
+        self.assertEqual(["groceries","bunnings","chemist","postoffice"],res_all["all_hashtags"])
+        by_id={r["id"]:r for r in res_all["results"]}
+        self.assertEqual(2,len(by_id))
+        self.assertEqual([1,2,3],[l["line_number"] for l in by_id["todo-doc"]["lines"]])
+        # With hide_completed=True, line 2 ([X] Buy screws #bunnings) is excluded
+        res_open=self.client.post("/editor/api/hashtags",headers={"X-CSRF-Token":self.csrf},
+                                  json={"tags":["chemist","bunnings"],"hide_completed":True,"exclude_ids":["notes-doc"]}).json
+        self.assertEqual(1,len(res_open["results"]))
+        self.assertEqual("todo-doc",res_open["results"][0]["id"])
+        self.assertEqual([1,3],[l["line_number"] for l in res_open["results"][0]["lines"]])
+
 
 if __name__=="__main__": unittest.main()
-
-

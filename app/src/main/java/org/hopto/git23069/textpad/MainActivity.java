@@ -53,7 +53,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class MainActivity extends Activity implements TextpadApplication.Listener {
-    private static final int OPEN = 10, CREATE = 11, EXISTING = 12;
+    private static final int OPEN = 10, CREATE = 11, EXISTING = 12, SEARCH_TREE = 13;
     private static final int BG = 0xff101313, SURFACE = 0xff19201d, TEXT = 0xffe3e8df, MUTED = 0xff94a298, ACCENT = 0xffa9d98b;
     static final int SYNC_DOT_SYNCED = ACCENT, SYNC_DOT_SYNCING = 0xff7bb8d9, SYNC_DOT_PENDING = 0xffd9a57b;
     private TextpadApplication app;
@@ -63,7 +63,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CodeEditor editor;
     private EditText find, replacement;
     private CheckBox matchCase;
-    private Button saveButton, undoButton, redoButton, findButton, findAllButton, indentLessButton, indentMoreButton, todoButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
+    private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
+    private HashtagUi activeHashtagUi;
     private EditorTab shownTab;
     private long shownState = -1;
     private boolean changing, started, dialogVisible, findAllFiles;
@@ -175,7 +176,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         TextView intro = label("Open a text file or start a fresh page.\nEverything you write stays on your device\nuntil you choose to sync it.", 14, MUTED);
         intro.setGravity(Gravity.CENTER); intro.setLineSpacing(dp(4), 1); intro.setPadding(0, dp(16), 0, dp(24)); empty.addView(intro);
         LinearLayout emptyActions = row(); emptyActions.addView(iconButton(Icon.NEW, ACCENT, "New document", v -> app.newDocument()));
-        emptyActions.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker())); empty.addView(emptyActions);
+        emptyActions.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
+        emptyActions.addView(iconButton(Icon.HASHTAG, TEXT, "Hashtags & Errands", v -> showHashtags(false)));
+        empty.addView(emptyActions);
         body.addView(empty, new android.widget.FrameLayout.LayoutParams(-1, -1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
@@ -186,6 +189,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         redoButton = iconButton(Icon.REDO, TEXT, "Redo", v -> history(true));
         findButton = iconButton(Icon.FIND, TEXT, "Find in file", v -> showFind(false));
         findAllButton = iconButton(Icon.FIND_ALL, TEXT, "Find in open files", v -> showFind(true));
+        hashtagsButton = iconButton(Icon.HASHTAG, TEXT, "Hashtags & Errands", v -> showHashtags(false));
         indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
@@ -197,7 +201,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         bottomButton = iconButton(Icon.BOTTOM, TEXT, "Go to bottom of file", v -> goToBottom());
         readOnlyButton = iconButton(Icon.READ_ONLY, TEXT, "Toggle read-only mode", v -> toggleReadOnly());
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
-        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(readOnlyButton); toolbar.addView(findButton); toolbar.addView(findAllButton);
+        toolbar.addView(undoButton); toolbar.addView(redoButton); toolbar.addView(bottomButton); toolbar.addView(readOnlyButton); toolbar.addView(findButton); toolbar.addView(findAllButton); toolbar.addView(hashtagsButton);
         toolbar.addView(indentLessButton); toolbar.addView(indentMoreButton);
         toolbar.addView(todoButton); toolbar.addView(dateButton); toolbar.addView(timeButton); toolbar.addView(dividerButton);
         toolbar.addView(moveUpButton); toolbar.addView(moveDownButton); toolbar.addView(saveButton);
@@ -428,6 +432,11 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         startActivityForResult(intent, pending.existing() ? EXISTING : CREATE);
     }
+    void launchSearchTreePicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, SEARCH_TREE);
+    }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) {
@@ -437,6 +446,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         Uri uri = data.getData(); takePermission(uri, data.getFlags());
         if (request == OPEN) { TextCodec.Encoding encoding = app.nextOpenEncoding; app.nextOpenEncoding = null; app.open(uri, encoding); }
         else if (request == CREATE || request == EXISTING) app.saveAsResult(uri);
+        else if (request == SEARCH_TREE) {
+            app.settings.addSearchTree(uri);
+            if (activeHashtagUi != null) activeHashtagUi.onFolderTreeGranted();
+        }
     }
     private void takePermission(Uri uri, int flags) {
         try { getContentResolver().takePersistableUriPermission(uri, flags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)); }
@@ -461,29 +474,30 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        String[] actions = {"New document", "Open file…", "Recent files…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit"};
+        String[] actions = {"New document", "Open file…", "Recent files…", "Hashtags & Errands…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit"};
         for (int i = 0; i < actions.length; i++) menu.getMenu().add(0, i, i, actions[i]);
-        menu.getMenu().findItem(8).setCheckable(true).setChecked(app.settings.wrap());
-        menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.lineNumbers());
+        menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.wrap());
+        menu.getMenu().findItem(10).setCheckable(true).setChecked(app.settings.lineNumbers());
         EditorDocument current = app.current();
-        menu.getMenu().findItem(3).setEnabled(current != null && !current.saving && !current.replacing && current.buffer.dirty());
-        for (int i : new int[]{4,5,7,10,11,14}) menu.getMenu().findItem(i).setEnabled(current != null);
-        menu.getMenu().findItem(6).setEnabled(current != null && current.uri != null && current.writable && !current.saving);
+        menu.getMenu().findItem(4).setEnabled(current != null && !current.saving && !current.replacing && current.buffer.dirty());
+        for (int i : new int[]{5,6,8,11,12,15}) menu.getMenu().findItem(i).setEnabled(current != null);
+        menu.getMenu().findItem(7).setEnabled(current != null && current.uri != null && current.writable && !current.saving);
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 0 -> { saveViewState(); app.newDocument(); }
                 case 1 -> openPicker(); case 2 -> showRecents();
-                case 3 -> app.save(app.current(), null); case 4 -> saveAs(false); case 5 -> saveAs(true);
-                case 6 -> moveDocument();
-                case 7 -> { saveViewState(); app.duplicate(); }
-                case 8 -> { app.settings.bool("wrap", !app.settings.wrap()); applySettings(); }
-                case 9 -> { app.settings.bool("lineNumbers", !app.settings.lineNumbers()); applySettings(); }
-                case 10 -> showEncoding(); case 11 -> reload(); case 12 -> showBackups();
-                case 13 -> showSettings(); case 14 -> showDocumentInfo(app.current()); case 15 -> showSync();
-                case 16 -> new AlertDialog.Builder(this).setTitle("Open with encoding")
+                case 3 -> showHashtags(false);
+                case 4 -> app.save(app.current(), null); case 5 -> saveAs(false); case 6 -> saveAs(true);
+                case 7 -> moveDocument();
+                case 8 -> { saveViewState(); app.duplicate(); }
+                case 9 -> { app.settings.bool("wrap", !app.settings.wrap()); applySettings(); }
+                case 10 -> { app.settings.bool("lineNumbers", !app.settings.lineNumbers()); applySettings(); }
+                case 11 -> showEncoding(); case 12 -> reload(); case 13 -> showBackups();
+                case 14 -> showSettings(); case 15 -> showDocumentInfo(app.current()); case 16 -> showSync();
+                case 17 -> new AlertDialog.Builder(this).setTitle("Open with encoding")
                         .setItems(java.util.Arrays.stream(TextCodec.Encoding.values()).map(e -> e.label).toArray(String[]::new),
                                 (d, which) -> openPicker(TextCodec.Encoding.values()[which])).setNegativeButton("Cancel", null).show();
-                case 17 -> exitApp();
+                case 18 -> exitApp();
             }
             return true;
         }); menu.show();
@@ -928,6 +942,47 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void showSync() { new SyncUi(this, app).show(); }
 
+    private void showHashtags(boolean startOnErrands) {
+        saveViewState();
+        activeHashtagUi = new HashtagUi(this, app);
+        activeHashtagUi.show(startOnErrands);
+    }
+
+    void openHashtagResult(EditorTab openTab, Uri uri, Integer lineNumber) {
+        saveViewState();
+        if (openTab != null && app.tabs.contains(openTab)) {
+            app.selectedTab = openTab.id;
+            app.refresh();
+            if (lineNumber != null) jumpToLineInCurrentTab(lineNumber);
+        } else if (uri != null) {
+            app.focusOrOpen(uri, () -> {
+                if (lineNumber != null) jumpToLineInCurrentTab(lineNumber);
+            });
+        }
+    }
+
+    private void jumpToLineInCurrentTab(int oneBasedLine) {
+        EditorTab tab = app.currentTab();
+        if (tab == null || editor == null) return;
+        DocumentBuffer buf = tab.document.buffer;
+        int zeroLine = Math.max(0, Math.min(oneBasedLine - 1, buf.lineCount() - 1));
+        int offset = Math.min(editor.length(), buf.lineStart(zeroLine));
+        tab.selectionStart = offset;
+        tab.selectionEnd = offset;
+        editor.setSelection(offset);
+        scrollToOffset(offset);
+        final long tabId = tab.id;
+        editor.post(() -> {
+            if (shownTab != null && shownTab.id == tabId) {
+                int clamped = Math.min(editor.length(), offset);
+                editor.setSelection(clamped);
+                scrollToOffset(clamped);
+                updateStatus();
+            }
+        });
+        updateStatus();
+    }
+
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.isCtrlPressed()) {
             switch (event.getKeyCode()) {
@@ -947,7 +1002,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, INDENT_LESS, INDENT_MORE, TODO, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, HASHTAG, INDENT_LESS, INDENT_MORE, TODO, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -1028,6 +1083,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         p.moveTo(ox + 4 * s, oy + 14 * s); p.lineTo(ox + 9 * s, oy + 14 * s);
                         canvas.drawCircle(ox + 15.5f * s, oy + 14.5f * s, 4.2f * s, strokePaint);
                         p.moveTo(ox + 18.5f * s, oy + 17.5f * s); p.lineTo(ox + 21.5f * s, oy + 20.5f * s);
+                    }
+                    case HASHTAG -> {
+                        p.moveTo(ox + 4 * s, oy + 9 * s); p.lineTo(ox + 20 * s, oy + 9 * s);
+                        p.moveTo(ox + 4 * s, oy + 15 * s); p.lineTo(ox + 20 * s, oy + 15 * s);
+                        p.moveTo(ox + 10 * s, oy + 4 * s); p.lineTo(ox + 8 * s, oy + 20 * s);
+                        p.moveTo(ox + 16 * s, oy + 4 * s); p.lineTo(ox + 14 * s, oy + 20 * s);
                     }
                     case INDENT_LESS -> {
                         p.moveTo(ox + 4 * s, oy + 5 * s); p.lineTo(ox + 4 * s, oy + 19 * s);

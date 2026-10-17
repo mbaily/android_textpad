@@ -262,6 +262,17 @@ def create_app(test_config=None):
         removed = store.prune(document_id)
         return jsonify(removed=removed, documents=store.revisions(document_id))
 
+    @app.get("/api/v1/errands")
+    def api_get_errands():
+        return jsonify(store.get_errands())
+
+    @app.put("/api/v1/errands")
+    def api_put_errands():
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON errands object.")
+        return jsonify(store.put_errands(payload.get("hashtags")))
+
     @app.get("/editor")
     def editor_redirect():
         return redirect(public("/editor/"), code=302)
@@ -469,5 +480,27 @@ def create_app(test_config=None):
         metadata, raw = store.get(document_id, request.args.get("revision"))
         return send_file(io.BytesIO(raw), mimetype="application/octet-stream", as_attachment=True,
                          download_name=metadata["name"], max_age=0)
+
+    @app.get("/editor/api/errands")
+    def browser_get_errands():
+        return jsonify(store.get_errands())
+
+    @app.put("/editor/api/errands")
+    def browser_put_errands():
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON errands object.")
+        return jsonify(store.put_errands(payload.get("hashtags")))
+
+    @app.post("/editor/api/hashtags")
+    def browser_hashtags():
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON hashtag search request.")
+        return jsonify(store.search_hashtags(
+            payload.get("tags"),
+            bool(payload.get("hide_completed")),
+            payload.get("exclude_ids") or (),
+        ))
 
     return app
