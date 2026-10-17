@@ -67,12 +67,26 @@ public class EditorInstrumentedTest {
             waitFor(() -> app.current() != null);
             scenario.onActivity(activity -> {
                 CodeEditor editor = activity.findViewById(R.id.editor);
+                View saveBtn = button(activity.getWindow().getDecorView(), "Save file");
                 assertEquals("one\n😀 café\nالعربية\n", editor.getText().toString());
-                editor.getText().insert(0, "prefix "); app.save(app.current(), null);
+                assertFalse(saveBtn.isEnabled());
+                editor.getText().insert(0, "x");
+                assertTrue(saveBtn.isEnabled());
+                editor.getText().delete(0, 1);
+                assertFalse(saveBtn.isEnabled());
+                editor.getText().insert(0, "prefix ");
+                assertTrue(saveBtn.isEnabled());
+                app.save(app.current(), null);
             });
             waitFor(() -> !app.current().saving && !app.current().buffer.dirty());
+            scenario.onActivity(activity -> {
+                assertFalse(button(activity.getWindow().getDecorView(), "Save file").isEnabled());
+            });
             assertArrayEquals("\ufeffprefix one\r\n😀 café\nالعربية\r".getBytes(StandardCharsets.UTF_8),read(uri));
-            assertFalse(app.store.backups().isEmpty());
+            int backupsAfterFirstSave = app.store.backups().size();
+            assertTrue(backupsAfterFirstSave > 0);
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> app.save(app.current(), null));
+            assertEquals(backupsAfterFirstSave, app.store.backups().size());
         }
     }
 
@@ -99,8 +113,12 @@ public class EditorInstrumentedTest {
     @Test public void toolbarUndoRedoAndIndentUseTheSharedHistory() throws Exception {
         try (var scenario = launch(null)) {
             scenario.onActivity(activity -> {
+                View saveBtn = button(activity.getWindow().getDecorView(), "Save file");
+                assertFalse(saveBtn.isEnabled());
                 app.newDocument(); CodeEditor editor = activity.findViewById(R.id.editor);
+                assertFalse(saveBtn.isEnabled());
                 editor.getText().append("hello\nworld"); editor.setSelection(0,editor.length());
+                assertTrue(saveBtn.isEnabled());
                 button(activity.getWindow().getDecorView(),"Increase indentation").performClick();
                 assertEquals("    hello\n    world",editor.getText().toString());
                 button(activity.getWindow().getDecorView(),"Undo").performClick(); assertEquals("hello\nworld",editor.getText().toString());

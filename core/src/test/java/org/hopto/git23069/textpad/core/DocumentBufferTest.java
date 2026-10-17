@@ -38,6 +38,22 @@ public class DocumentBufferTest {
     @Test public void noOpEditKeepsFileClean() {
         var doc = document("same\r\n"); doc.edit(0,doc.length(),"same\n"); assertFalse(doc.dirty());
     }
+    @Test public void manualEditBackToSavedContentAndFormatReturnsToClean() throws Exception {
+        var doc = document("hello\r\nworld\n");
+        assertFalse(doc.dirty());
+        doc.edit(5, 5, "!");
+        assertTrue(doc.dirty());
+        doc.edit(5, 6, "");
+        assertFalse(doc.dirty());
+        doc.format(TextCodec.Encoding.UTF16_LE, true);
+        assertTrue(doc.dirty());
+        doc.format(TextCodec.Encoding.UTF8, false);
+        assertFalse(doc.dirty());
+        doc.markUnsaved();
+        assertTrue(doc.dirty());
+        doc.markSaved(doc.snapshot());
+        assertFalse(doc.dirty());
+    }
     @Test public void randomEditsMaintainLineIndexAndUndoHistory() throws Exception {
         var doc = document("first\r\nsecond\n"); String expected = doc.text(); Random random = new Random(183);
         for (int i = 0; i < 800; i++) {

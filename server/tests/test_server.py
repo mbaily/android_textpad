@@ -66,6 +66,14 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(2,len(self.store.revisions("test-file")))
         with self.assertRaises(RequestConflict): self.put("different")
 
+    def test_unchanged_put_is_idempotent_without_creating_duplicate_revision(self):
+        first=self.put("same text","request-1")
+        second=self.put("same text","request-2",first["revision"])
+        self.assertEqual(first["revision"],second["revision"])
+        self.assertFalse(second["replaced_newer_revision"])
+        self.assertEqual(1,len(self.store.revisions("test-file")))
+        self.assertTrue(self.store.has_receipt("test-file","request-2"))
+
     def test_concurrent_writes_have_one_monotonic_acceptance_order(self):
         first=self.put("first")
         with ThreadPoolExecutor(max_workers=8) as workers:

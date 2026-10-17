@@ -15,18 +15,24 @@ public final class DocumentBuffer {
     private final ArrayList<String> endings;
     private final Deque<Change> undo = new ArrayDeque<>(), redo = new ArrayDeque<>();
     private int historyChars;
-    private long state, nextState = 1, savedState;
-    private TextCodec.Encoding encoding;
-    private boolean bom;
+    private long state, nextState = 1, savedState, checkedState;
+    private boolean cachedDirty;
+    private String savedText;
+    private TextCodec.Encoding encoding, savedEncoding;
+    private boolean bom, savedBom;
+    private List<String> savedEndings;
+    private Content lastCapture;
     private String preferredEnding;
     private int lfCount, crlfCount, crCount;
 
     public record Change(int start, String removed, String added, List<String> removedEndings,
                          List<String> addedEndings, long before, long after) {}
-    public record Snapshot(long state, byte[] bytes) {}
+    public record Snapshot(long state, byte[] bytes, Content content) {
+        public Snapshot(long state, byte[] bytes) { this(state, bytes, null); }
+    }
     public record Content(long state, String text, TextCodec.Encoding encoding, boolean bom, List<String> endings) {
         public Snapshot encode() throws IOException {
-            return new Snapshot(state, TextCodec.encode(text, encoding, bom, endings));
+            return new Snapshot(state, TextCodec.encode(text, encoding, bom, endings), this);
         }
     }
 
@@ -34,6 +40,7 @@ public final class DocumentBuffer {
         text = new StringBuilder(decoded.text());
         endings = new ArrayList<>(decoded.endings());
         encoding = decoded.encoding(); bom = decoded.bom(); preferredEnding = decoded.preferredEnding();
+        savedText = decoded.text(); savedEncoding = encoding; savedBom = bom; savedEndings = List.copyOf(endings);
         for (String ending : endings) countEnding(ending, 1);
         for (int i = 0; i < text.length(); i++) if (text.charAt(i) == '\n') breaks.add(i);
     }
@@ -43,9 +50,43 @@ public final class DocumentBuffer {
     }
     public String text() { return text.toString(); }
     public int length() { return text.length(); }
-    public boolean dirty() { return state != savedState; }
+    public boolean dirty() {
+        if (state == savedState) return false;
+        if (state == checkedState) return cachedDirty;
+        cachedDirty = !(savedText != null
+                && encoding == savedEncoding
+                && bom == savedBom
+                && text.length() == savedText.length()
+                && endings.size() == savedEndings.size()
+                && CharSequence.compare(text, savedText) == 0
+                && endings.equals(savedEndings));
+        checkedState = state;
+        return cachedDirty;
+    }
     public long state() { return state; }
-    public void markSaved(long snapshotState) { savedState = snapshotState; }
+    public void markSaved(Snapshot snapshot) {
+        if (snapshot.content() != null) {
+            Content c = snapshot.content();
+            savedState = c.state(); checkedState = -1;
+            savedText = c.text(); savedEncoding = c.encoding(); savedBom = c.bom(); savedEndings = c.endings();
+        } else {
+            markSaved(snapshot.state());
+        }
+    }
+    public void markSaved(long snapshotState) {
+        savedState = snapshotState; checkedState = -1;
+        if (snapshotState == state) {
+            savedText = text.toString(); savedEncoding = encoding; savedBom = bom; savedEndings = List.copyOf(endings);
+        } else if (lastCapture != null && lastCapture.state() == snapshotState) {
+            savedText = lastCapture.text(); savedEncoding = lastCapture.encoding(); savedBom = lastCapture.bom(); savedEndings = lastCapture.endings();
+        } else {
+            savedText = null; savedEncoding = null; savedEndings = null;
+        }
+    }
+    public void markUnsaved() {
+        savedState = -1; checkedState = -1;
+        savedText = null; savedEncoding = null; savedEndings = null;
+    }
     public TextCodec.Encoding encoding() { return encoding; }
     public boolean bom() { return bom; }
     public int lineCount() { return breaks.size() + 1; }
@@ -59,15 +100,20 @@ public final class DocumentBuffer {
         return preferredEnding.equals("\r\n") ? "CRLF" : preferredEnding.equals("\r") ? "CR" : "LF";
     }
     public void format(TextCodec.Encoding newEncoding, boolean newBom) {
-        if (encoding == newEncoding && bom == newBom) return;
-        encoding = newEncoding; bom = newBom && newEncoding != TextCodec.Encoding.ASCII;
+        boolean effectiveBom = newBom && newEncoding != TextCodec.Encoding.ASCII;
+        if (encoding == newEncoding && bom == effectiveBom) return;
+        encoding = newEncoding; bom = effectiveBom;
         // Format changes are persistent even when text history is undone.
         undo.clear(); redo.clear(); historyChars = 0; state = nextState++;
     }
     public Snapshot snapshot() throws IOException {
         return capture().encode();
     }
-    public Content capture() { return new Content(state, text.toString(), encoding, bom, List.copyOf(endings)); }
+    public Content capture() {
+        Content c = new Content(state, text.toString(), encoding, bom, List.copyOf(endings));
+        lastCapture = c;
+        return c;
+    }
     public boolean canUndo() { return !undo.isEmpty(); }
     public boolean canRedo() { return !redo.isEmpty(); }
 

@@ -444,6 +444,17 @@
     );
   }
 
+  function isDocDirty(doc, stateDoc = doc.state?.doc) {
+    if (!doc || !stateDoc) return false;
+    return (
+      (doc.revision === null && !doc.pendingSync) ||
+      !stateDoc.eq(doc.savedDoc) ||
+      doc.name !== doc.savedName ||
+      doc.encoding !== doc.savedEncoding ||
+      doc.bom !== doc.savedBom
+    );
+  }
+
   function makeState(doc, text, selection) {
     return EditorState.create({
       doc: text,
@@ -506,12 +517,7 @@
           if (documents.get(doc.id) !== doc) return;
           doc.state = update.state;
           if (update.docChanged) {
-            doc.dirty =
-              (doc.revision === null && !doc.pendingSync) ||
-              !update.state.doc.eq(doc.savedDoc) ||
-              doc.name !== doc.savedName ||
-              doc.encoding !== doc.savedEncoding ||
-              doc.bom !== doc.savedBom;
+            doc.dirty = isDocDirty(doc, update.state.doc);
           }
           if (active === doc.id) syncEditorMetrics();
         }),
@@ -726,7 +732,7 @@
   }
 
   async function save(doc = activeDoc) {
-    if (!doc || doc.saving) return;
+    if (!doc || doc.saving || !doc.dirty) return;
     const state = doc.state;
     let pending = doc.pending;
     if (
@@ -772,11 +778,7 @@
         line_endings: doc.line_endings,
       });
       files = [result, ...files.filter((file) => file.id !== result.id)];
-      doc.dirty =
-        !doc.state.doc.eq(doc.savedDoc) ||
-        doc.name !== doc.savedName ||
-        doc.encoding !== doc.savedEncoding ||
-        doc.bom !== doc.savedBom;
+      doc.dirty = isDocDirty(doc);
       if (result.replaced_newer_revision) {
         notice("Saved as the latest revision. The displaced server version is available in History.");
       }
@@ -815,11 +817,7 @@
           encoding: offlineMeta.encoding,
         };
         files = [summary, ...files.filter((file) => file.id !== doc.id)];
-        doc.dirty =
-          !doc.state.doc.eq(doc.savedDoc) ||
-          doc.name !== doc.savedName ||
-          doc.encoding !== doc.savedEncoding ||
-          doc.bom !== doc.savedBom;
+        doc.dirty = isDocDirty(doc);
         notice("Saved offline in this browser. Changes will sync automatically when reconnected.");
         return;
       }
@@ -892,11 +890,7 @@
         if (openDoc.pending?.body?.request_id === item.body.request_id) {
           openDoc.pending = null;
         }
-        openDoc.dirty =
-          !openDoc.state.doc.eq(openDoc.savedDoc) ||
-          openDoc.name !== openDoc.savedName ||
-          openDoc.encoding !== openDoc.savedEncoding ||
-          openDoc.bom !== openDoc.savedBom;
+        openDoc.dirty = isDocDirty(openDoc);
       }
       if (result.replaced_newer_revision) {
         notice("Saved as the latest revision. The displaced server version is available in History.");
@@ -1099,7 +1093,7 @@
         return;
       }
       doc.name = name;
-      doc.dirty = true;
+      doc.dirty = isDocDirty(doc);
     }
   }
 
@@ -1120,8 +1114,8 @@
     if (result?.action === "rename") return renameFile();
     if (result?.action === true) {
       doc.encoding = result.encoding;
-      doc.bom = result.bom && result.encoding !== "ascii";
-      doc.dirty = true;
+      doc.bom = Boolean(result.bom && result.encoding !== "ascii");
+      doc.dirty = isDocDirty(doc);
     }
   }
 
@@ -1550,6 +1544,7 @@
       }
     };
     const onKeyDown = (event) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape" && fullscreenRevision) {
         event.preventDefault();
         fullscreenRevision = false;
@@ -1717,7 +1712,7 @@
     </div>
 
     <div class="toolbar">
-      <button id="save" class="primary icon-button" title="Save (Ctrl+S)" aria-label="Save" disabled={!activeDoc || activeDoc.saving} onclick={() => save().catch(failure)}>
+      <button id="save" class="primary icon-button" title="Save (Ctrl+S)" aria-label="Save" disabled={!activeDoc || activeDoc.saving || !activeDoc.dirty} onclick={() => save().catch(failure)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>
       <button id="undo" class="icon-button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!activeDoc || readOnly || !canUndo} onclick={() => { undo(view); view.focus(); syncEditorMetrics(); }}>

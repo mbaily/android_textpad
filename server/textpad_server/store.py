@@ -195,14 +195,41 @@ class Store:
                         raise RequestConflict("This request ID was already used for different contents or a different filename.")
                     db.rollback()
                     return json.loads(receipt["response"])
-                previous = db.execute("SELECT current_revision FROM documents WHERE id=?", (document_id,)).fetchone()
+                previous = db.execute(
+                    """SELECT r.sequence, r.name, r.content, r.sha256, r.size, r.encoding, r.created_at
+                       FROM documents d JOIN revisions r ON d.current_revision=r.sequence
+                       WHERE d.id=?""",
+                    (document_id,),
+                ).fetchone()
+                if (
+                    previous is not None
+                    and previous["name"] == name
+                    and previous["encoding"] == decoded.encoding
+                    and previous["sha256"] == sha256
+                    and bytes(previous["content"]) == content
+                ):
+                    revision = str(previous["sequence"])
+                    response = {
+                        "id": document_id,
+                        "name": name,
+                        "revision": revision,
+                        "sha256": sha256,
+                        "size": previous["size"],
+                        "updated_at": previous["created_at"],
+                        "encoding": previous["encoding"],
+                        "previous_revision": revision,
+                        "replaced_newer_revision": False,
+                    }
+                    db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (document_id, request_id, request_hash, json.dumps(response)))
+                    db.commit()
+                    return response
                 db.execute("INSERT OR IGNORE INTO documents(id) VALUES (?)", (document_id,))
                 created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
                 cursor = db.execute("""INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at)
                                        VALUES(?,?,?,?,?,?,?)""", (document_id,name,content,sha256,len(content),decoded.encoding,created))
                 revision = str(cursor.lastrowid)
                 db.execute("UPDATE documents SET current_revision=? WHERE id=?", (cursor.lastrowid, document_id))
-                old_revision = str(previous[0]) if previous and previous[0] is not None else None
+                old_revision = str(previous["sequence"]) if previous is not None else None
                 response = {"id":document_id,"name":name,"revision":revision,"sha256":sha256,"size":len(content),
                             "updated_at":created,"encoding":decoded.encoding,"previous_revision":old_revision,
                             "replaced_newer_revision":old_revision is not None and old_revision != base_revision}

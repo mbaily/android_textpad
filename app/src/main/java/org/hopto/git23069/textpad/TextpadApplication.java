@@ -104,7 +104,11 @@ public final class TextpadApplication extends Application {
     }
 
     void save(EditorDocument doc, Long closeTab) {
-        if (doc.saving) return;
+        if (doc == null || doc.saving || doc.replacing) return;
+        if (!doc.buffer.dirty()) {
+            if (closeTab != null) close(closeTab);
+            return;
+        }
         if (doc.uri == null || !doc.writable) {
             pendingSave = new PendingSave(doc, closeTab, false);
             notice("save-as", ""); return;
@@ -170,7 +174,7 @@ public final class TextpadApplication extends Application {
                     // A second open document at this destination must become another view of this buffer.
                     for (EditorTab tab : tabs) if (DocumentStore.same(target, tab.document.uri)) tab.document = doc;
                     doc.uri = target; doc.name = info.name(); doc.savedHash = hash; doc.writable = info.writable();
-                    doc.buffer.markSaved(saved.state()); doc.saving = false;
+                    doc.buffer.markSaved(saved); doc.saving = false;
                     if (changedUri) {
                         if (moving && doc.syncEnabled && doc.syncId != null) sync.move(oldUri, target, info.name(), doc);
                         else { doc.syncEnabled = false; doc.syncId = null; doc.serverRevision = null; doc.syncedHash = null; }
@@ -207,7 +211,9 @@ public final class TextpadApplication extends Application {
         io.execute(() -> {
             try {
                 byte[] bytes = Files.readAllBytes(backup.content().toPath());
-                EditorDocument doc = new EditorDocument("Restored " + backup.originalName(), new DocumentBuffer(TextCodec.decode(bytes)));
+                DocumentBuffer buffer = new DocumentBuffer(TextCodec.decode(bytes));
+                buffer.markUnsaved();
+                EditorDocument doc = new EditorDocument("Restored " + backup.originalName(), buffer);
                 main.post(() -> addTab(doc));
             } catch (Exception e) { main.post(() -> notice("Could not open backup", e.getMessage())); }
         });

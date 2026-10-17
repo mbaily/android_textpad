@@ -320,7 +320,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         readOnlyButton.setBackground(iconDrawable(Icon.READ_ONLY, readOnlyMode ? ACCENT : TEXT));
         if (replaceOneButton != null) setButtonEnabled(replaceOneButton, editable);
         if (replaceAllButton != null) setButtonEnabled(replaceAllButton, editable);
-        setButtonEnabled(saveButton, doc != null && !doc.saving);
+        boolean canSave = doc != null && !doc.saving && !doc.replacing && doc.buffer.dirty();
+        saveButton.setBackground(iconDrawable(Icon.SAVE, canSave ? ACCENT : TEXT));
+        setButtonEnabled(saveButton, canSave);
         if (doc == null) { status.setText(app.opening ? "Opening file…" : "OFFLINE · READY"); location.setText("LOCAL FILES · FULLY OFFLINE"); return; }
         location.setText(doc.uri == null ? "NEW DOCUMENT · NOT SAVED" : app.store.location(doc.uri, doc.name));
         int offset = Math.max(0, editor.getSelectionStart()), line = doc.buffer.lineAt(offset);
@@ -457,8 +459,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         for (int i = 0; i < actions.length; i++) menu.getMenu().add(0, i, i, actions[i]);
         menu.getMenu().findItem(8).setCheckable(true).setChecked(app.settings.wrap());
         menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.lineNumbers());
-        for (int i : new int[]{3,4,5,7,10,11,14}) menu.getMenu().findItem(i).setEnabled(app.current() != null);
         EditorDocument current = app.current();
+        menu.getMenu().findItem(3).setEnabled(current != null && !current.saving && !current.replacing && current.buffer.dirty());
+        for (int i : new int[]{4,5,7,10,11,14}) menu.getMenu().findItem(i).setEnabled(current != null);
         menu.getMenu().findItem(6).setEnabled(current != null && current.uri != null && current.writable && !current.saving);
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
@@ -825,7 +828,14 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                     app.io.execute(() -> {
                         try {
                             byte[] bytes = app.store.read(doc.uri); DocumentBuffer buffer = new DocumentBuffer(TextCodec.decode(bytes));
-                            app.main.post(() -> { doc.buffer = buffer; doc.savedHash = org.hopto.git23069.textpad.core.SaveTransaction.hash(bytes); doc.saving = false; doc.replacing = false; shownState = -1; app.refresh(); });
+                            app.main.post(() -> {
+                                doc.buffer = buffer; doc.savedHash = org.hopto.git23069.textpad.core.SaveTransaction.hash(bytes);
+                                doc.saving = false; doc.replacing = false; shownState = -1; app.refresh();
+                                if (doc.syncEnabled) {
+                                    if (app.sync.testApi == null) SyncScheduler.retry(app);
+                                    app.sync.syncAll(false);
+                                }
+                            });
                         } catch (Exception e) { app.main.post(() -> { doc.saving = false; doc.replacing = false; app.refresh(); app.notice("Could not reload", e.getMessage()); }); }
                     });
                 }).setNegativeButton("Cancel", null).show();
