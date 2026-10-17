@@ -301,6 +301,29 @@ public class EditorInstrumentedTest {
         }
     }
 
+    @Test public void tasksViewKeepsDividerHeadingsAndMapsHeadingEditsToTheFullText() throws Exception {
+        String original = "Unrelated notes\n\nShopping\n-----\n[ ] Milk\n[X] Bread\n"
+                + "\nFinished section\n---\n[X] Done\n";
+        String filtered = "\nShopping\n-----\n[ ] Milk\n\nFinished section\n---";
+        Uri uri = seed("divider-headings.txt", original.replace("\n", "\r\n").getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                View toggle = button(activity.getWindow().getDecorView(), "Filter uncompleted tasks");
+                toggle.performClick();
+                assertEquals(filtered, editor.getText().toString());
+                assertArrayEquals(new int[]{1, 2, 3, 4, 6, 7, 8}, editor.lineMap);
+                assertFalse(app.current().buffer.dirty());
+                editor.getText().replace(1, 1 + "Shopping".length(), "Groceries");
+                assertEquals(original.replace("Shopping", "Groceries"), app.current().buffer.text());
+                toggle.performClick();
+                assertEquals(original.replace("Shopping", "Groceries"), editor.getText().toString());
+            });
+            assertArrayEquals(original.replace("\n", "\r\n").getBytes(StandardCharsets.UTF_8), read(uri));
+        }
+    }
+
     @Test public void leavingTasksViewScrollsToTheCursorInTheFullDocument() throws Exception {
         String original = "[ ] First task\n" + "[X] Completed before target\n".repeat(250)
                 + "[ ] Task to keep visible\n" + "[X] Completed after target\n".repeat(250);

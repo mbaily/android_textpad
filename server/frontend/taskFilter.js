@@ -87,6 +87,16 @@ export function filterTasks(text, tabSize = 4) {
     }
   }
 
+  // Preserve each complete blank/title/divider block regardless of task indentation.
+  for (let i = 2; i < n; i++) {
+    if (types[i - 2] === "BLANK" && types[i - 1] !== "BLANK" && /^[ \t]*-+[ \t]*$/.test(lines[i])) {
+      for (let h = i - 2; h <= i; h++) {
+        isVisible[h] = 1;
+        isContext[h] = 1;
+      }
+    }
+  }
+
   // Ancestors of uncompleted tasks
   for (let i = 0; i < n; i++) {
     if (!isUncompleted[i]) continue;

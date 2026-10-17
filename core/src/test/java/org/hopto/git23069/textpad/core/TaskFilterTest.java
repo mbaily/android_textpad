@@ -91,4 +91,54 @@ public class TaskFilterTest {
         assertTrue(res.isUncompleted()[2]);
     }
 
+    @Test
+    public void dividerHeadingIncludesTheBlankTitleAndDividerWithoutIndentedTasks() {
+        String doc = "Unrelated notes\n\nShopping\n--------\n[ ] Milk\n[X] Bread\n";
+        TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
+        assertArrayEquals(new int[]{1, 2, 3, 4}, res.visibleLines());
+        for (int line : new int[]{1, 2, 3}) assertTrue(res.isContext()[line]);
+        assertTrue(res.isUncompleted()[4]);
+        assertFalse(res.isVisible()[5]);
+    }
+
+    @Test
+    public void dividerHeadingAcceptsWhitespaceCrLfAndAnyConfiguredDashCount() {
+        for (String divider : new String[]{"-", "---", "-".repeat(40), "-".repeat(200)}) {
+            String doc = " \t\r\n\tShopping \r\n  " + divider + "\t\r\n[ ] Milk\r\n";
+            TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
+            assertArrayEquals(new int[]{0, 1, 2, 3}, res.visibleLines());
+        }
+    }
+
+    @Test
+    public void dividerHeadingRequiresABlankThenANonblankTitleThenOnlyDashes() {
+        for (String prefix : new String[]{"Shopping\n---", "Notes\nShopping\n---", "\n\n---",
+                "\nShopping\n-- text --", "\nShopping\n- - -", "\nShopping\n===", "\nShopping\n"}) {
+            String doc = prefix + "\n[ ] Milk\n";
+            TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
+            assertArrayEquals(new int[]{doc.split("\n", -1).length - 2}, res.visibleLines());
+        }
+    }
+
+    @Test
+    public void dividerHeadingsWorkAlongsideMarkdownHeadingsAndTaskNotes() {
+        String doc = "# Projects\n\nShopping\n---\n[ ] Milk\n    Remember organic\n[X] Bread\n"
+                + "\nHousework\n-----\n[ ] Sweep\n[X] Dust\n";
+        TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
+        assertArrayEquals(new int[]{0, 1, 2, 3, 4, 5, 7, 8, 9, 10}, res.visibleLines());
+        assertTrue(res.isNote()[5]);
+        assertTrue(res.isContext()[8]);
+        assertFalse(res.isVisible()[6]);
+        assertFalse(res.isVisible()[11]);
+    }
+
+    @Test
+    public void dividerHeadingsStayVisibleWithoutAnyUncompletedTasks() {
+        String doc = "Unrelated\n\nFinished section\n---\n[X] Done\n\nEmpty section\n-\n";
+        TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
+        assertArrayEquals(new int[]{1, 2, 3, 5, 6, 7}, res.visibleLines());
+        for (int line : res.visibleLines()) assertTrue(res.isContext()[line]);
+        for (boolean uncompleted : res.isUncompleted()) assertFalse(uncompleted);
+    }
+
 }

@@ -14,6 +14,7 @@ def main():
     )
     visible = ["# Shopping", "[X] Finished project", "    [ ] Buy milk",
                "        Remember organic", "[ ] Buy apples"]
+    heading_text = "Unrelated notes\n\nShopping\n-----\n[ ] Milk\n[X] Bread\n\nFinished section\n---\n[X] Done\n"
     with fixture() as base, sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=True, args=["--no-sandbox"])
         context = browser.new_context(viewport={"width": 1440, "height": 960})
@@ -21,6 +22,7 @@ def main():
         for doc_id, name, text in [
             ("filter-tasks", "Filter tasks.txt", original),
             ("no-open-tasks", "No open tasks.txt", "Plain notes\n[X] Finished task\n"),
+            ("divider-headings", "Divider headings.txt", heading_text),
         ]:
             response = context.request.put(base + "/api/v1/documents/" + doc_id, headers=headers, data={
                 "name": name, "content_base64": base64.b64encode(text.replace("\n", "\r\n").encode()).decode(),
@@ -83,6 +85,29 @@ def main():
         expect(page.locator("#notice-text")).to_have_text("No uncompleted tasks found")
         toggle.click()
         expect(lines).to_have_text(["Plain notes", "[X] Finished task", ""])
+
+        # Heading blocks remain visible above unindented tasks and completed sections.
+        page.locator(".file-item").filter(has_text="Divider headings.txt").click()
+        toggle.click()
+        expect(lines).to_have_text(["", "Shopping", "-----", "[ ] Milk", "", "Finished section", "---"])
+        expect(editor.locator(".cm-task-context")).to_have_text(["", "Shopping", "-----", "", "Finished section", "---"])
+        expect(page.locator("#save")).to_be_disabled()
+        lines.nth(1).click()
+        page.keyboard.press("Home")
+        page.keyboard.press("Shift+End")
+        page.keyboard.insert_text("Groceries")
+        toggle.click()
+        expect(lines).to_have_text(heading_text.replace("Shopping", "Groceries").split("\n"))
+        page.keyboard.press("Control+z")
+        expect(page.locator("#save")).to_be_disabled()
+        toggle.click()
+        lines.nth(3).click()
+        page.locator("#toggle-todo").click()
+        toggle.click()
+        toggle.click()
+        expect(lines).to_have_text(["", "Shopping", "-----", "", "Finished section", "---"])
+        expect(page.locator("#notice-text")).to_have_text("No uncompleted tasks found")
+
         page.get_by_role("tab", name="Filter tasks.txt", exact=True).click()
         expect(toggle).to_have_attribute("aria-pressed", "true")
         expect(lines).to_have_text(edited_visible)

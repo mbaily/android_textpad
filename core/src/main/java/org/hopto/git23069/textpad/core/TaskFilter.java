@@ -3,12 +3,15 @@ package org.hopto.git23069.textpad.core;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Filters document lines to show only uncompleted tasks, their ancestors/headings,
- * and plain notes indented directly under uncompleted tasks.
+ * plain notes indented directly under uncompleted tasks, and all heading blocks
+ * consisting of a blank line, a nonblank title, and a line of dashes.
  */
 public final class TaskFilter {
+    private static final Pattern DIVIDER = Pattern.compile("[ \\t]*-+[ \\t]*");
 
     public enum LineType {
         BLANK,
@@ -129,6 +132,17 @@ public final class TaskFilter {
             if (types[i] == LineType.UNCOMPLETED_TASK) {
                 isVisible[i] = true;
                 isUncompleted[i] = true;
+            }
+        }
+
+        // Preserve each complete blank/title/divider block regardless of task indentation.
+        for (int i = 2; i < n; i++) {
+            if (types[i - 2] == LineType.BLANK && types[i - 1] != LineType.BLANK
+                    && DIVIDER.matcher(lines[i]).matches()) {
+                for (int h = i - 2; h <= i; h++) {
+                    isVisible[h] = true;
+                    isContext[h] = true;
+                }
             }
         }
 

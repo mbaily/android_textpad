@@ -1764,7 +1764,7 @@
       } else if (doc.state) {
         doc.state = doc.state.update({ effects: effect }).state;
       }
-      if (filterRes.visibleLines.length === 0) {
+      if (!filterRes.isUncompleted.some((value) => value === 1)) {
         notice("No uncompleted tasks found");
       } else {
         notice("Showing uncompleted tasks only");

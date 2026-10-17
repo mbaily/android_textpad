@@ -9,6 +9,7 @@ if [[ ! -x "$textpad_python" ]]; then
 fi
 cd "$textpad_root"
 npm ci --prefix server/frontend --no-audit --no-fund
+npm test --prefix server/frontend
 npm run build --prefix server/frontend
 PYTHONPATH=server "$textpad_python" -m unittest discover -s server/tests -v
 mkdir -p .server-package/wheels
