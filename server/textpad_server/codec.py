@@ -159,7 +159,7 @@ def _merge_line_tokens(base_line, curr_line, inc_line):
     return result
 
 
-def merge_3way(base, current, incoming):
+def merge_3way(base, current, incoming, encoding=None, bom=None):
     if base.text == current.text or base.text == incoming.text or current.text == incoming.text:
         return None
     base_lines = base.text.split("\n")
@@ -221,8 +221,23 @@ def merge_3way(base, current, incoming):
     merged_text = "\n".join(merged_lines)
     if merged_text == current.text or merged_text == incoming.text:
         return None
+    target_encoding = (
+        current.encoding
+        if (incoming.encoding == base.encoding and current.encoding != base.encoding)
+        else incoming.encoding
+    ) if encoding is None else encoding
+    target_bom = (
+        current.bom
+        if (incoming.bom == base.bom and current.bom != base.bom)
+        else incoming.bom
+    ) if bom is None else bom
+    format_base = (
+        current
+        if (incoming.preferred == base.preferred and current.preferred != base.preferred)
+        else incoming
+    )
     try:
-        return edited(incoming, merged_text, incoming.encoding, incoming.bom)
+        return edited(format_base, merged_text, target_encoding, target_bom)
     except InvalidText:
         return None
 

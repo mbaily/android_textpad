@@ -363,6 +363,36 @@ class ApiTests(unittest.TestCase):
         decompressed=__import__("json").loads(gz.decompress(gz_res.data))
         self.assertEqual(big_raw,b64decode(decompressed["content_base64"]))
 
+    def test_concurrent_rename_and_text_edit_merge_cleanly_and_restore_never_merges(self):
+        self.login()
+        r1=self.browser_put("meta-doc",{"name":"original.txt","text":"line 1\nline 2\n","base_revision":None,"request_id":"m-1"}).json
+        # Device A edits text while keeping filename
+        r2=self.browser_put("meta-doc",{"name":"original.txt","text":"LINE 1\nline 2\n","base_revision":r1["revision"],"request_id":"m-2"}).json
+        # Device B (still on r1) renames the file without changing text
+        r3=self.browser_put("meta-doc",{"name":"renamed.txt","text":"line 1\nline 2\n","base_revision":r1["revision"],"request_id":"m-3"}).json
+        self.assertTrue(r3["merged_newer_revision"])
+        self.assertEqual("renamed.txt",r3["name"])
+        self.assertEqual("LINE 1\nline 2\n",r3["text"])
+        # Now Device A (at r3) renames again to final.txt while Device B (also at r3) edits line 2
+        r4=self.browser_put("meta-doc",{"name":"final.txt","text":"LINE 1\nline 2\n","base_revision":r3["revision"],"request_id":"m-4"}).json
+        r5=self.browser_put("meta-doc",{"name":"renamed.txt","text":"LINE 1\nLINE 2\n","base_revision":r3["revision"],"request_id":"m-5"}).json
+        self.assertTrue(r5["merged_newer_revision"])
+        self.assertEqual("final.txt",r5["name"])
+        self.assertEqual("LINE 1\nLINE 2\n",r5["text"])
+        # Restoring r1 even with a stale base_revision restores exact r1 bytes and name without merging
+        restored=self.client.post("/editor/api/documents/meta-doc/restore",headers={"X-CSRF-Token":self.csrf},
+                                  json={"revision":r1["revision"],"base_revision":r2["revision"],"request_id":"m-restore"}).json
+        self.assertFalse(restored.get("merged_newer_revision",False))
+        self.assertTrue(restored["replaced_newer_revision"])
+        self.assertEqual("original.txt",restored["name"])
+        self.assertEqual("line 1\nline 2\n",self.client.get("/editor/api/documents/meta-doc").json["text"])
+        # Removing r1 and calling /merge with pruned base_revision returns merged=False instead of 404
+        self.app.extensions["store"].remove_revision("meta-doc",r1["revision"])
+        missing_merge=self.client.post("/editor/api/documents/meta-doc/merge",headers={"X-CSRF-Token":self.csrf},
+                                       json={"text":"custom\n","base_revision":r1["revision"]})
+        self.assertEqual(200,missing_merge.status_code)
+        self.assertFalse(missing_merge.json["merged"])
+
 
 if __name__=="__main__": unittest.main()
 

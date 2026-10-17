@@ -218,12 +218,16 @@ def create_app(test_config=None):
         return "*" in candidates or etag in candidates
 
     def binary_document(document_id, revision=None):
-        metadata, raw = store.get(document_id, revision, client_id=client_cursor_id() if revision is None else None)
+        cid = client_cursor_id() if revision is None else None
+        if request.headers.get("If-None-Match"):
+            meta = store.get_meta(document_id, revision, client_id=cid)
+            etag = doc_etag(meta)
+            if etag_matches(etag):
+                res = app.response_class("", status=304)
+                res.headers["ETag"] = etag
+                return res
+        metadata, raw = store.get(document_id, revision, client_id=cid)
         etag = doc_etag(metadata)
-        if etag_matches(etag):
-            res = app.response_class("", status=304)
-            res.headers["ETag"] = etag
-            return res
         res = jsonify(**metadata, content_base64=b64encode(raw).decode("ascii"))
         res.headers["ETag"] = etag
         return res
@@ -271,6 +275,7 @@ def create_app(test_config=None):
             address = hashlib.sha256((request.remote_addr or "unknown").encode()).hexdigest()
             now = time.time()
             with closing(store.connect()) as db:
+                db.execute("DELETE FROM login_attempts WHERE ? - started >= 600", (now,))
                 attempt = db.execute("SELECT failures,started FROM login_attempts WHERE address=?", (address,)).fetchone()
                 if attempt and attempt[0] >= 10 and now - attempt[1] < 600:
                     return render_login("Too many attempts. Try again in 10 minutes."), 429
@@ -341,12 +346,16 @@ def create_app(test_config=None):
         return jsonify(documents=store.list())
 
     def text_document(document_id, revision=None):
-        metadata, raw = store.get(document_id, revision, client_id=client_cursor_id() if revision is None else None)
+        cid = client_cursor_id() if revision is None else None
+        if request.headers.get("If-None-Match"):
+            meta = store.get_meta(document_id, revision, client_id=cid)
+            etag = doc_etag(meta)
+            if etag_matches(etag):
+                res = app.response_class("", status=304)
+                res.headers["ETag"] = etag
+                return res
+        metadata, raw = store.get(document_id, revision, client_id=cid)
         etag = doc_etag(metadata)
-        if etag_matches(etag):
-            res = app.response_class("", status=304)
-            res.headers["ETag"] = etag
-            return res
         decoded = decode(raw, metadata["encoding"])
         res = jsonify(**metadata, text=decoded.text, bom=decoded.bom, line_endings=decoded.ending_label)
         res.headers["ETag"] = etag
@@ -367,9 +376,13 @@ def create_app(test_config=None):
             identifier(str(base_revision))
             try:
                 metadata, raw = store.get(document_id, base_revision)
+                base = decode(raw, metadata["encoding"])
             except NotFound:
-                metadata, raw = store.get(document_id)
-            base = decode(raw, metadata["encoding"])
+                try:
+                    metadata, raw = store.get(document_id)
+                    base = decode(raw, metadata["encoding"])
+                except NotFound:
+                    base = decode(b"")
         else:
             try:
                 store.get(document_id)
@@ -408,10 +421,16 @@ def create_app(test_config=None):
         if str(base_revision) == curr_meta["revision"] or curr_decoded.text == text:
             return jsonify(**curr_meta, merged=True, text=text, server_text=curr_decoded.text,
                            bom=curr_decoded.bom, line_endings=curr_decoded.ending_label)
-        base_meta, base_raw = store.get(document_id, str(base_revision))
+        try:
+            base_meta, base_raw = store.get(document_id, str(base_revision))
+        except NotFound:
+            return jsonify(merged=False, revision=curr_meta["revision"])
         base_decoded = decode(base_raw, base_meta["encoding"])
         if base_decoded.text == text:
             return jsonify(**curr_meta, merged=True, text=curr_decoded.text, server_text=curr_decoded.text,
+                           bom=curr_decoded.bom, line_endings=curr_decoded.ending_label)
+        if base_decoded.text == curr_decoded.text:
+            return jsonify(**curr_meta, merged=True, text=text, server_text=curr_decoded.text,
                            bom=curr_decoded.bom, line_endings=curr_decoded.ending_label)
         incoming_raw = edited(base_decoded, text, curr_decoded.encoding, curr_decoded.bom)
         incoming_decoded = decode(incoming_raw, curr_decoded.encoding)

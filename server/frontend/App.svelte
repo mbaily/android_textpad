@@ -856,8 +856,10 @@
       doc.savedDoc = pending.doc;
       doc.savedName = result.name || pending.body.name;
       doc.name = doc.savedName;
-      doc.savedEncoding = pending.body.encoding;
-      doc.savedBom = pending.body.bom;
+      doc.savedEncoding = result.encoding || pending.body.encoding;
+      doc.encoding = doc.savedEncoding;
+      doc.savedBom = typeof result.bom === "boolean" ? result.bom : pending.body.bom;
+      doc.bom = doc.savedBom;
       doc.pending = null;
       doc.pendingSync = false;
       doc.remoteChanged = false;
@@ -984,6 +986,18 @@
     const nextState = makeState(doc, result.text, nextSelection);
     doc.state = nextState;
     doc.savedDoc = serverState.doc;
+    if (result.name) {
+      if (doc.name === doc.savedName) doc.name = result.name;
+      doc.savedName = result.name;
+    }
+    if (result.encoding) {
+      if (doc.encoding === doc.savedEncoding) doc.encoding = result.encoding;
+      doc.savedEncoding = result.encoding;
+    }
+    if (typeof result.bom === "boolean") {
+      if (doc.bom === doc.savedBom) doc.bom = result.bom;
+      doc.savedBom = result.bom;
+    }
     doc.revision = result.revision;
     doc.sha256 = result.sha256;
     doc.size = result.size;
@@ -1009,11 +1023,23 @@
       const fullMetadata = {
         ...result,
         text: storedText,
-        bom: item.body.bom,
+        bom: typeof result.bom === "boolean" ? result.bom : item.body.bom,
         line_endings: result.line_endings,
       };
       await idbStoreDocument(fullMetadata);
       if (openDoc) {
+        if (result.name) {
+          if (openDoc.name === openDoc.savedName) openDoc.name = result.name;
+          openDoc.savedName = result.name;
+        }
+        if (result.encoding) {
+          if (openDoc.encoding === openDoc.savedEncoding) openDoc.encoding = result.encoding;
+          openDoc.savedEncoding = result.encoding;
+        }
+        if (typeof result.bom === "boolean") {
+          if (openDoc.bom === openDoc.savedBom) openDoc.bom = result.bom;
+          openDoc.savedBom = result.bom;
+        }
         openDoc.revision = result.revision;
         openDoc.sha256 = result.sha256;
         openDoc.size = result.size;

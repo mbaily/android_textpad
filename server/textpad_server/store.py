@@ -8,7 +8,7 @@ import re
 import sqlite3
 import unicodedata
 
-from .codec import decode, merge_3way
+from .codec import InvalidText, decode, edited, merge_3way
 
 METADATA = "sequence,document_id,name,sha256,size,encoding,created_at,source"
 RECENT_KEEP_COUNT = 10
@@ -188,6 +188,49 @@ class Store:
                                   ORDER BY r.created_at DESC,r.sequence DESC""").fetchall()
             return [representation(row) for row in rows]
 
+    def _record_cursor(self, db, client_id, document_id, sequence):
+        if client_id is None:
+            return
+        seq = int(sequence)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        existing = db.execute(
+            "SELECT revision, updated_at FROM device_cursors WHERE client_id=? AND document_id=?",
+            (str(client_id), document_id),
+        ).fetchone()
+        if (
+            existing is None
+            or int(existing["revision"]) != seq
+            or (now_ts - parse_timestamp(existing["updated_at"])) > 3600
+        ):
+            now_iso = datetime.fromtimestamp(now_ts, tz=timezone.utc).isoformat(timespec="microseconds")
+            db.execute(
+                "INSERT OR REPLACE INTO device_cursors VALUES(?,?,?,?)",
+                (str(client_id), document_id, seq, now_iso),
+            )
+
+    def get_meta(self, document_id, revision=None, client_id=None):
+        identifier(document_id)
+        if client_id is not None:
+            identifier(str(client_id))
+        with closing(self.connect()) as db:
+            columns = ",".join("r." + name for name in METADATA.split(","))
+            if revision is None:
+                row = db.execute(
+                    f"SELECT {columns} FROM documents d JOIN revisions r ON d.current_revision=r.sequence WHERE d.id=?",
+                    (document_id,),
+                ).fetchone()
+            else:
+                identifier(str(revision))
+                row = db.execute(
+                    f"SELECT {METADATA} FROM revisions WHERE document_id=? AND sequence=?",
+                    (document_id, revision),
+                ).fetchone()
+            if row is None:
+                raise NotFound("Document or revision not found.")
+            if revision is None:
+                self._record_cursor(db, client_id, document_id, row["sequence"])
+            return representation(row)
+
     def get(self, document_id, revision=None, client_id=None):
         identifier(document_id)
         if client_id is not None:
@@ -201,12 +244,8 @@ class Store:
                 row = db.execute("SELECT * FROM revisions WHERE document_id=? AND sequence=?", (document_id, revision)).fetchone()
             if row is None:
                 raise NotFound("Document or revision not found.")
-            if client_id is not None and revision is None:
-                now_iso = datetime.now(timezone.utc).isoformat(timespec="microseconds")
-                db.execute(
-                    "INSERT OR REPLACE INTO device_cursors VALUES(?,?,?,?)",
-                    (str(client_id), document_id, int(row["sequence"]), now_iso),
-                )
+            if revision is None:
+                self._record_cursor(db, client_id, document_id, row["sequence"])
             return representation(row), bytes(row["content"])
 
     def revisions(self, document_id):
@@ -276,17 +315,79 @@ class Store:
                 created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
                 old_revision = str(previous["sequence"]) if previous is not None else None
                 merged_raw = None
-                if previous is not None and base_revision is not None and old_revision != str(base_revision):
+                merged_name = name
+                merged_encoding = decoded.encoding
+                if (
+                    rev_source != "restore"
+                    and previous is not None
+                    and base_revision is not None
+                    and old_revision != str(base_revision)
+                ):
                     base_row = db.execute(
-                        "SELECT content, encoding FROM revisions WHERE document_id=? AND sequence=?",
+                        "SELECT name, content, encoding FROM revisions WHERE document_id=? AND sequence=?",
                         (document_id, base_revision),
                     ).fetchone()
                     if base_row is not None:
-                        merged_raw = merge_3way(
-                            decode(bytes(base_row["content"]), base_row["encoding"]),
-                            decode(bytes(previous["content"]), previous["encoding"]),
-                            decoded,
+                        base_decoded = decode(bytes(base_row["content"]), base_row["encoding"])
+                        curr_decoded = decode(bytes(previous["content"]), previous["encoding"])
+                        merged_name = (
+                            previous["name"]
+                            if (name == base_row["name"] and previous["name"] != base_row["name"])
+                            else name
                         )
+                        merged_encoding = (
+                            previous["encoding"]
+                            if (decoded.encoding == base_decoded.encoding and previous["encoding"] != base_decoded.encoding)
+                            else decoded.encoding
+                        )
+                        merged_bom = (
+                            curr_decoded.bom
+                            if (decoded.bom == base_decoded.bom and curr_decoded.bom != base_decoded.bom)
+                            else decoded.bom
+                        )
+                        if (
+                            base_decoded.text != curr_decoded.text
+                            and base_decoded.text != decoded.text
+                            and curr_decoded.text != decoded.text
+                        ):
+                            merged_raw = merge_3way(
+                                base_decoded,
+                                curr_decoded,
+                                decoded,
+                                encoding=merged_encoding,
+                                bom=merged_bom,
+                            )
+                        elif (
+                            decoded.text == base_decoded.text
+                            and curr_decoded.text != base_decoded.text
+                            and (
+                                name != base_row["name"]
+                                or decoded.encoding != base_decoded.encoding
+                                or decoded.bom != base_decoded.bom
+                            )
+                        ):
+                            try:
+                                merged_raw = edited(curr_decoded, curr_decoded.text, merged_encoding, merged_bom)
+                            except InvalidText:
+                                merged_raw = None
+                        elif (
+                            curr_decoded.text == base_decoded.text
+                            and decoded.text != base_decoded.text
+                            and (
+                                previous["name"] != base_row["name"]
+                                or previous["encoding"] != base_decoded.encoding
+                                or curr_decoded.bom != base_decoded.bom
+                            )
+                        ):
+                            format_base = (
+                                curr_decoded
+                                if (decoded.preferred == base_decoded.preferred and curr_decoded.preferred != base_decoded.preferred)
+                                else decoded
+                            )
+                            try:
+                                merged_raw = edited(format_base, decoded.text, merged_encoding, merged_bom)
+                            except InvalidText:
+                                merged_raw = None
                 cursor = db.execute("""INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at,source)
                                        VALUES(?,?,?,?,?,?,?,?)""", (document_id,name,content,sha256,len(content),decoded.encoding,created,rev_source))
                 client_seq = cursor.lastrowid
@@ -296,18 +397,18 @@ class Store:
                     merged_cursor = db.execute(
                         """INSERT INTO revisions(document_id,name,content,sha256,size,encoding,created_at,source)
                            VALUES(?,?,?,?,?,?,?,?)""",
-                        (document_id, name, merged_raw, merged_sha256, len(merged_raw), decoded.encoding, merged_created, "merge"),
+                        (document_id, merged_name, merged_raw, merged_sha256, len(merged_raw), merged_encoding, merged_created, "merge"),
                     )
                     final_seq = merged_cursor.lastrowid
                     db.execute("UPDATE documents SET current_revision=? WHERE id=?", (final_seq, document_id))
                     response = {
                         "id": document_id,
-                        "name": name,
+                        "name": merged_name,
                         "revision": str(final_seq),
                         "sha256": merged_sha256,
                         "size": len(merged_raw),
                         "updated_at": merged_created,
-                        "encoding": decoded.encoding,
+                        "encoding": merged_encoding,
                         "source": "merge",
                         "previous_revision": old_revision,
                         "client_revision": str(client_seq),
@@ -361,7 +462,11 @@ class Store:
                                 protected.add(int(data[key]))
                             except (TypeError, ValueError):
                                 pass
-        cursor_rows = db.execute("SELECT revision, updated_at FROM device_cursors WHERE document_id=?", (document_id,)).fetchall()
+        cursor_rows = db.execute(
+            "SELECT client_id, revision, updated_at FROM device_cursors WHERE document_id=?",
+            (document_id,),
+        ).fetchall()
+        expired_clients = []
         for row in cursor_rows:
             updated_ts = parse_timestamp(row["updated_at"])
             if (now - updated_ts) <= CONFLICT_KEEP_SECONDS:
@@ -369,6 +474,10 @@ class Store:
                     protected.add(int(row["revision"]))
                 except (TypeError, ValueError):
                     pass
+            else:
+                expired_clients.append(row["client_id"])
+        for cid in expired_clients:
+            db.execute("DELETE FROM device_cursors WHERE client_id=? AND document_id=?", (cid, document_id))
         return protected
 
     def _prune_document(self, db, document_id, current_revision=None, now=None):
@@ -437,6 +546,7 @@ class Store:
         destination.chmod(0o600)
 
     def remove_revision(self, document_id, revision):
+        identifier(document_id), identifier(str(revision))
         with closing(self.connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
