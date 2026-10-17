@@ -522,7 +522,8 @@
       } else {
         if (hideStart !== -1) {
           const from = stateDoc.line(hideStart + 1).from;
-          const to = stateDoc.line(i + 1).from;
+          // Keep the next visible line outside the inclusive replacement.
+          const to = stateDoc.line(i + 1).from - 1;
           hiddenRanges.push(Decoration.replace({ block: true }).range(from, to));
           hideStart = -1;
         }
@@ -547,6 +548,7 @@
     const contextField = EditorView.decorations.compute(["doc"], (state) => {
       const builder = [];
       for (let i = 1; i <= state.doc.lines; i++) {
+        const line = state.doc.line(i);
         let trimmed = line.text.trimStart();
         if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
           trimmed = trimmed.slice(2).trimStart();

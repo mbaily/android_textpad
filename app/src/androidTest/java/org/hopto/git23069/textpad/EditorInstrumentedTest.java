@@ -21,7 +21,7 @@ public class EditorInstrumentedTest {
     @Before public void reset() {
         app = (TextpadApplication) InstrumentationRegistry.getInstrumentation().getTargetContext().getApplicationContext();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-            app.tabs.clear(); app.selectedTab = -1; app.events.clear(); app.readOnlyMode = false; app.settings.prefs.edit().clear().commit();
+            app.tabs.clear(); app.selectedTab = -1; app.events.clear(); app.exiting = false; app.readOnlyMode = false; app.settings.prefs.edit().clear().commit();
         });
     }
     private Uri seed(String name, byte[] contents) throws Exception {
@@ -237,6 +237,66 @@ public class EditorInstrumentedTest {
             scenario.onActivity(activity -> {
                 assertFalse(app.current().writable); CodeEditor editor = activity.findViewById(R.id.editor);
                 assertNull(editor.getKeyListener()); editor.setSelection(0,4); assertEquals(4,editor.getSelectionEnd());
+            });
+        }
+    }
+
+    @Test public void tasksViewHidesLinesAndSavesEditsWithoutLosingHiddenText() throws Exception {
+        String original = "Unrelated introduction\n# Shopping\n[X] Finished project\n    [X] Finished step\n"
+                + "    [ ] Buy milk\n        Remember organic\n    [X] Finished sibling\n"
+                + "[ ] Buy apples\n[X] Finished last task\n";
+        String filtered = "# Shopping\n[X] Finished project\n    [ ] Buy milk\n"
+                + "        Remember organic\n[ ] Buy apples";
+        Uri uri = seed("task-filter.txt", original.replace("\n", "\r\n").getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(original.indexOf("apples"));
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                assertTrue(app.currentTab().tasksOnly);
+                assertEquals(filtered, editor.getText().toString());
+                assertArrayEquals(new int[]{1, 2, 4, 5, 7}, editor.lineMap);
+                assertEquals(filtered.indexOf("apples"), editor.getSelectionStart());
+                assertEquals(original, app.current().buffer.text());
+                assertFalse(app.current().buffer.dirty());
+                editor.getText().insert(editor.length(), "\nblocked");
+                assertEquals(filtered, editor.getText().toString());
+                int hiddenGap = filtered.indexOf("\n[ ] Buy apples");
+                editor.getText().delete(hiddenGap, hiddenGap + 1);
+                assertEquals(filtered, editor.getText().toString());
+                int apples = filtered.indexOf("apples");
+                editor.getText().replace(apples, apples + "apples".length(), "pears");
+                assertEquals(original.replace("apples", "pears"), app.current().buffer.text());
+                app.save(app.current(), null);
+            });
+            waitFor(() -> !app.current().saving && !app.current().buffer.dirty());
+            assertArrayEquals(original.replace("apples", "pears").replace("\n", "\r\n").getBytes(StandardCharsets.UTF_8), read(uri));
+            scenario.recreate();
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                assertEquals(filtered.replace("apples", "pears"), editor.getText().toString());
+                editor.setSelection(editor.getText().toString().indexOf("pears"));
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                assertEquals(original.replace("apples", "pears"), editor.getText().toString());
+                assertEquals(original.indexOf("apples"), editor.getSelectionStart());
+            });
+        }
+    }
+
+    @Test public void tasksViewWithNoOpenTasksIsEmptyAndRestoresAllLines() throws Exception {
+        String original = "Plain notes\n[X] Finished task\n";
+        Uri uri = seed("no-open-tasks.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                assertEquals("", editor.getText().toString());
+                assertEquals(original, app.current().buffer.text());
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                assertEquals(original, editor.getText().toString());
+                assertFalse(app.current().buffer.dirty());
             });
         }
     }

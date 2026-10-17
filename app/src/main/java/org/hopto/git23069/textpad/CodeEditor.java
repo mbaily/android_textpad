@@ -28,6 +28,7 @@ final class CodeEditor extends EditText {
     int[] lineMap;
     Runnable onBlockedLineAction;
     private boolean lineNumbers = true;
+    private boolean loadingDocumentText;
     private int gutterWidth;
     private Pattern searchPattern;
 
@@ -68,9 +69,18 @@ final class CodeEditor extends EditText {
         invalidate();
     }
 
+    void setDocumentText(CharSequence text) {
+        loadingDocumentText = true;
+        try {
+            setText(text);
+        } finally {
+            loadingDocumentText = false;
+        }
+    }
+
     private void updateInputFilter() {
         setFilters(new InputFilter[]{(source, start, end, dest, dstart, dend) -> {
-            if (tasksOnly) {
+            if (tasksOnly && !loadingDocumentText) {
                 boolean altersLines = false;
                 for (int i = start; i < end; i++) {
                     if (source.charAt(i) == '\n') {

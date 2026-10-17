@@ -259,11 +259,15 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     @Override public void refresh() {
+        refresh(true);
+    }
+
+    private void refresh(boolean saveCurrentViewState) {
         if (editor == null) return;
         EditorTab selected = app.currentTab();
         DocumentBuffer targetBuffer = selected == null ? null : (selected.tasksOnly && selected.filteredBuffer != null ? selected.filteredBuffer : selected.document.buffer);
         if (shownTab != selected || (selected != null && (shownState != selected.document.buffer.state() || editor.buffer != targetBuffer))) {
-            saveViewState();
+            if (saveCurrentViewState) saveViewState();
             boolean switchTab = shownTab != selected;
             shownTab = selected; changing = true;
             if (selected != null) {
@@ -281,12 +285,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         Toast.makeText(this, "Lines cannot be added or deleted in this view", Toast.LENGTH_SHORT).show();
                     });
                     if (switchTab || shownState != doc.buffer.state() || differentBuffer) {
-                        editor.setText(buildFilteredSpanned(selected.filteredBuffer.text(), selected.taskFilterResult));
+                        editor.setDocumentText(buildFilteredSpanned(selected.filteredBuffer.text(), selected.taskFilterResult));
                     }
                 } else {
                     editor.setTasksOnly(false, null, null);
                     if (switchTab || shownState != doc.buffer.state() || differentBuffer) {
-                        editor.setText(doc.buffer.text());
+                        editor.setDocumentText(doc.buffer.text());
                     }
                 }
                 editor.configure(app.settings, isEditable(doc));
@@ -299,7 +303,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         changing = true; editor.scrollTo(selected.scrollX, selected.scrollY); changing = false;
                     }
                 });
-            } else { editor.setTasksOnly(false, null, null); editor.buffer = null; editor.setText(""); shownState = -1; }
+            } else { editor.setTasksOnly(false, null, null); editor.buffer = null; editor.setDocumentText(""); shownState = -1; }
             changing = false;
         }
         editor.setVisibility(selected == null ? View.GONE : View.VISIBLE);
@@ -1293,7 +1297,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         }
         if (shownTab == tab) {
             shownState = -1;
-            refresh();
+            refresh(false);
             updateStatus();
         }
     }
