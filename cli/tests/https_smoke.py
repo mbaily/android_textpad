@@ -156,7 +156,31 @@ def main():
                 wait_for(lambda: (verified / 'notes.txt').read_bytes() == verified_next, timeout=2)
                 watcher.send_signal(signal.SIGINT)
                 assert watcher.wait(timeout=10) == 130
-            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports with 900 tags, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, live WebSocket remote pulls with trusted CA and insecure modes, Ctrl+C, history, snapshots, and untracking.')
+            # Concurrent edits must merge through the actual packaged watcher,
+            # retaining both changes, while overlapping edits remain held.
+            merge_path = verified / 'notes.txt'
+            local_merge = verified_next.replace(b'Line 0:', b'Line ZERO:')
+            merge_path.write_bytes(local_merge)
+            remote_addition = b'Remote addition to merge with local edits\r\n'
+            saved = api.get(remote.id)
+            api.put(remote.id, remote.name, verified_next + remote_addition, saved.revision, str(uuid.uuid4()))
+            expected_merge = local_merge + remote_addition
+            with (root / 'merge-watch.log').open('w') as log:
+                watcher = subprocess.Popen(command + ['-C', str(verified), 'watch', '--settle', '0.1',
+                    '--interval', '0.05', '--remote-interval', '120'], env=env, stdout=log, stderr=subprocess.STDOUT)
+                wait_for(lambda: 'merged:' in (root / 'merge-watch.log').read_text())
+                assert merge_path.read_bytes() == api.get(remote.id).content == expected_merge
+                local_overlap = expected_merge.replace(b'Line ZERO:', b'Line LOCAL:')
+                remote_overlap = expected_merge.replace(b'Line ZERO:', b'Line REMOTE:')
+                merge_path.write_bytes(local_overlap)
+                saved = api.get(remote.id)
+                api.put(remote.id, remote.name, remote_overlap, saved.revision, str(uuid.uuid4()))
+                wait_for(lambda: 'conflict:' in (root / 'merge-watch.log').read_text())
+                assert merge_path.read_bytes() == local_overlap
+                assert api.get(remote.id).content == remote_overlap
+                watcher.send_signal(signal.SIGINT)
+                assert watcher.wait(timeout=10) == 130
+            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports with 900 tags, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, live WebSocket remote pulls with trusted CA and insecure modes, three-way watch merges, overlapping conflict holds, Ctrl+C, history, snapshots, and untracking.')
         finally:
             if watcher is not None and watcher.poll() is None:
                 watcher.terminate()

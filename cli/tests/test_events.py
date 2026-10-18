@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from textpad_sync import SyncError
 from textpad_sync.api import Api
-from textpad_sync.events import EventSocket, GUID, MAX_MESSAGE
+from textpad_sync.events import ChangeEvents, EventSocket, GUID, MAX_MESSAGE
 
 TOKEN = 'disposable-event-test-token-32-characters'
 
@@ -22,6 +22,15 @@ def frame(payload, opcode=1, final=True):
     if len(payload) < 126:
         return header + bytes((len(payload),)) + payload
     return header + b'\x7e' + len(payload).to_bytes(2, 'big') + payload
+
+
+def client_frame(handler):
+    header = handler.rfile.read(2)
+    if len(header) != 2 or not header[1] & 128 or header[1] & 127 > 125:
+        raise OSError('Expected a masked client control frame')
+    mask = handler.rfile.read(4)
+    payload = handler.rfile.read(header[1] & 127)
+    return header[0] & 15, bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
 
 
 @contextmanager
@@ -120,6 +129,114 @@ class EventTransportTests(unittest.TestCase):
         self.assertEqual({'text': '😀'}, self.buffered(frame(b'{"text":"\xf0\x9f', final=False)
                          + frame(b'\x98\x80"}', opcode=0)).receive())
 
+    def test_client_heartbeats_keep_a_quiet_connection_live(self):
+        received, release = [], threading.Event()
+        def script(handler):
+            for _ in range(3):
+                opcode, payload = client_frame(handler)
+                received.append((opcode, payload))
+                handler.connection.sendall(frame(payload, opcode=10))
+            handler.connection.sendall(frame(b'{"type":"changed","cursor":"2"}'))
+            release.wait(3)
+        with (patch('textpad_sync.events.PING_INTERVAL', 0.02),
+              patch('textpad_sync.events.PONG_TIMEOUT', 0.5),
+              upgrade_server(script) as (base, _)):
+            connection = self.connect(base)
+            try:
+                self.assertEqual({'type': 'changed', 'cursor': '2'}, connection.receive())
+                self.assertEqual([9, 9, 9], [opcode for opcode, _ in received])
+                self.assertEqual(3, len({payload for _, payload in received}))
+                self.assertFalse(connection.stopped.is_set())
+            finally:
+                connection.close()
+                release.set()
+            self.assertFalse(connection.heartbeat.is_alive())
+
+    def test_missing_matching_pong_interrupts_even_an_incomplete_frame(self):
+        for response in (b'', frame(b'wrong pong', opcode=10),
+                         frame(b'server ping', opcode=9), b'\x81\x7e\x01\x00{'):
+            with self.subTest(response=response):
+                release, finished = threading.Event(), threading.Event()
+                errors = []
+                def script(handler):
+                    client_frame(handler)
+                    handler.connection.sendall(response)
+                    # Leave TCP open: no close frame, EOF, or socket error.
+                    release.wait(3)
+                with (patch('textpad_sync.events.PING_INTERVAL', 0.02),
+                      patch('textpad_sync.events.PONG_TIMEOUT', 0.1),
+                      upgrade_server(script) as (base, _)):
+                    connection = self.connect(base)
+                    def receive():
+                        try:
+                            connection.receive()
+                        except (SyncError, OSError) as error:
+                            errors.append(error)
+                        finally:
+                            finished.set()
+                    listener = threading.Thread(target=receive, daemon=True)
+                    listener.start()
+                    try:
+                        self.assertTrue(finished.wait(2), 'Silent connection did not fail promptly')
+                        self.assertTrue(errors, 'Receive accepted a connection without a matching pong')
+                        self.assertTrue(connection.stopped.wait(1), 'Heartbeat did not interrupt the socket')
+                    finally:
+                        connection.close()
+                        release.set()
+                        listener.join(2)
+                    self.assertFalse(listener.is_alive())
+                    self.assertFalse(connection.heartbeat.is_alive())
+
+    def test_silent_connection_reports_polling_then_reconnects_and_reconciles(self):
+        release, ready, polling = threading.Event(), threading.Event(), threading.Event()
+        hints, statuses, connections = [], [], []
+        def script(handler):
+            connections.append(handler.connection)
+            handler.connection.sendall(frame(b'{"type":"ready","cursor":"2"}'))
+            # The first socket stays open but silently discards client pings.
+            release.wait(4)
+        def changed():
+            hints.append(True)
+            ready.set()
+        def wake():
+            status = events.status()
+            statuses.append(status)
+            if status == 'polling':
+                polling.set()
+        with (patch('textpad_sync.events.PING_INTERVAL', 0.02),
+              patch('textpad_sync.events.PONG_TIMEOUT', 0.1),
+              upgrade_server(script) as (base, _)):
+            events = ChangeEvents(Api(base, TOKEN, 'silent-reconnect-test', local_test=True), changed, wake)
+            try:
+                with events:
+                    self.assertTrue(ready.wait(3))
+                    ready.clear()
+                    self.assertTrue(polling.wait(3))
+                    self.assertEqual(1, len(connections))
+                    self.assertTrue(ready.wait(3), 'Reconnection did not request a fresh reconciliation')
+                    self.assertEqual(2, len(connections))
+                    self.assertEqual(2, len(hints))
+                    self.assertEqual(['live', 'polling', 'live'], statuses)
+            finally:
+                release.set()
+            self.assertFalse(events.thread.is_alive())
+
+    def test_close_stops_a_heartbeat_waiting_for_pong(self):
+        pinged, release = threading.Event(), threading.Event()
+        def script(handler):
+            client_frame(handler)
+            pinged.set()
+            release.wait(3)
+        with (patch('textpad_sync.events.PING_INTERVAL', 0.02),
+              upgrade_server(script) as (base, _)):
+            connection = self.connect(base)
+            try:
+                self.assertTrue(pinged.wait(3))
+                connection.close()
+                self.assertFalse(connection.heartbeat.is_alive())
+            finally:
+                release.set()
+
     def test_server_close_is_acknowledged_and_invalid_close_payloads_are_refused(self):
         closing = b'\x03\xe8done'
         connection = self.buffered(frame(closing, opcode=8))
@@ -174,7 +291,7 @@ class EventTransportTests(unittest.TestCase):
     def test_http_connect_proxy_keeps_api_credentials_out_of_the_tunnel_request(self):
         api = Api('https://example.invalid/textpad', TOKEN, 'notification-test')
         api.proxies = {'https': 'http://proxy-user:proxy-password@proxy.invalid:8080'}
-        response = SimpleNamespace(status=101, begin=lambda: None, fp=io.BytesIO())
+        response = SimpleNamespace(status=101, begin=lambda: None, close=lambda: None, fp=io.BytesIO())
         def header(name, default=None):
             headers = {'Upgrade': 'websocket', 'Connection': 'Upgrade',
                 'Sec-WebSocket-Accept': base64.b64encode(hashlib.sha1((base64.b64encode(b'x' * 16).decode() + GUID).encode()).digest()).decode()}
@@ -184,7 +301,9 @@ class EventTransportTests(unittest.TestCase):
               patch('textpad_sync.events.HTTPResponse', return_value=response),
               patch('textpad_sync.events.proxy_bypass', return_value=False),
               patch('textpad_sync.events.os.urandom', return_value=b'x' * 16)):
-            EventSocket(api).connect()
+            connection = EventSocket(api)
+            self.addCleanup(connection.close)
+            connection.connect()
         self.assertIs(api.ssl_context, https.call_args.kwargs['context'])
         self.assertEqual(('proxy.invalid', 8080), https.call_args.args)
         tunnel = https.return_value.set_tunnel

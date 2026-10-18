@@ -1,9 +1,10 @@
-"""Two-way reconciliation with durable retry payloads and conservative conflicts."""
+"""Three-way reconciliation with durable retry payloads and conservative conflicts."""
 from dataclasses import dataclass
 
 from . import BusyFile, SyncError
 from .api import ApiError
 from .filesystem import deletion_reason, read, settled_read, sha256, write
+from .merge import InvalidText, choose, merge_contents
 
 
 @dataclass(frozen=True)
@@ -14,7 +15,7 @@ class Result:
 
     @property
     def ok(self):
-        return self.state in {'synced', 'uploaded', 'downloaded'}
+        return self.state in {'synced', 'uploaded', 'downloaded', 'merged'}
 
 
 class Engine:
@@ -79,7 +80,7 @@ class Engine:
             return self.issue(row, 'missing-remote', 'The linked server document is missing; no recreation was attempted.')
         remote_changed = remote.sha256 != sha256(base) or remote.name != row['base_name']
         if local_changed and remote_changed:
-            return self.conflict(row, local, self.api.get(row['document_id']))
+            return self.merge(row, local, self.api.get(row['document_id']), allow_large_delete)
         if local_changed:
             reason = deletion_reason(base, local.content)
             if reason and not allow_large_delete:
@@ -99,6 +100,32 @@ class Engine:
         ws.baseline(row, remote, local.content, adopt_name=True)
         return Result(row['path'], 'synced', 'Local and server copies match.')
 
+    def merge(self, row, local, remote, allow_large_delete=False):
+        ws, base = self.workspace, row['base_content']
+        ws.snapshot(row, base, 'merge-base', row['base_name'])
+        ws.snapshot(row, local.content, 'merge-local')
+        ws.snapshot(row, remote.content, 'merge-server', remote.name)
+        reason = deletion_reason(base, local.content) or deletion_reason(base, remote.content)
+        if reason and not allow_large_delete:
+            return self.issue(row, 'held', 'Merge ' + reason + '; inspect backups/history before resolving.')
+        try:
+            name = choose(row['base_name'], remote.name, row['name'])
+        except InvalidText:
+            return self.conflict(row, local, remote)
+        merged = merge_contents(base, remote.content, local.content)
+        if merged is None:
+            return self.conflict(row, local, remote)
+        reason = (deletion_reason(base, merged) or deletion_reason(local.content, merged)
+                  or deletion_reason(remote.content, merged))
+        if reason and not allow_large_delete:
+            return self.issue(row, 'held', 'Merge ' + reason + '; inspect backups/history before resolving.')
+        row = ws.queue(row, merged, remote=remote, local=local.content, name=name)
+        result = self.upload(row, local, retry=True)
+        if result.ok:
+            return Result(row['path'], 'merged', 'Merged local and server edits; saved server revision '
+                          + ws.file(row['path'])['revision'] + '.')
+        return result
+
     def conflict(self, row, local, remote):
         self.workspace.snapshot(row, local.content, 'conflict-local')
         self.workspace.snapshot(row, remote.content, 'conflict-server', remote.name)
@@ -113,6 +140,24 @@ class Engine:
             if current.signature != local.signature or current.content != local.content:
                 raise BusyFile('Local file changed before upload; waiting for the next stable save.')
             row = ws.queue(row, local.content)
+        if row['pending_local'] is not None:
+            ws.snapshot(row, local.content, 'before-merge')
+            content = row['pending_content']
+            if local.content not in (row['pending_local'], content):
+                # An editor saved after the queue was persisted but before its
+                # atomic local replacement. Preserve that edit as well, or hold
+                # the operation rather than overwrite an overlapping change.
+                content = merge_contents(row['pending_local'], content, local.content)
+                if content is None:
+                    ws.snapshot(row, local.content, 'conflict-during-merge')
+                    return self.issue(row, 'conflict', 'Local file changed during merge. Use resolve FILE --use local|remote after reviewing backups/history.')
+                reason = deletion_reason(local.content, content)
+                if reason:
+                    return self.issue(row, 'held', 'Merge ' + reason + '; inspect backups/history before resolving.')
+            ws.snapshot(row, content, 'merged-local')
+            if local.content != content:
+                write(ws.path(row['path'])[0], content, expected=local)
+            row = ws.update(row, pending_local=None)
         try:
             acknowledged = self.api.put(row['document_id'], row['pending_name'], row['pending_content'],
                                         row['pending_base'], row['pending_id'])
@@ -141,7 +186,12 @@ class Engine:
         local = settled_read(path, settle)
         # Finish an uncertain old request before resolving against the latest
         # server revision. A lost response must not become a second write.
-        if row['pending_id']:
+        if row['pending_id'] and row['pending_local'] is not None:
+            # Local staging always finishes durably before the first request.
+            # This candidate has never been sent, so an explicit choice may
+            # discard its queue without first changing the remote version.
+            row = self.workspace.clear_pending(row, None)
+        elif row['pending_id']:
             result = self.upload(row, local, retry=True)
             if result.state == 'error':
                 return result

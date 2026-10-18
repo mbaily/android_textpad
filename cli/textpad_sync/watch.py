@@ -18,6 +18,7 @@ class Watcher:
         self.remote_pending = set()
         self.remote_changed, self.wake = threading.Event(), threading.Event()
         self.next_remote = 0
+        self.offline = False
 
     def notify(self):
         self.remote_changed.set()
@@ -32,7 +33,7 @@ class Watcher:
             self.report(f'{timestamp} {result.state}: {subject}{result.message}')
 
     def observe_download(self, result, now):
-        if result.state != 'downloaded':
+        if result.state not in {'downloaded', 'merged'}:
             return
         try:
             path, _ = self.workspace.path(result.path)
@@ -94,10 +95,17 @@ class Watcher:
                     for result in self.engine.sync(due, settle=0, expected_signatures=signatures):
                         self.observe_download(result, now)
                         self.emit(result)
-                    self.last_reports.pop('', None)
+                        if result.state == 'error':
+                            # A connection can fail after listing, during a
+                            # download or a queued upload. Retry those too.
+                            self.next_remote = min(self.next_remote, now + min(5, self.remote_interval))
+                    if self.offline:
+                        self.emit(Result('', 'online', 'Server reachable again; sync resumed.'))
+                        self.offline = False
                 except (SyncError, OSError) as error:
+                    self.offline = True
                     self.emit(Result('', 'offline', str(error)))
-                    self.next_remote = now + self.remote_interval
+                    self.next_remote = now + min(5, self.remote_interval)
                 finally:
                     self.dirty.difference_update(row['path'] for row in due)
                     self.remote_pending.difference_update(row['path'] for row in due)
@@ -109,7 +117,7 @@ class Watcher:
                 status = events.status()
                 if status:
                     message = ('Connected to server; live updates enabled.' if status == 'live' else
-                               f'Live updates unavailable; retrying. Periodic checks every {self.remote_interval:g} seconds.')
+                               f'Live connection lost or unavailable; reconnecting automatically. Periodic checks every {self.remote_interval:g} seconds.')
                     self.emit(Result('', status, message))
                 self.step()
                 self.wake.wait(interval)

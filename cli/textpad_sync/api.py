@@ -3,6 +3,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 import hashlib
+from http.client import HTTPException
 import json
 import re
 import ssl
@@ -129,7 +130,7 @@ class Api:
                 message = "Server redirects are refused. Configure the final HTTPS sync endpoint."
             error.close()
             raise ApiError(error.code, message, code) from None
-        except (URLError, OSError) as error:
+        except (URLError, OSError, HTTPException) as error:
             if isinstance(getattr(error, 'reason', error), ssl.SSLCertVerificationError):
                 raise SyncError('TLS certificate verification failed. Check the server address and trusted CA; '
                                 'use init --ca-file ROOT_CA.pem for a private server CA.') from None

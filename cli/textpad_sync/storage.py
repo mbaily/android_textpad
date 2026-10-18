@@ -26,7 +26,16 @@ class Workspace:
         self.db = sqlite3.connect(dbpath, timeout=10)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA synchronous=FULL')
-        if self.db.execute('PRAGMA user_version').fetchone()[0] != 1:
+        version = self.db.execute('PRAGMA user_version').fetchone()[0]
+        if version == 1:
+            # Serialize upgrades with every other CLI operation, including watch.
+            with workspace_lock(self.folder), self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                if self.db.execute('PRAGMA user_version').fetchone()[0] == 1:
+                    self.db.execute('ALTER TABLE files ADD COLUMN pending_local BLOB')
+                    self.db.execute('PRAGMA user_version=2')
+            version = self.db.execute('PRAGMA user_version').fetchone()[0]
+        if version != 2:
             self.db.close()
             raise SyncError("Unsupported workspace schema; update the CLI without deleting .textpad.")
 
@@ -76,6 +85,7 @@ class Workspace:
                     path TEXT PRIMARY KEY, document_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
                     seed_content BLOB NOT NULL, base_name TEXT, revision TEXT, base_content BLOB,
                     pending_id TEXT, pending_name TEXT, pending_base TEXT, pending_content BLOB,
+                    pending_local BLOB,
                     issue TEXT
                 );
                 CREATE TABLE snapshots (
@@ -84,7 +94,7 @@ class Workspace:
                     sha256 TEXT NOT NULL, content BLOB NOT NULL,
                     UNIQUE(document_id, name, sha256)
                 );
-                PRAGMA user_version=1;
+                PRAGMA user_version=2;
             ''')
             db.executemany('INSERT INTO settings VALUES (?,?)', [
                 ('server', server), ('client_id', 'cli-' + str(uuid.uuid4())),
@@ -165,7 +175,7 @@ class Workspace:
 
     def update(self, row, **values):
         allowed = {'name', 'base_name', 'revision', 'base_content', 'pending_id', 'pending_name',
-                   'pending_base', 'pending_content', 'issue', 'path'}
+                   'pending_base', 'pending_content', 'pending_local', 'issue', 'path'}
         if not values or not values.keys() <= allowed:
             raise ValueError('Invalid workspace update')
         assignments = ','.join(key + '=?' for key in values)
@@ -193,15 +203,25 @@ class Workspace:
         self.snapshot(row, content, 'acknowledged', document.name)
         return self.update(row, revision=document.revision, base_content=content, base_name=document.name,
                            name=document.name if adopt_name else row['name'], issue=None,
-                           pending_id=None, pending_content=None, pending_name=None, pending_base=None)
+                           pending_id=None, pending_content=None, pending_name=None, pending_base=None,
+                           pending_local=None)
 
-    def queue(self, row, content):
+    def queue(self, row, content, *, remote=None, local=None, name=None):
         self.snapshot(row, content, 'queued-upload')
-        return self.update(row, pending_id=str(uuid.uuid4()), pending_name=row['name'],
-                           pending_base=row['revision'], pending_content=content, issue=None)
+        values = {}
+        if remote is not None:
+            # The merged edit is relative to this exact remote revision. Persist
+            # its baseline and the pre-merge local bytes together with the queue,
+            # before replacing the local file or sending any request.
+            values.update(revision=remote.revision, base_content=remote.content, base_name=remote.name,
+                          name=name)
+        return self.update(row, pending_id=str(uuid.uuid4()), pending_name=name or row['name'],
+                           pending_base=remote.revision if remote is not None else row['revision'],
+                           pending_content=content, pending_local=local, issue=None, **values)
 
     def clear_pending(self, row, issue):
-        return self.update(row, pending_id=None, pending_name=None, pending_base=None, pending_content=None, issue=issue)
+        return self.update(row, pending_id=None, pending_name=None, pending_base=None, pending_content=None,
+                           pending_local=None, issue=issue)
 
     def backups(self, value=None):
         if value is None:

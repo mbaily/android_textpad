@@ -49,7 +49,7 @@
 - Explicitly add/remove local files, download/link existing server documents, inspect status/history, sync on demand, and edit files with a separate editor.
 - Store mappings, exact acknowledged and pending contents, and retained recovery snapshots in a private SQLite workspace.
 - Foreground terminal monitor with file stability checks; no systemd service. Observe saved local edits and periodically check for server changes.
-- Hold suspicious blank/large-deletion saves, preserve exact bytes, and require explicit conflict resolution when both copies change.
+- Merge compatible concurrent saved edits using their shared base; preserve formatting and recovery snapshots, and require explicit resolution for overlapping edits or incompatible metadata changes. Hold suspicious blank/large-deletion saves, including combined deletions from both sides.
 - Use an opt-in atomic server revision precondition for CLI saves, while keeping existing Android/browser save behavior.
 - Preserve retry receipts across interruptions; retain snapshots before replacements and do not propagate local deletion as server deletion.
 

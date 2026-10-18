@@ -1,5 +1,5 @@
 """Cross-platform, standard-library-only Textpad sync client."""
-__version__ = "0.1.6"
+__version__ = "0.1.8"
 
 
 class SyncError(Exception):

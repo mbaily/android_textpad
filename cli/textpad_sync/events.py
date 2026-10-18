@@ -18,12 +18,18 @@ from . import SyncError
 
 MAX_MESSAGE = 4096
 GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+PING_INTERVAL = 5
+PONG_TIMEOUT = 5
+MAX_RECONNECT_DELAY = 10
 
 
 class EventSocket:
     def __init__(self, api):
         self.api = api
         self.connection = self.response = self.stream = None
+        self.send_lock, self.ping_lock = threading.Lock(), threading.Lock()
+        self.stopped, self.pong = threading.Event(), threading.Event()
+        self.pending_ping = self.heartbeat = None
 
     def connect(self):
         parts = urlsplit(self.api.server)
@@ -39,7 +45,7 @@ class EventSocket:
             if address.username is not None:
                 credentials = unquote(address.username) + ':' + unquote(address.password or '')
                 tunnel_headers['Proxy-Authorization'] = 'Basic ' + base64.b64encode(credentials.encode()).decode()
-        options = {'timeout': self.api.timeout}
+        options = {'timeout': min(self.api.timeout, MAX_RECONNECT_DELAY)}
         if secure:
             options['context'] = self.api.ssl_context
         connection = (HTTPSConnection if secure else HTTPConnection)(target_host, target_port, **options)
@@ -63,9 +69,27 @@ class EventSocket:
                 or response.getheader('Sec-WebSocket-Protocol') is not None):
             raise SyncError('The server refused the live-update connection.')
         self.stream = response.fp
-        # The server pings every 25 seconds. A dead connection must reconnect,
-        # while HTTPS reconciliation continues independently on the main thread.
-        connection.sock.settimeout(60)
+        # A Wi-Fi outage need not deliver a close/error to an established TCP
+        # socket. Probe the full WebSocket path, including quiet connections.
+        # A separate watchdog can interrupt a buffered read even mid-frame;
+        # arbitrary incoming traffic cannot postpone a missing pong's deadline.
+        connection.sock.settimeout(PING_INTERVAL + PONG_TIMEOUT)
+        self.heartbeat = threading.Thread(target=self.keepalive, name='textpad-cli-heartbeat', daemon=True)
+        self.heartbeat.start()
+
+    def keepalive(self):
+        while not self.stopped.wait(PING_INTERVAL):
+            with self.ping_lock:
+                self.pending_ping = os.urandom(8)
+                self.pong.clear()
+            try:
+                self.control(9, self.pending_ping)
+                if self.pong.wait(PONG_TIMEOUT):
+                    continue
+            except OSError:
+                pass
+            self.interrupt()
+            return
 
     def read(self, size):
         data = self.stream.read(size)
@@ -76,7 +100,10 @@ class EventSocket:
     def control(self, opcode, payload):
         mask = os.urandom(4)
         masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-        self.connection.sock.sendall(bytes((0x80 | opcode, 0x80 | len(payload))) + mask + masked)
+        # The listener answers server pings while the watchdog sends its own.
+        # Serialize complete frames so concurrent writes cannot interleave.
+        with self.send_lock:
+            self.connection.sock.sendall(bytes((0x80 | opcode, 0x80 | len(payload))) + mask + masked)
 
     def receive(self):
         message = bytearray()
@@ -112,6 +139,9 @@ class EventSocket:
                 self.control(10, payload)
                 continue
             if opcode == 10:
+                with self.ping_lock:
+                    if payload == self.pending_ping:
+                        self.pong.set()
                 continue
             if (opcode == 0) != fragmented:
                 raise SyncError('Invalid live-update message fragmentation.')
@@ -124,6 +154,8 @@ class EventSocket:
             fragmented = True
 
     def interrupt(self):
+        self.stopped.set()
+        self.pong.set()
         if self.connection is not None:
             sock = self.connection.sock
             if sock is not None:
@@ -134,6 +166,8 @@ class EventSocket:
 
     def close(self):
         self.interrupt()
+        if self.heartbeat is not None:
+            self.heartbeat.join(timeout=2)
         if self.connection is not None:
             if self.response is not None:
                 self.response.close()
@@ -202,4 +236,4 @@ class ChangeEvents:
                     self.socket = None
             if self.stopped.wait(delay):
                 return
-            delay = min(60, delay * 2)
+            delay = min(MAX_RECONNECT_DELAY, delay * 2)

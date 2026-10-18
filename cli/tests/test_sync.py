@@ -1,6 +1,7 @@
 """Real HTTP/SQLite tests for preservation, conflicts, monitor saves, and retries."""
 from contextlib import chdir, redirect_stdout, redirect_stderr
 from base64 import b64encode
+from http.client import IncompleteRead
 import io
 import json
 import os
@@ -434,6 +435,246 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(b'Remote edit\n', self.path.read_bytes())
         self.assertIn(b'Local edit\n', self.backup_contents())
 
+    def test_disjoint_changes_merge_locally_and_remotely_with_all_snapshots(self):
+        base = b'one\r\ntwo\r\nthree\r\n'
+        local, remote = base.replace(b'one', b'ONE'), base.replace(b'three', b'THREE')
+        merged = b'ONE\r\ntwo\r\nTHREE\r\n'
+        self.tracked(base)
+        self.path.write_bytes(local)
+        self.remote(remote)
+        if os.name != 'nt':
+            self.path.chmod(0o640)
+        result = self.sync()
+        self.assertEqual('merged', result.state)
+        self.assertTrue(result.ok)
+        self.assertEqual(merged, self.path.read_bytes())
+        self.assertEqual(merged, self.api.get(self.docid).content)
+        self.assertEqual(merged, self.ws.file('notes.txt')['base_content'])
+        self.assertTrue({base, local, remote, merged} <= self.backup_contents())
+        self.assertEqual('synced', self.sync().state)
+        self.assertEqual(3, len(self.api.history(self.docid)))
+        if os.name != 'nt':
+            self.assertEqual(0o640, self.path.stat().st_mode & 0o777)
+
+    def test_cli_merges_disjoint_word_edits_and_exits_successfully(self):
+        self.tracked(b'The quick fox likes milk\n')
+        self.path.write_bytes(b'The quick fox likes tea\n')
+        self.remote(b'The FAST fox likes milk\n')
+        code, out, err = self.cli('sync', '--settle', '0.001')
+        self.assertEqual((0, ''), (code, err))
+        self.assertIn('merged:', out)
+        self.assertEqual(b'The FAST fox likes tea\n', self.path.read_bytes())
+
+    def test_remote_rename_combines_with_local_content_edit(self):
+        self.tracked(b'one\ntwo\n')
+        self.path.write_bytes(b'ONE\ntwo\n')
+        self.remote(b'one\ntwo\n', 'renamed-remotely.txt')
+        self.assertEqual('merged', self.sync().state)
+        self.assertEqual('renamed-remotely.txt', self.ws.file('notes.txt')['name'])
+        self.assertEqual('renamed-remotely.txt', self.api.get(self.docid).name)
+        self.assertEqual(b'ONE\ntwo\n', self.api.get(self.docid).content)
+
+    def test_local_rename_combines_with_remote_content_edit(self):
+        self.tracked(b'one\ntwo\n')
+        self.ws.update(self.ws.file('notes.txt'), name='renamed-locally.txt')
+        self.remote(b'one\nTWO\n')
+        self.assertEqual('merged', self.sync().state)
+        self.assertEqual('renamed-locally.txt', self.api.get(self.docid).name)
+        self.assertEqual(b'one\nTWO\n', self.path.read_bytes())
+
+    def test_incompatible_renames_still_require_resolution(self):
+        self.tracked()
+        self.ws.update(self.ws.file('notes.txt'), name='local.txt')
+        self.remote(b'First version\r\n', 'remote.txt')
+        self.assertEqual('conflict', self.sync().state)
+        self.assertEqual('remote.txt', self.api.get(self.docid).name)
+        self.assertIsNone(self.ws.file('notes.txt')['pending_id'])
+
+    def test_merge_holds_suspicious_local_or_remote_deletions(self):
+        self.tracked(LONG)
+        self.path.write_bytes(b'')
+        self.remote(LONG + b'Remote addition\n')
+        self.assertEqual('held', self.sync().state)
+        self.assertEqual(b'', self.path.read_bytes())
+        self.assertEqual(LONG + b'Remote addition\n', self.api.get(self.docid).content)
+        self.path.write_bytes(LONG + b'Local addition\n')
+        self.remote(b'')
+        self.assertEqual('held', self.sync().state)
+        self.assertEqual(LONG + b'Local addition\n', self.path.read_bytes())
+        self.assertIsNone(self.ws.file('notes.txt')['pending_id'])
+
+    def test_combined_deletions_cannot_bypass_the_large_deletion_hold(self):
+        lines = [f'Line {number:03d}: content worth keeping\n'.encode() for number in range(100)]
+        self.tracked(b''.join(lines))
+        self.path.write_bytes(b''.join(lines[:60]))
+        remote = self.remote(b''.join(lines[40:]))
+        self.assertEqual('held', self.sync().state)
+        self.assertEqual(b''.join(lines[:60]), self.path.read_bytes())
+        self.assertEqual(remote.revision, self.api.get(self.docid).revision)
+        self.assertIsNone(self.ws.file('notes.txt')['pending_id'])
+
+    def test_server_race_after_merge_is_rejected_then_merged_against_new_baseline(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        self.remote(b'one\ntwo\nTHREE\n')
+        original = self.api.put
+        def concurrent_save(*args, **kwargs):
+            self.remote(b'one\nTWO\nTHREE\n')
+            return original(*args, **kwargs)
+        with patch.object(self.api, 'put', side_effect=concurrent_save):
+            self.assertEqual('conflict', self.sync().state)
+        self.assertEqual(b'one\nTWO\nTHREE\n', self.api.get(self.docid).content)
+        self.assertEqual('merged', self.sync().state)
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.path.read_bytes())
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.api.get(self.docid).content)
+
+    def test_editor_save_during_merge_fetch_is_preserved_and_rebased_on_retry(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        self.remote(b'one\ntwo\nTHREE\n')
+        original = self.api.get
+        def edit_during_get(*args, **kwargs):
+            remote = original(*args, **kwargs)
+            self.path.write_bytes(b'ONE\nTWO\nthree\n')
+            return remote
+        with patch.object(self.api, 'get', side_effect=edit_during_get):
+            self.assertEqual('waiting', self.sync().state)
+        self.assertEqual(b'ONE\nTWO\nthree\n', self.path.read_bytes())
+        self.assertTrue(self.ws.file('notes.txt')['pending_id'])
+        self.assertTrue(self.sync().ok)
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.path.read_bytes())
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.api.get(self.docid).content)
+
+    def test_editor_save_during_merged_upload_is_not_overwritten(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        self.remote(b'one\ntwo\nTHREE\n')
+        original = self.api.put
+        def edit_during_put(*args, **kwargs):
+            self.assertEqual(b'ONE\ntwo\nTHREE\n', self.path.read_bytes())
+            self.path.write_bytes(b'ONE\nTWO\nTHREE\n')
+            return original(*args, **kwargs)
+        with patch.object(self.api, 'put', side_effect=edit_during_put):
+            self.assertEqual('merged', self.sync().state)
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.path.read_bytes())
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', self.api.get(self.docid).content)
+        self.assertEqual('uploaded', self.sync().state)
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.api.get(self.docid).content)
+
+    def test_merge_queue_survives_restart_before_local_replacement(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        self.remote(b'one\ntwo\nTHREE\n')
+        with patch('textpad_sync.sync.write', side_effect=BusyFile('Interrupted before replacement')):
+            self.assertEqual('waiting', self.sync().state)
+        row = self.ws.file('notes.txt')
+        pending_id = row['pending_id']
+        self.assertEqual(b'ONE\ntwo\nthree\n', row['pending_local'])
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', row['pending_content'])
+        self.ws.close()
+        self.ws = Workspace(self.root)
+        self.engine = Engine(self.ws, self.api)
+        with patch.object(self.api, 'put', wraps=self.api.put) as put:
+            self.assertTrue(self.sync().ok)
+        self.assertEqual(pending_id, put.call_args.args[4])
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', self.path.read_bytes())
+        self.assertIsNone(self.ws.file('notes.txt')['pending_id'])
+
+    def test_merge_receipt_retry_does_not_reorder_a_newer_server_save(self):
+        self.tracked(b'one\ntwo\nthree\nfour\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\nfour\n')
+        self.remote(b'one\ntwo\nTHREE\nfour\n')
+        original = self.api.put
+        requests = []
+        def accept_and_drop(*args, **kwargs):
+            requests.append(args[4])
+            original(*args, **kwargs)
+            raise SyncError('Merge response lost')
+        with patch.object(self.api, 'put', side_effect=accept_and_drop):
+            self.assertEqual('error', self.sync().state)
+        self.assertEqual(b'ONE\ntwo\nTHREE\nfour\n', self.path.read_bytes())
+        newer = self.remote(b'ONE\nTWO\nTHREE\nfour\n')
+        self.ws.close()
+        self.ws = Workspace(self.root)
+        self.engine = Engine(self.ws, self.api)
+        with patch.object(self.api, 'put', wraps=self.api.put) as put:
+            self.assertTrue(self.sync().ok)
+        self.assertEqual(requests[0], put.call_args.args[4])
+        self.assertEqual(newer.revision, self.api.get(self.docid).revision)
+        self.assertEqual(b'ONE\nTWO\nTHREE\nfour\n', self.path.read_bytes())
+        self.assertEqual(4, len(self.api.history(self.docid)))
+
+    def test_restart_after_local_merge_write_before_staging_marker_is_cleared(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        self.remote(b'one\ntwo\nTHREE\n')
+        original = self.ws.update
+        def interrupt_staging(row, **values):
+            if values == {'pending_local': None}:
+                raise SyncError('Interrupted after local replacement')
+            return original(row, **values)
+        with patch.object(self.ws, 'update', side_effect=interrupt_staging):
+            self.assertEqual('error', self.sync().state)
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', self.path.read_bytes())
+        pending_id = self.ws.file('notes.txt')['pending_id']
+        self.assertIsNotNone(self.ws.file('notes.txt')['pending_local'])
+        self.ws.close()
+        self.ws = Workspace(self.root)
+        self.engine = Engine(self.ws, self.api)
+        with patch.object(self.api, 'put', wraps=self.api.put) as put:
+            self.assertTrue(self.sync().ok)
+        self.assertEqual(pending_id, put.call_args.args[4])
+        self.assertIsNone(self.ws.file('notes.txt')['pending_local'])
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', self.api.get(self.docid).content)
+
+    def test_overlap_during_merge_staging_holds_and_allows_explicit_resolution(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        self.remote(b'one\ntwo\nTHREE\n')
+        with patch('textpad_sync.sync.write', side_effect=BusyFile('Interrupted before replacement')):
+            self.assertEqual('waiting', self.sync().state)
+        self.path.write_bytes(b'ONE\ntwo\nAnother third line\n')
+        self.assertEqual('conflict', self.sync().state)
+        self.assertEqual(b'ONE\ntwo\nAnother third line\n', self.path.read_bytes())
+        self.assertEqual(b'one\ntwo\nTHREE\n', self.api.get(self.docid).content)
+        result = self.engine.resolve(self.ws.file('notes.txt'), 'local', settle=0)
+        self.assertTrue(result.ok)
+        self.assertEqual(b'ONE\ntwo\nAnother third line\n', self.api.get(self.docid).content)
+        self.assertIn(b'ONE\ntwo\nTHREE\n', self.backup_contents())
+
+    def test_schema_upgrade_preserves_an_existing_pending_upload(self):
+        self.tracked()
+        self.path.write_bytes(b'Pending from an older CLI\n')
+        with patch.object(self.api, 'put', side_effect=SyncError('Offline')):
+            self.assertEqual('error', self.sync().state)
+        pending_id = self.ws.file('notes.txt')['pending_id']
+        with self.ws.db:
+            self.ws.db.execute('ALTER TABLE files DROP COLUMN pending_local')
+            self.ws.db.execute('PRAGMA user_version=1')
+        self.ws.close()
+        self.ws = Workspace(self.root)
+        self.engine = Engine(self.ws, self.api)
+        self.assertEqual(2, self.ws.db.execute('PRAGMA user_version').fetchone()[0])
+        self.assertEqual(pending_id, self.ws.file('notes.txt')['pending_id'])
+        self.assertIsNone(self.ws.file('notes.txt')['pending_local'])
+        self.assertTrue(self.sync().ok)
+        self.assertEqual(b'Pending from an older CLI\n', self.api.get(self.docid).content)
+
+    def test_resolving_remote_discards_an_unsent_merge_without_uploading_it(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        remote = self.remote(b'one\ntwo\nTHREE\n')
+        with patch('textpad_sync.sync.write', side_effect=BusyFile('Interrupted before replacement')):
+            self.assertEqual('waiting', self.sync().state)
+        self.path.write_bytes(b'ONE\ntwo\nAnother third line\n')
+        self.assertEqual('conflict', self.sync().state)
+        with patch.object(self.api, 'put', side_effect=AssertionError('Unsent merge was uploaded')):
+            result = self.engine.resolve(self.ws.file('notes.txt'), 'remote', settle=0)
+        self.assertEqual('downloaded', result.state)
+        self.assertEqual(remote.content, self.path.read_bytes())
+        self.assertEqual(remote.revision, self.api.get(self.docid).revision)
+        self.assertIsNone(self.ws.file('notes.txt')['pending_id'])
+
     def test_blank_and_large_truncations_are_held_until_explicitly_allowed(self):
         original = self.tracked(LONG)
         for raw in (b'', b' \r\n\t', b'Only one line left\n'):
@@ -705,6 +946,75 @@ class SyncTests(unittest.TestCase):
         self.assertEqual('waiting', result.state)
         self.assertEqual(b'First version\r\n', self.api.get(self.docid).content)
 
+    def test_watch_retries_offline_checks_early_and_reports_unchanged_recovery(self):
+        self.tracked()
+        messages = []
+        watcher = Watcher(self.ws, self.api, remote_interval=120, report=messages.append)
+        watcher.step(0)
+        watcher.step(2)
+        with patch.object(self.api, 'list', side_effect=SyncError('Network unavailable')) as listing:
+            watcher.notify()
+            watcher.step(3)
+            watcher.step(4)
+            watcher.step(7)
+            self.assertEqual(1, listing.call_count)
+            watcher.step(8)
+            self.assertEqual(2, listing.call_count)
+        self.assertEqual(1, sum('offline:' in message for message in messages))
+        watcher.step(13)
+        watcher.step(14)
+        self.assertEqual(1, sum('online:' in message for message in messages))
+        self.assertFalse(watcher.offline)
+        # No content change was needed to make recovery visible.
+        self.assertEqual(b'First version\r\n', self.path.read_bytes())
+
+    def test_watch_retries_an_offline_local_save_without_waiting_for_remote_interval(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, remote_interval=120, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        self.path.write_bytes(b'Local edit while Wi-Fi is disconnected\n')
+        watcher.step(3)
+        with patch.object(self.api, 'list', side_effect=SyncError('Network unavailable')):
+            watcher.step(5)
+        self.assertEqual(b'First version\r\n', self.api.get(self.docid).content)
+        watcher.step(10)
+        self.assertEqual(b'Local edit while Wi-Fi is disconnected\n', self.api.get(self.docid).content)
+
+    def test_watch_retries_the_exact_pending_upload_after_a_connection_failure(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, remote_interval=120, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        self.path.write_bytes(b'Local save interrupted during upload\n')
+        watcher.step(3)
+        with patch.object(self.api, 'put', side_effect=SyncError('Connection lost during upload')):
+            watcher.step(5)
+        pending = self.ws.file('notes.txt')['pending_id']
+        self.assertTrue(pending)
+        with patch.object(self.api, 'put', wraps=self.api.put) as put:
+            watcher.step(10)
+        self.assertEqual(pending, put.call_args.args[-1])
+        self.assertIsNone(self.ws.file('notes.txt')['pending_id'])
+        self.assertEqual(b'Local save interrupted during upload\n', self.api.get(self.docid).content)
+
+    def test_watch_survives_an_interrupted_http_response_and_recovers(self):
+        self.tracked()
+        messages = []
+        watcher = Watcher(self.ws, self.api, remote_interval=120, report=messages.append)
+        watcher.step(0)
+        watcher.step(2)
+        watcher.notify()
+        with patch.object(self.api.opener, 'open') as opening:
+            opening.return_value.__enter__.return_value.read.side_effect = IncompleteRead(b'partial', 10)
+            watcher.step(3)
+        self.assertTrue(watcher.offline)
+        self.assertTrue(any('IncompleteRead' in message for message in messages))
+        self.remote(b'Server edit after the connection recovered\n')
+        watcher.step(8)
+        self.assertFalse(watcher.offline)
+        self.assertEqual(b'Server edit after the connection recovered\n', self.path.read_bytes())
+
     def test_watch_pulls_remote_changes_while_local_file_is_unchanged(self):
         self.tracked()
         watcher = Watcher(self.ws, self.api, report=lambda message: None)
@@ -734,6 +1044,23 @@ class SyncTests(unittest.TestCase):
             watcher.step(4)
             self.assertEqual(b'Remote change received over WebSocket\r\n', self.path.read_bytes())
             self.assertTrue(any('downloaded:' in message for message in messages))
+        self.assertFalse(events.thread.is_alive())
+
+    def test_idle_live_heartbeats_do_not_notify_or_query_the_server_database(self):
+        ready, hints = threading.Event(), []
+        def changed():
+            hints.append(True)
+            ready.set()
+        with (patch('textpad_sync.events.PING_INTERVAL', 0.02),
+              patch('textpad_sync.events.PONG_TIMEOUT', 0.5),
+              patch.object(self.store, 'change_cursor', wraps=self.store.change_cursor) as cursor):
+            with ChangeEvents(self.api, changed, lambda: None) as events:
+                self.assertTrue(ready.wait(3))
+                with events.lock:
+                    connection = events.socket
+                self.assertTrue(connection.pong.wait(3), 'Server did not answer the client heartbeat')
+                self.assertEqual([True], hints, 'A pong triggered an unnecessary reconciliation')
+                self.assertEqual(1, cursor.call_count, 'A heartbeat queried the database')
         self.assertFalse(events.thread.is_alive())
 
     def test_live_reconnect_checks_changes_missed_while_disconnected(self):
@@ -877,6 +1204,27 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(b'Conflicting remote edit\n', self.api.get(self.docid).content)
         self.assertTrue(any('conflict:' in message for message in messages))
         self.assertTrue({b'Unsynced local edit\n', b'Conflicting remote edit\n'} <= self.backup_contents())
+
+    def test_watch_merges_stable_edits_then_accepts_the_next_live_download_immediately(self):
+        self.tracked(b'one\ntwo\nthree\n')
+        messages = []
+        watcher = Watcher(self.ws, self.api, settle=10, report=messages.append)
+        watcher.step(0)
+        watcher.step(10)
+        self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        watcher.step(11)
+        self.remote(b'one\ntwo\nTHREE\n')
+        watcher.notify()
+        watcher.step(12)
+        self.assertEqual(b'ONE\ntwo\nthree\n', self.path.read_bytes())
+        watcher.step(21)
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', self.path.read_bytes())
+        self.assertEqual(b'ONE\ntwo\nTHREE\n', self.api.get(self.docid).content)
+        self.assertEqual(1, sum('merged:' in message for message in messages))
+        self.remote(b'ONE\nTWO\nTHREE\n')
+        watcher.notify()
+        watcher.step(21.1)
+        self.assertEqual(b'ONE\nTWO\nTHREE\n', self.path.read_bytes())
 
     def test_periodic_reconciliation_continues_when_live_updates_are_unavailable(self):
         self.tracked()
