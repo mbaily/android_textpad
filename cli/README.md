@@ -100,6 +100,38 @@ The monitor retries network failures on subsequent reconciliation passes. Each u
 
 Only saved disk contents are visible to the CLI. It cannot inspect an external editor's unsaved buffers or tell whether an otherwise plausible rewrite was intentional. Pause watch before keeping an old unsaved buffer open while accepting remote changes. Local replacements compare the saved file again immediately before atomic replacement and retain snapshots, but a portable filesystem has no compare-and-swap operation against an editor writing at the exact same instant. These are recovery safeguards, not a guarantee against every possible editor race or storage failure.
 
+## Errands
+
+```sh
+textpad-sync errands                              # Full matching lines; hide [X]/[C] tasks
+textpad-sync errands --files                      # Matching files, tags, and line counts
+textpad-sync errands --show-completed             # Include completed and cancelled tasks
+textpad-sync errands --files --show-completed
+
+textpad-sync errands tags                         # View the shared errands hashtag list
+textpad-sync errands tags --set '#chemist #groceries #bunnings'
+textpad-sync errands tags --add postoffice
+textpad-sync errands tags --remove groceries
+textpad-sync errands tags --clear
+textpad-sync errands tags --available              # Discover tags to add, including tags on closed tasks
+```
+
+`errands` matches lines containing **any** saved errands hashtag, using the same boundaries and case-insensitive matching as Android and the browser. Line matching and **Hide [X] / [C]** are on by default for every invocation. Use `--lines` or `--hide-completed` to select those defaults explicitly. The filter recognises lowercase `[x]`/`[c]`, indentation, and `- `, `* `, or `+ ` list bullets. File matching excludes files whose only matches are hidden tasks. Lines are printed in full with their original line numbers.
+
+The hashtag list is shared with Android and the browser through the server. Tags accept optional `#` prefixes and whitespace/comma separators, are lowercased, and are deduplicated. Quote strings containing `#` in your shell. `--set` replaces the list, while `--add` and `--remove` update the current list. Each tag is limited to 64 characters and the list to 200 tags, matching the server.
+
+Search covers saved tracked files and other server documents. A readable tracked file takes precedence over its server copy, including edits that have not synced yet; unrelated local files are excluded. Searching leaves document contents and sync baselines untouched. Local matches show `path:line: text`; server-only matches show `name [DOCUMENT_ID]:line: text`. File matching prints each matching file once, with its matching tags and line count. An unreadable tracked file is reported, and its server copy can still appear; exit code `2` indicates incomplete local results.
+
+Use `--json` on either `errands` or `errands tags` for machine-readable output. Search JSON includes the selected mode, filter, saved hashtags, and results with document IDs, local paths (or null), and sources. Line mode includes complete matching lines; file mode includes line counts. `errands tags --available --json` returns `all_hashtags` instead of the saved list.
+
+```sh
+textpad-sync errands --offline
+textpad-sync errands tags --offline
+textpad-sync errands tags --set '#chemist #postoffice' --offline
+```
+
+`--offline` uses cached settings and readable saved tracked files without requiring a token or network access. Fetch the shared list online at least once, or set it offline first. Offline tag changes are stored in the workspace and sent on the next online `errands` search or `errands tags` view/edit. A failed online save also retains the edited list for retry and exits with code `1`. Settings use the server's last-write-wins behavior, matching the other clients. Ordinary file `sync`/`watch` and `tags --available` do not sync errands settings. Online searches require a server version providing `POST /api/v1/hashtags`.
+
 ## Blank files and suspicious deletions
 
 Automatic and manual sync both hold a change when it:
@@ -160,7 +192,7 @@ textpad-sync remove projects/notes.txt
 
 `relocate` requires that the old path is absent and the new local file exists. It preserves the server document ID, baseline, and pending receipts. `remove` only stops tracking. It never deletes a local file, server document, or recovery snapshot. Deleting a tracked file externally reports it missing and does not delete its server counterpart or recreate the local file automatically. There is no server document-delete API.
 
-Exit codes: `0` for success, `1` for an operational/configuration failure, `2` when a sync completed with held/conflicting/missing files, and `130` when stopped with Ctrl+C.
+Exit codes: `0` for success, `1` for an operational/configuration failure, `2` when a sync completed with held/conflicting/missing files or an errands search skipped unreadable local files, and `130` when stopped with Ctrl+C.
 
 ## Build and verify
 
@@ -174,6 +206,6 @@ python3 server/textpad_server/static/textpad-sync.pyz --help
 PYTHONPATH=cli:server /path/to/server-venv/bin/python cli/tests/https_smoke.py
 ```
 
-The integration tests use an isolated temporary server/database and normal HTTP sockets on loopback; production client URLs require HTTPS. Tests cover exact-byte transfers, conflict races, durable retries/restarts, blank/truncated saves, editor replacement saves, recovery, permissions, path checks, and offline commands. Native runtime verification was performed on Linux; Windows/macOS use the same standard-library code and platform file-lock branches and still need native smoke testing.
+The integration tests use an isolated temporary server/database and normal HTTP sockets on loopback; production client URLs require HTTPS. Tests cover exact-byte transfers, conflict races, durable retries/restarts, blank/truncated saves, editor replacement saves, recovery, permissions, path checks, offline commands, and errands matching/settings. Native runtime verification was performed on Linux; Windows/macOS use the same standard-library code and platform file-lock branches and still need native smoke testing.
 
 `./scripts/deploy-server.sh` runs these tests and packages/publishes the archive and guide alongside the server. `package-cli.py` writes deterministic archives and a SHA-256 file; generated downloads are ignored by Git.

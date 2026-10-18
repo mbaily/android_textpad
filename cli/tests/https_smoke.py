@@ -1,5 +1,6 @@
 """Packaged HTTPS smoke test for verified and explicit insecure modes (needs openssl)."""
 from pathlib import Path
+import json
 import os
 import signal
 import subprocess
@@ -46,8 +47,9 @@ def main():
         command = [sys.executable, str(ARCHIVE)]
         watcher = None
         try:
-            def run(*args, expected=0):
-                result = subprocess.run(command + list(args), env=env, capture_output=True, text=True)
+            def run(*args, expected=0, environment=None):
+                result = subprocess.run(command + list(args), env=env if environment is None else environment,
+                                        capture_output=True, text=True)
                 assert result.returncode == expected, result.stderr
                 return result.stdout
             run('init', str(root / 'untrusted-workspace'), '--server', base, expected=1)
@@ -72,6 +74,26 @@ def main():
             api = Api(base, TOKEN, 'cli-https-verification', cert)
             remote = next(d for d in api.list() if d.name == 'notes.txt')
             assert api.get(remote.id).content == content
+            errands_id = str(uuid.uuid4())
+            errands_content = b'[ ] Prescription #chemist\r\n- [c] Cancelled #chemist\r\n'
+            api.put(errands_id, 'errands.txt', errands_content, None, str(uuid.uuid4()))
+            saved_tags = json.loads(run('-C', str(verified), 'errands', 'tags', '--set', '#chemist #groceries', '--json'))
+            assert saved_tags['hashtags'] == api.errands()['hashtags'] == ['chemist', 'groceries']
+            matches = json.loads(run('-C', str(verified), 'errands', '--json'))['results']
+            assert len(matches) == 1 and matches[0]['id'] == errands_id
+            assert [line['line_number'] for line in matches[0]['lines']] == [1]
+            files = json.loads(run('-C', str(verified), 'errands', '--files', '--json'))['results']
+            assert len(files) == 1 and files[0]['line_count'] == 1 and 'lines' not in files[0]
+            matches = json.loads(run('-C', str(verified), 'errands', '--show-completed', '--json'))['results']
+            assert [line['line_number'] for line in matches[0]['lines']] == [1, 2]
+            run('-C', str(verified), 'get', errands_id)
+            (verified / 'errands.txt').write_text('[ ] Saved local edit #chemist\n', encoding='utf-8')
+            matches = json.loads(run('-C', str(verified), 'errands', '--json'))['results']
+            assert len(matches) == 1 and matches[0]['source'] == 'local'
+            assert matches[0]['lines'][0]['text'] == '[ ] Saved local edit #chemist'
+            offline_env = {key: value for key, value in env.items() if key != 'TEXTPAD_TOKEN'}
+            assert 'Saved local edit' in run('-C', str(verified), 'errands', '--offline', environment=offline_env)
+            run('-C', str(local), 'errands', 'tags', '--insecure')
             with (root / 'watch.log').open('w') as log:
                 watcher = subprocess.Popen(command + ['-C', str(local), 'watch', '--insecure', '--settle', '0.3',
                     '--interval', '0.05', '--remote-interval', '0.5'], env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -95,7 +117,7 @@ def main():
             run('-C', str(local), 'remove', 'notes.txt')
             assert file.read_bytes() == remote_final
             assert api.get(remote.id).content == remote_final
-            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
+            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
         finally:
             if watcher is not None and watcher.poll() is None:
                 watcher.terminate()

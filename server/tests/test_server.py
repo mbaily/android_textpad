@@ -447,6 +447,23 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(expected, [line["line_number"] for line in lines])
             self.assertEqual(text.replace("\r\n", "\n").index("Note about"), lines[-1]["offset"])
 
+    def test_token_hashtag_search_matches_browser_and_requires_authentication(self):
+        self.login()
+        self.browser_put('cli-search', {
+            'name': 'tasks.txt', 'text': '[ ] Open #chemist\n- [C] Closed #chemist\n',
+            'base_revision': None, 'request_id': 'cli-search-1',
+        })
+        query = {'tags': ['chemist'], 'hide_completed': True}
+        browser = self.client.post('/editor/api/hashtags', headers={'X-CSRF-Token': self.csrf}, json=query)
+        token = self.client.post('/api/v1/hashtags', headers=self.headers, json=query)
+        self.assertEqual(200, token.status_code)
+        self.assertEqual(browser.json, token.json)
+        self.assertEqual([1], [line['line_number'] for line in token.json['results'][0]['lines']])
+        self.assertEqual([], self.client.post('/api/v1/hashtags', headers=self.headers,
+                         json={**query, 'exclude_ids': ['cli-search']}).json['results'])
+        self.assertEqual(401, self.client.post('/api/v1/hashtags', json=query).status_code)
+        self.assertEqual(400, self.client.post('/api/v1/hashtags', headers=self.headers, json=['invalid']).status_code)
+
 
 
 if __name__=="__main__": unittest.main()

@@ -11,6 +11,7 @@ import sys
 
 from . import SyncError, __version__
 from .api import Api, endpoint, identifier
+from .errands import run as run_errands
 from .filesystem import filename, is_link, read, settled_read, write
 from .storage import Workspace
 from .sync import Engine
@@ -85,6 +86,27 @@ def parser():
     recover = commands.add_parser('recover', help='Recover a local snapshot to a new file; existing files are never overwritten.')
     recover.add_argument('snapshot', type=int)
     recover.add_argument('--to', required=True)
+    errands = commands.add_parser('errands', help='Search saved local files and server documents using shared errands hashtags.')
+    modes = errands.add_mutually_exclusive_group()
+    modes.add_argument('--lines', dest='mode', action='store_const', const='lines', help='Show complete matching lines (default).')
+    modes.add_argument('--files', dest='mode', action='store_const', const='files', help='Show matching files with tags and line counts.')
+    closed = errands.add_mutually_exclusive_group()
+    closed.add_argument('--hide-completed', dest='hide_completed', action='store_true', help='Hide [X]/[C] task lines (default).')
+    closed.add_argument('--show-completed', dest='hide_completed', action='store_false', help='Include [X]/[C] task lines.')
+    errands.set_defaults(mode='lines', hide_completed=True)
+    errands.add_argument('--json', action='store_true')
+    errands.add_argument('--offline', action='store_true', help='Use cached errands hashtags and saved tracked files only.')
+    errands_commands = errands.add_subparsers(dest='errands_command')
+    tags = errands_commands.add_parser('tags', help='View or edit the shared errands hashtags.')
+    edit = tags.add_mutually_exclusive_group()
+    edit.add_argument('--set', nargs='+', metavar='TAG', help='Replace the list (accepts space/comma-separated tags).')
+    edit.add_argument('--add', nargs='+', metavar='TAG', help='Add tags to the list.')
+    edit.add_argument('--remove', nargs='+', metavar='TAG', help='Remove tags from the list.')
+    edit.add_argument('--clear', action='store_true', help='Clear the saved list.')
+    edit.add_argument('--available', action='store_true', help='List discovered hashtags, including those on [X]/[C] tasks.')
+    tags.add_argument('--json', action='store_true', default=argparse.SUPPRESS)
+    tags.add_argument('--offline', action='store_true', default=argparse.SUPPRESS, help='View/edit cached settings or discover tags in local files.')
+    tags.add_argument('--insecure', action='store_true', default=argparse.SUPPRESS, help=insecure_help)
     for command in commands.choices.values():
         # Keep a global --insecure value when a subcommand does not repeat it.
         command.add_argument('--insecure', action='store_true', default=argparse.SUPPRESS, help=insecure_help)
@@ -167,6 +189,9 @@ def print_result(result):
 
 def dispatch(ws, args):
     command = args.command
+    if command == 'errands':
+        api = None if args.offline else api_for(ws, insecure=args.insecure)
+        return run_errands(ws, api, args)
     if command == 'status':
         output(local_status(ws), ['path', 'state', 'document_id', 'revision', 'last_issue'], as_json=args.json)
         return 0

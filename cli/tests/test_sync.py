@@ -19,6 +19,7 @@ from textpad_sync import BusyFile, SyncError
 from textpad_sync.api import Api, ApiError, Document, MAX_BYTES, endpoint
 from textpad_sync.cli import main, parser
 from textpad_sync.filesystem import deletion_reason, read, write, workspace_lock
+from textpad_sync.hashtags import normalize_tags, scan
 from textpad_sync.storage import Workspace
 from textpad_sync.sync import Engine
 from textpad_sync.watch import Watcher
@@ -93,6 +94,148 @@ class SyncTests(unittest.TestCase):
 
     def backup_contents(self):
         return {self.ws.backup(row['id'])['content'] for row in self.ws.backups()}
+
+    def test_errands_tag_edits_share_settings_with_other_clients(self):
+        code, out, err = self.cli('errands', 'tags', '--set', '#Chemist, #groceries', '#chemist', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual(['chemist', 'groceries'], json.loads(out)['hashtags'])
+        self.assertEqual(['chemist', 'groceries'], self.store.get_errands()['hashtags'])
+        self.store.put_errands(['postoffice'])
+        self.assertEqual('#postoffice\n', self.cli('errands', 'tags')[1])
+        self.assertEqual(0, self.cli('errands', 'tags', '--add', '#Hardware-store', '#postoffice')[0])
+        self.assertEqual(['postoffice', 'hardware-store'], self.store.get_errands()['hashtags'])
+        self.assertEqual(0, self.cli('errands', 'tags', '--remove', '#POSTOFFICE')[0])
+        self.assertEqual(['hardware-store'], self.store.get_errands()['hashtags'])
+        code, out, err = self.cli('errands', 'tags', '--clear', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual([], json.loads(out)['hashtags'])
+        self.assertEqual([], self.store.get_errands()['hashtags'])
+
+    def test_errands_defaults_hide_both_closed_states_locally_and_on_server(self):
+        tag = 'cli_' + self.docid.replace('-', '')
+        content = (f'[ ] Open #{tag}\r\n\t[C] Cancelled #{tag}\r\n'
+                   f'  - [c] Cancelled bullet #{tag}\r\n* [X] Done #{tag}\r\n'
+                   f'+ [x] Done too #{tag}\r\nNote about [C] #{tag}\r\n').encode()
+        self.tracked(content)
+        remote_id = str(uuid.uuid4())
+        self.store.put(remote_id, 'remote.txt', content, None, str(uuid.uuid4()))
+        self.store.put_errands([tag])
+        for options, expected in [((), [1, 6]), (('--show-completed',), [1, 2, 3, 4, 5, 6])]:
+            code, out, err = self.cli('errands', *options, '--json')
+            self.assertEqual((0, ''), (code, err))
+            result = json.loads(out)
+            self.assertEqual('lines', result['mode'])
+            self.assertEqual(not options, result['hide_completed'])
+            matches = {match['id']: match for match in result['results']}
+            self.assertEqual({self.docid, remote_id}, set(matches))
+            for match in matches.values():
+                self.assertEqual(expected, [line['line_number'] for line in match['lines']])
+
+    def test_errands_file_mode_filters_closed_only_files_and_keeps_metadata(self):
+        tag = 'cli_' + self.docid.replace('-', '')
+        self.tracked(f'[ ] Open #{tag}\n[C] Closed #{tag}\n'.encode())
+        remote_id = str(uuid.uuid4())
+        self.store.put(remote_id, 'closed.txt', f'- [X] Done #{tag}\n'.encode(), None, str(uuid.uuid4()))
+        self.store.put_errands([tag])
+        code, out, err = self.cli('errands', '--files', '--json')
+        self.assertEqual((0, ''), (code, err))
+        result = json.loads(out)
+        self.assertEqual('files', result['mode'])
+        self.assertEqual(1, len(result['results']))
+        match = result['results'][0]
+        self.assertEqual(('notes.txt', [tag], 1), (match['path'], match['matched_tags'], match['line_count']))
+        self.assertNotIn('lines', match)
+        code, out, err = self.cli('errands', '--files', '--show-completed')
+        self.assertEqual((0, ''), (code, err))
+        self.assertIn('notes.txt\t#' + tag + '\t2 matching lines', out)
+        self.assertIn('closed.txt [' + remote_id + ']', out)
+        self.assertNotIn('[X] Done', out)
+
+    def test_errands_saved_local_edits_override_server_without_uploading(self):
+        tag = 'cli_' + self.docid.replace('-', '')
+        original = self.tracked(f'[ ] Server task #{tag}\n'.encode())
+        local = f'[ ] Saved local café 😀 #{tag}\n'.encode('utf-16')
+        self.path.write_bytes(local)
+        new_path = self.root / 'new.txt'
+        new_path.write_text(f'[ ] New task #{tag}\n', encoding='utf-8')
+        self.ws.add('new.txt', new_path.read_bytes())
+        self.store.put_errands([tag])
+        code, out, err = self.cli('errands')
+        self.assertEqual((0, ''), (code, err))
+        self.assertIn('notes.txt:1: [ ] Saved local café 😀', out)
+        self.assertIn('new.txt:1: [ ] New task', out)
+        self.assertNotIn('Server task', out)
+        self.assertEqual(local, self.path.read_bytes())
+        self.assertEqual(original.revision, self.api.get(self.docid).revision)
+
+    def test_errands_matches_any_saved_tag_and_prints_full_lines(self):
+        tag = 'cli_' + self.docid.replace('-', '')
+        long_line = '[ ] ' + 'words ' * 500 + '#' + tag
+        self.remote((long_line + f'\n[ ] Second #{tag}_other\n').encode())
+        self.store.put_errands([tag, tag + '_other'])
+        code, out, err = self.cli('errands')
+        self.assertEqual((0, ''), (code, err))
+        self.assertIn(long_line, out)
+        self.assertIn('notes.txt [' + self.docid + ']:2: [ ] Second', out)
+
+    def test_errands_discovery_includes_closed_tasks_and_unsynced_files(self):
+        tag = 'cli_' + self.docid.replace('-', '')
+        self.tracked(f'[X] Old #{tag}_old\n'.encode())
+        self.path.write_text(f'[C] Saved #{tag}_local\n', encoding='utf-8')
+        remote_id = str(uuid.uuid4())
+        self.store.put(remote_id, 'remote.txt', f'[X] Remote #{tag}_remote\n'.encode(), None, str(uuid.uuid4()))
+        code, out, err = self.cli('errands', 'tags', '--available', '--json')
+        self.assertEqual((0, ''), (code, err))
+        tags = json.loads(out)['all_hashtags']
+        self.assertIn(tag + '_local', tags)
+        self.assertIn(tag + '_remote', tags)
+        self.assertNotIn(tag + '_old', tags)
+
+    def test_errands_offline_settings_survive_restart_and_sync_including_clear(self):
+        self.tracked(b'[ ] Local #chemist\n')
+        self.store.put_errands(['remote'])
+        with patch('textpad_sync.cli.api_for', side_effect=AssertionError('Offline command accessed the network')):
+            code, out, err = self.cli('errands', 'tags', '--offline', '--set', '#chemist', '--json')
+            self.assertEqual(0, code)
+            self.assertTrue(json.loads(out)['dirty'])
+            self.assertIn('saved locally', err)
+            code, out, err = self.cli('errands', '--offline', '--json')
+            self.assertEqual((0, ''), (code, err))
+            self.assertEqual('local', json.loads(out)['results'][0]['source'])
+        self.assertEqual(['remote'], self.store.get_errands()['hashtags'])
+        code, out, err = self.cli('errands', 'tags', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertFalse(json.loads(out)['dirty'])
+        self.assertEqual(['chemist'], self.store.get_errands()['hashtags'])
+        self.assertEqual(0, self.cli('errands', 'tags', '--offline', '--clear')[0])
+        self.assertEqual(0, self.cli('errands')[0])
+        self.assertEqual([], self.store.get_errands()['hashtags'])
+
+    def test_errands_failed_tag_save_is_preserved_for_retry(self):
+        with patch.object(Api, 'errands', side_effect=SyncError('Connection lost.')):
+            code, out, err = self.cli('errands', 'tags', '--set', 'chemist')
+        self.assertEqual(1, code)
+        self.assertIn('saved locally', err)
+        self.assertTrue(json.loads(self.cli('errands', 'tags', '--offline', '--json')[1])['dirty'])
+        self.assertEqual(0, self.cli('errands', 'tags')[0])
+        self.assertEqual(['chemist'], self.store.get_errands()['hashtags'])
+
+    def test_errands_unreadable_local_file_reports_partial_results_and_uses_server(self):
+        tag = 'cli_' + self.docid.replace('-', '')
+        self.tracked(f'[ ] Server #{tag}\n'.encode())
+        self.path.unlink()
+        self.store.put_errands([tag])
+        code, out, err = self.cli('errands', '--json')
+        self.assertEqual(2, code)
+        self.assertIn('Could not search', err)
+        self.assertEqual('server', json.loads(out)['results'][0]['source'])
+
+    def test_errands_empty_configuration_and_no_matches_explain_results(self):
+        self.store.put_errands([])
+        self.assertIn('errands tags --set', self.cli('errands')[1])
+        self.store.put_errands(['cli_' + self.docid.replace('-', '')])
+        self.assertEqual('No matching lines.\n', self.cli('errands')[1])
+        self.assertEqual('No matching files.\n', self.cli('errands', '--files')[1])
 
     def test_new_upload_is_byte_exact_and_unchanged_sync_creates_no_revision(self):
         raw = 'Unicode café 😀\r\nsecond\nlast\r'.encode('utf-8-sig')
@@ -542,6 +685,39 @@ class SyncTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_errands_parser_defaults_and_nested_common_flags(self):
+        args = parser().parse_args(['errands'])
+        self.assertEqual(('lines', True, False), (args.mode, args.hide_completed, args.offline))
+        for flags in (['--insecure', 'errands', 'tags'], ['errands', '--insecure', 'tags'],
+                      ['errands', 'tags', '--insecure']):
+            self.assertTrue(parser().parse_args(flags).insecure)
+        for flags in (['errands', '--offline', '--json', 'tags'], ['errands', 'tags', '--offline', '--json']):
+            args = parser().parse_args(flags)
+            self.assertTrue(args.offline)
+            self.assertTrue(args.json)
+        for flags in (['errands', '--lines', '--files'], ['errands', 'tags', '--clear', '--set', 'chemist']):
+            with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                parser().parse_args(flags)
+
+    def test_local_hashtag_boundaries_line_numbers_and_normalization_match_server(self):
+        self.assertEqual(['chemist', 'hardware-store', '_shop'], normalize_tags('#Chemist, chemist #hardware-store _shop'))
+        value = ('[ ] (#Chemist), #hardware-store!\r\n'
+                 'https://example.com#chemist #123 x#chemist #chemist/path\r'
+                 'Note about [C] #chemist\n+ [c] Closed #chemist\n')
+        discovered, match = scan(value, ['chemist'], True)
+        self.assertEqual(['chemist', 'hardware-store'], discovered)
+        self.assertEqual([1, 3], [line['line_number'] for line in match['lines']])
+
+    def test_errands_api_rejects_malformed_responses(self):
+        api = Api('https://example.com', TOKEN, 'cli-test')
+        for response in ({}, {'hashtags': 'chemist', 'updated_at': ''}, {'hashtags': [False], 'updated_at': ''}):
+            with patch.object(api, 'request', return_value=response), self.assertRaises(SyncError):
+                api.errands()
+        for response in ({}, {'all_hashtags': [], 'results': ['invalid']},
+                         {'all_hashtags': [], 'results': [{'id': 'ok', 'name': 'file', 'lines': [None], 'matched_tags': []}]}):
+            with patch.object(api, 'request', return_value=response), self.assertRaises(SyncError):
+                api.search_hashtags(['chemist'])
+
     def test_insecure_flag_is_per_invocation_and_accepts_either_position(self):
         for args in (['--insecure', 'sync'], ['sync', '--insecure'],
                      ['--insecure', 'sync', '--insecure'], ['init', 'directory', '--insecure']):

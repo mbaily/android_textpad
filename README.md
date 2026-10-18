@@ -10,7 +10,7 @@ A native, dark-by-default text editor for **Android 16 / API 36 and later**. The
 
 [Python CLI client](cli/README.md) · [Download CLI](https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz)
 
-The Python 3.11+ CLI syncs explicitly selected local files on Linux, Windows, and macOS, with SQLite mappings and recovery snapshots. Edit with any text editor and use `textpad-sync sync` or foreground `textpad-sync watch`. It holds suspicious blank/truncated saves and conflicts for explicit resolution. See the [setup, commands, and recovery guide](cli/README.md).
+The Python 3.11+ CLI syncs explicitly selected local files on Linux, Windows, and macOS, with SQLite mappings and recovery snapshots. Edit with any text editor and use `textpad-sync sync` or foreground `textpad-sync watch`. It holds suspicious blank/truncated saves and conflicts for explicit resolution. `textpad-sync errands` searches local/server files with the shared errands hashtags; it defaults to line matching with completed/cancelled tasks hidden. `errands --files` switches to file matching, and `errands tags` views or edits the shared hashtag list. See the [setup, commands, and recovery guide](cli/README.md).
 
 The [Vim 9 plugin](vim/README.md) provides an assignable toggle for the same uncompleted-tasks view. It displays open tasks with their headings/context and lets you edit visible lines; `:write` saves the complete source file, including hidden text. [Download the Vim plugin](https://git23069.hopto.org/android_textpad/editor/static/textpad-tasks-vim.zip).
 

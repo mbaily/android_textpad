@@ -99,11 +99,17 @@ class Workspace:
         with workspace_lock(self.folder):
             yield self
 
-    def setting(self, key):
+    def setting(self, key, *, default=...):
         row = self.db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
         if row is None:
+            if default is not ...:
+                return default
             raise SyncError('Incomplete workspace configuration: ' + key)
         return row[0]
+
+    def set_setting(self, key, value):
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', (key, value))
 
     def path(self, value):
         return safe_path(self.root, value)

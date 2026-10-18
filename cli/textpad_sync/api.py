@@ -161,6 +161,42 @@ class Api:
     def history(self, doc_id):
         return self._documents(self.request('GET', 'documents/' + identifier(doc_id) + '/revisions'))
 
+    @staticmethod
+    def _tags(value):
+        if (not isinstance(value, list) or any(not isinstance(tag, str)
+                or not re.fullmatch('[a-z_][a-z0-9_-]*', tag) for tag in value)):
+            raise SyncError('Invalid hashtags returned by the server.')
+        return value
+
+    def errands(self, tags=None):
+        result = self.request('GET', 'errands') if tags is None else self.request('PUT', 'errands', {'hashtags': tags})
+        self._tags(result.get('hashtags'))
+        if not isinstance(result.get('updated_at'), str):
+            raise SyncError('Invalid errands settings returned by the server.')
+        return {'hashtags': result['hashtags'], 'updated_at': result['updated_at']}
+
+    def search_hashtags(self, tags, *, hide_completed=True, exclude_ids=()):
+        result = self.request('POST', 'hashtags', {
+            'tags': tags, 'hide_completed': hide_completed, 'exclude_ids': list(exclude_ids),
+        })
+        self._tags(result.get('all_hashtags'))
+        try:
+            if not isinstance(result['results'], list):
+                raise ValueError()
+            for match in result['results']:
+                identifier(match['id'])
+                if not isinstance(match['name'], str) or not isinstance(match['lines'], list):
+                    raise ValueError()
+                self._tags(match['matched_tags'])
+                for line in match['lines']:
+                    if (type(line['line_number']) is not int or line['line_number'] < 1
+                            or not isinstance(line['text'], str)):
+                        raise ValueError()
+                    self._tags(line['matched_tags'])
+        except (KeyError, TypeError, ValueError) as error:
+            raise SyncError('Invalid hashtag search results returned by the server.') from error
+        return result
+
     def put(self, doc_id, name, content, base_revision, request_id):
         if not self.conditional_supported:
             self.capabilities()

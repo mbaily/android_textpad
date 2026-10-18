@@ -500,6 +500,7 @@ def create_app(test_config=None):
             raise ValueError("Send a JSON errands object.")
         return jsonify(store.put_errands(payload.get("hashtags")))
 
+    @app.post("/api/v1/hashtags")
     @app.post("/editor/api/hashtags")
     def browser_hashtags():
         payload = request.get_json(silent=True) or {}

@@ -26,6 +26,13 @@ IDs and revision identifiers contain 1–128 ASCII letters, digits, `_` or `-`. 
 | `PUT /api/v1/documents/{id}` | Metadata of the accepted revision |
 | `GET /api/v1/documents/{id}/revisions` | `{"documents": [metadata, ...]}`, newest first, including current revision |
 | `GET /api/v1/documents/{id}/revisions/{revision}` | That revision's metadata and `content_base64` |
+| `GET /api/v1/errands` | `{"hashtags": ["chemist", ...], "updated_at": "..."}` |
+| `PUT /api/v1/errands` | Saves `{"hashtags": ["chemist", ...]}` and returns the normalized list and timestamp |
+| `POST /api/v1/hashtags` | Hashtag discovery and matching lines across current server documents |
+
+Errands hashtags are shared settings across clients, with last-write-wins saves. Tags are case-insensitive, deduplicated, and stored without `#`; lists accept optional prefixes and whitespace/comma-separated strings, up to 200 tags of at most 64 characters each. Saving an unchanged list preserves its timestamp.
+
+Hashtag search accepts `{"tags": ["chemist", "groceries"], "hide_completed": true, "exclude_ids": ["local-document-id"]}`. Tags use OR matching. `hide_completed` excludes both completed `[X]` and cancelled `[C]` task lines, including lowercase markers, indentation, and list bullets. Its API default is false; the CLI explicitly sends true by default. `exclude_ids` lets a client search its saved local copies without duplicating server matches. The response contains `all_hashtags` (including tags on closed tasks) and `results`, each with `id`, `name`, `revision`, `updated_at`, `matched_tags`, and `lines`. Each line contains `line_number` (one-based), `offset` (in decoded text with LF newlines), full `text`, and `matched_tags`. Files with no visible matching lines are omitted. Empty `tags` discovers hashtags without returning matches. The browser route `/editor/api/hashtags` provides the same search with session/CSRF authentication.
 
 A PUT body contains:
 
