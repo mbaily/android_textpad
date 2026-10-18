@@ -36,7 +36,18 @@ textpad-sync remote
 
 You can supply `--token-file /private/path/token` to copy a token, or set `TEXTPAD_TOKEN` in your environment. When `init` uses only the environment variable, it does not persist that token; supply it again for subsequent network commands. Existing workspace configuration is never overwritten by `init`.
 
-If the private server CA is not trusted by your Python installation, add `--ca-file /path/to/root-ca.pem` during `init`. The PEM file is copied into the private state directory; certificate chain and hostname verification remain enabled. There is no insecure TLS option, embedded URL credential, or token command-line argument. HTTP and redirects are refused.
+If the private server CA is not trusted by your Python installation, add `--ca-file /path/to/root-ca.pem` during `init`. The PEM file is copied into the private state directory; certificate chain and hostname verification remain enabled by default. There is no embedded URL credential or token command-line argument. HTTP and redirects are refused.
+
+To skip certificate and hostname verification, pass `--insecure` before or after the command:
+
+```sh
+textpad-sync init ~/Documents/Textpad --insecure
+textpad-sync -C ~/Documents/Textpad remote --insecure
+textpad-sync -C ~/Documents/Textpad sync --insecure
+textpad-sync --insecure -C ~/Documents/Textpad watch
+```
+
+This flag applies only to that invocation, including all requests made while `watch` runs. It is not saved in the workspace, so repeat it on each network command that needs it. HTTPS remains required; server identity is not checked when this flag is set.
 
 All file arguments are relative to the workspace root. Run in that directory, let the CLI discover it from a subdirectory, or use `textpad-sync -C /path/to/workspace COMMAND ...`. Absolute paths inside the workspace are also accepted. Paths outside it, `.textpad` contents, symlinks, special files, and Windows reparse points are excluded.
 

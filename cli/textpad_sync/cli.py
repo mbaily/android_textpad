@@ -33,6 +33,8 @@ def parser():
     p = argparse.ArgumentParser(prog='textpad-sync', description='Sync a directory of local text files with a Textpad server.')
     p.add_argument('--version', action='version', version=__version__)
     p.add_argument('-C', '--directory', help='Workspace directory (otherwise discover from current directory/parents).')
+    insecure_help = 'Disable HTTPS certificate and hostname verification for this invocation.'
+    p.add_argument('--insecure', action='store_true', help=insecure_help)
     commands = p.add_subparsers(dest='command', required=True)
     init = commands.add_parser('init', help='Create a private SQLite workspace and configure server access.')
     init.add_argument('root', nargs='?')
@@ -83,6 +85,9 @@ def parser():
     recover = commands.add_parser('recover', help='Recover a local snapshot to a new file; existing files are never overwritten.')
     recover.add_argument('snapshot', type=int)
     recover.add_argument('--to', required=True)
+    for command in commands.choices.values():
+        # Keep a global --insecure value when a subcommand does not repeat it.
+        command.add_argument('--insecure', action='store_true', default=argparse.SUPPRESS, help=insecure_help)
     return p
 
 
@@ -99,7 +104,7 @@ def output(rows, fields, *, as_json=False):
         print('\t'.join(json.dumps(str(row.get(field, '') or ''), ensure_ascii=False)[1:-1] for field in fields))
 
 
-def api_for(ws):
+def api_for(ws, *, insecure=False):
     token = os.environ.get('TEXTPAD_TOKEN', '').strip()
     if not token:
         token_path = ws.folder / 'token'
@@ -110,7 +115,7 @@ def api_for(ws):
         except FileNotFoundError as error:
             raise SyncError('Set TEXTPAD_TOKEN, or put the API token in .textpad/token (keep it private).') from error
     ca = ws.setting('ca_file')
-    return Api(ws.setting('server'), token, ws.setting('client_id'), ws.folder / ca if ca else None)
+    return Api(ws.setting('server'), token, ws.setting('client_id'), ws.folder / ca if ca else None, insecure=insecure)
 
 
 def initialise(args):
@@ -125,7 +130,7 @@ def initialise(args):
         raise SyncError('No token was entered. Use TEXTPAD_TOKEN or init --token-file for noninteractive setup.') from error
     # Check access before creating any local state. The token is never put in argv,
     # URLs, a process title, output, or the SQLite database.
-    api = Api(server, token, 'cli-setup', args.ca_file)
+    api = Api(server, token, 'cli-setup', args.ca_file, insecure=args.insecure)
     api.capabilities()
     api.list()
     with Workspace.initialise(root, server, token if args.token_file or not env_token else None, args.ca_file) as ws:
@@ -197,7 +202,7 @@ def dispatch(ws, args):
         ws.update(row, path=new_key)
         print('Tracking the moved local file: ' + repr(new_key))
         return 0
-    api = api_for(ws) if command != 'add' or args.document else None
+    api = api_for(ws, insecure=args.insecure) if command != 'add' or args.document else None
     if command == 'remote':
         output([asdict(doc) | {'content': None} for doc in api.list()], ['id', 'name', 'revision', 'size'], as_json=args.json)
     elif command == 'add':
@@ -258,7 +263,7 @@ def main(argv=None):
         with Workspace.discover(args.directory) as ws:
             if args.command == 'watch':
                 print('Watching ' + str(ws.root) + '; saved files sync after settling. Stop with Ctrl+C.', flush=True)
-                Watcher(ws, api_for(ws), settle=args.settle, remote_interval=args.remote_interval).run(args.interval)
+                Watcher(ws, api_for(ws, insecure=args.insecure), settle=args.settle, remote_interval=args.remote_interval).run(args.interval)
             else:
                 with ws.lock():
                     return dispatch(ws, args)

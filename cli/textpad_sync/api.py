@@ -1,4 +1,4 @@
-"""Verified HTTPS requests, bounded responses, and conditional idempotent saves."""
+"""HTTPS requests, bounded responses, and conditional idempotent saves."""
 import base64
 import binascii
 from dataclasses import dataclass
@@ -74,14 +74,18 @@ class Document:
 
 
 class Api:
-    def __init__(self, server, token, client_id, ca_file=None, timeout=20, *, local_test=False):
+    def __init__(self, server, token, client_id, ca_file=None, timeout=20, *, insecure=False, local_test=False):
         self.server = endpoint(server, local_test=local_test)
         if not token or any(c.isspace() for c in token):
             raise SyncError("Set TEXTPAD_TOKEN or initialise this workspace with an API token.")
         self.token, self.client_id, self.timeout = token, identifier(client_id), timeout
-        # An explicitly supplied CA is the trust store. Hostname and chain verification
-        # remain enabled, including for the deployment's existing private root CA.
-        if ca_file:
+        # Verification is enabled by default. A supplied CA is the trust store
+        # for verified connections, including the deployment's private root CA.
+        if insecure:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        elif ca_file:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.load_verify_locations(cafile=str(ca_file))
         else:

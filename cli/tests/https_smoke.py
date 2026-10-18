@@ -1,4 +1,4 @@
-"""Optional packaged-client smoke test over verified local HTTPS (needs openssl)."""
+"""Packaged HTTPS smoke test for verified and explicit insecure modes (needs openssl)."""
 from pathlib import Path
 import os
 import signal
@@ -32,7 +32,7 @@ def main():
         root = Path(folder)
         cert, key = root / 'ca.pem', root / 'server.key'
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-            '-keyout', str(key), '-out', str(cert), '-subj', '/CN=localhost',
+            '-keyout', str(key), '-out', str(cert), '-subj', '/CN=wrong-host.invalid',
             '-addext', 'subjectAltName=IP:127.0.0.1', '-addext', 'basicConstraints=critical,CA:TRUE'],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         app = create_app({'TESTING': True, 'DATABASE': str(root / 'server.sqlite3'), 'API_TOKEN': TOKEN,
@@ -52,17 +52,28 @@ def main():
                 return result.stdout
             run('init', str(root / 'untrusted-workspace'), '--server', base, expected=1)
             assert not (root / 'untrusted-workspace/.textpad').exists()
-            run('init', str(local), '--server', base, '--ca-file', str(cert))
+            verified = root / 'verified-workspace'
+            run('init', str(verified), '--server', base, '--ca-file', str(cert))
+            run('-C', str(verified), 'remote')
+            wrong_host = base.replace('127.0.0.1', 'localhost')
+            run('init', str(root / 'wrong-host-verified'), '--server', wrong_host,
+                '--ca-file', str(cert), expected=1)
+            run('init', str(root / 'wrong-host-insecure'), '--server', wrong_host,
+                '--ca-file', str(cert), '--insecure')
+            run('--insecure', 'init', str(local), '--server', base)
+            run('-C', str(local), 'remote', expected=1)
+            run('-C', str(local), 'remote', '--insecure')
+            run('--insecure', '-C', str(local), 'remote')
             content = ''.join(f'Line {n}: retained content\r\n' for n in range(200)).encode()
             file = local / 'notes.txt'
             file.write_bytes(content)
             run('-C', str(local), 'add', 'notes.txt')
-            run('-C', str(local), 'sync', '--settle', '0.05')
+            run('-C', str(local), 'sync', '--settle', '0.05', '--insecure')
             api = Api(base, TOKEN, 'cli-https-verification', cert)
             remote = next(d for d in api.list() if d.name == 'notes.txt')
             assert api.get(remote.id).content == content
             with (root / 'watch.log').open('w') as log:
-                watcher = subprocess.Popen(command + ['-C', str(local), 'watch', '--settle', '0.3',
+                watcher = subprocess.Popen(command + ['-C', str(local), 'watch', '--insecure', '--settle', '0.3',
                     '--interval', '0.05', '--remote-interval', '0.5'], env=env, stdout=log, stderr=subprocess.STDOUT)
                 file.write_bytes(b'')
                 wait_for(lambda: 'held:' in (root / 'watch.log').read_text())
@@ -77,11 +88,14 @@ def main():
                 watcher.send_signal(signal.SIGINT)
                 assert watcher.wait(timeout=10) == 130
             run('-C', str(local), 'backups', '--json')
-            run('-C', str(local), 'history', 'notes.txt')
+            run('-C', str(local), 'history', 'notes.txt', '--insecure')
+            run('-C', str(local), 'download', remote.id, 'inspection.txt', '--insecure')
+            assert (local / 'inspection.txt').read_bytes() == remote_final
+            run('-C', str(local), 'remote', expected=1)
             run('-C', str(local), 'remove', 'notes.txt')
             assert file.read_bytes() == remote_final
             assert api.get(remote.id).content == remote_final
-            print('Packaged HTTPS client passed: setup, local upload, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
+            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
         finally:
             if watcher is not None and watcher.poll() is None:
                 watcher.terminate()

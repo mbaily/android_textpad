@@ -17,7 +17,7 @@ from textpad_server import create_app
 
 from textpad_sync import BusyFile, SyncError
 from textpad_sync.api import Api, ApiError, Document, MAX_BYTES, endpoint
-from textpad_sync.cli import main
+from textpad_sync.cli import main, parser
 from textpad_sync.filesystem import deletion_reason, read, write, workspace_lock
 from textpad_sync.storage import Workspace
 from textpad_sync.sync import Engine
@@ -321,6 +321,22 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(302, error.exception.status)
         self.assertEqual(before, self.redirect_count)
 
+    def test_insecure_network_commands_accept_flags_in_either_position(self):
+        self.tracked()
+        for args in (('--insecure', 'remote', '--json'), ('remote', '--insecure', '--json')):
+            code, out, err = self.cli(*args)
+            self.assertEqual(0, code, err)
+            self.assertTrue(any(doc['id'] == self.docid for doc in json.loads(out)))
+
+    def test_watch_passes_insecure_to_its_network_client(self):
+        with (redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()),
+              patch('textpad_sync.cli.Api') as api, patch('textpad_sync.cli.Watcher') as watcher):
+            watcher.return_value.run.side_effect = KeyboardInterrupt
+            code = main(['-C', str(self.root), 'watch', '--insecure'])
+        self.assertEqual(130, code)
+        self.assertTrue(api.call_args.kwargs['insecure'])
+        self.assertIs(api.return_value, watcher.call_args.args[1])
+
     def test_watch_waits_for_editor_truncate_rewrite_and_atomic_replace(self):
         self.tracked(LONG)
         messages = []
@@ -526,6 +542,16 @@ class SyncTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_insecure_flag_is_per_invocation_and_accepts_either_position(self):
+        for args in (['--insecure', 'sync'], ['sync', '--insecure'],
+                     ['--insecure', 'sync', '--insecure'], ['init', 'directory', '--insecure']):
+            self.assertTrue(parser().parse_args(args).insecure)
+        self.assertFalse(parser().parse_args(['sync']).insecure)
+
+    def test_insecure_flag_does_not_allow_plain_http(self):
+        with self.assertRaises(SyncError):
+            Api('http://example.com', TOKEN, 'cli-test', insecure=True)
+
     def test_production_urls_require_https_and_never_embedded_credentials(self):
         for value in ('http://example.com', 'https://token@example.com', 'https://example.com/?token=x',
                       'https://example.com/#x', 'https://example.com:bad', 'file:///tmp/test'):
