@@ -141,6 +141,60 @@ class SyncTests(unittest.TestCase):
         self.assertEqual((0, ''), (code, err))
         self.assertEqual(['chemist'], json.loads(out)['hashtags'])
 
+    def test_errands_preserves_900_tags_through_import_sync_search_add_and_remove(self):
+        prefix = 'cli_' + self.docid.replace('-', '')
+        tags = [f'{prefix}_shop{number:04d}' for number in range(900)]
+        self.tracked(f'[ ] Last local tag #{tags[-1]}\n'.encode())
+        remote_id = str(uuid.uuid4())
+        self.store.put(remote_id, 'remote.txt', f'[ ] Last remote tag #{tags[-2]}\n'.encode(), None, str(uuid.uuid4()))
+        self.store.put_errands(['before'])
+        tag_file = self.root / 'many-tags.txt'
+        tag_file.write_text('\n'.join('#' + tag.upper() for tag in tags + tags[:3]), encoding='utf-8')
+        with patch('textpad_sync.cli.api_for', side_effect=AssertionError('Offline command accessed the network')):
+            code, out, err = self.cli('errands', 'tags', '--set-file', str(tag_file), '--offline', '--json')
+        self.assertEqual(0, code)
+        self.assertEqual(tags, json.loads(out)['hashtags'])
+        self.assertTrue(json.loads(out)['dirty'])
+        self.assertEqual(['before'], self.store.get_errands()['hashtags'])
+        code, out, err = self.cli('errands', 'tags', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual(tags, json.loads(out)['hashtags'])
+        self.assertFalse(json.loads(out)['dirty'])
+        self.assertEqual(tags, self.store.get_errands()['hashtags'])
+        code, out, err = self.cli('errands', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual({self.docid, remote_id}, {match['id'] for match in json.loads(out)['results']})
+        added = prefix + '_new'
+        tag_file.write_text(added + '\n', encoding='utf-8')
+        code, out, err = self.cli('errands', 'tags', '--add-file', str(tag_file), '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual(tags + [added], json.loads(out)['hashtags'])
+        self.assertEqual(tags + [added], self.store.get_errands()['hashtags'])
+        tag_file.write_text('\n'.join(tags), encoding='utf-8')
+        code, out, err = self.cli('errands', 'tags', '--remove-file', str(tag_file), '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual([added], json.loads(out)['hashtags'])
+        self.assertEqual([added], self.store.get_errands()['hashtags'])
+
+    def test_errands_rejects_shortened_server_acknowledgement_and_retains_full_pending_list(self):
+        tags = [f'shop{number:04d}' for number in range(900)]
+        tag_file = self.root / 'many-tags.txt'
+        tag_file.write_text('\n'.join(tags), encoding='utf-8')
+        with patch.object(Api, 'errands', return_value={'hashtags': tags[:200], 'updated_at': 'old-server'}):
+            code, out, err = self.cli('errands', 'tags', '--set-file', str(tag_file))
+        self.assertEqual((1, ''), (code, out))
+        self.assertIn('different errands hashtag list', err)
+        self.assertIn('Update the server', err)
+        self.assertIn('saved locally', err)
+        cached = json.loads(self.cli('errands', 'tags', '--offline', '--json')[1])
+        self.assertEqual(tags, cached['hashtags'])
+        self.assertTrue(cached['dirty'])
+        code, out, err = self.cli('errands', 'tags', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual(tags, json.loads(out)['hashtags'])
+        self.assertFalse(json.loads(out)['dirty'])
+        self.assertEqual(tags, self.store.get_errands()['hashtags'])
+
     def test_errands_empty_tag_files_clear_or_leave_settings_unchanged(self):
         tag_file = self.root / 'empty-tags.txt'
         tag_file.write_bytes(b'\xef\xbb\xbf \r\n\t\r\n')

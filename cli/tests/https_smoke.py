@@ -80,6 +80,15 @@ def main():
             saved_tags = json.loads(run('-C', str(verified), 'errands', 'tags', '--set', '#chemist #groceries', '--json'))
             assert saved_tags['hashtags'] == api.errands()['hashtags'] == ['chemist', 'groceries']
             tag_file = root / 'errands tags.txt'
+            many_tags = [f'shop{number:04d}' for number in range(900)]
+            tag_file.write_text('\n'.join(many_tags), encoding='utf-8')
+            saved = json.loads(run('-C', str(verified), 'errands', 'tags', '--set-file', str(tag_file), '--json'))
+            assert saved['hashtags'] == api.errands()['hashtags'] == many_tags
+            tail_id = str(uuid.uuid4())
+            api.put(tail_id, 'last-tag.txt', f'[ ] Last tag #{many_tags[-1]}\n'.encode(), None, str(uuid.uuid4()))
+            matches = json.loads(run('-C', str(verified), 'errands', '--json'))['results']
+            assert len(matches) == 1 and matches[0]['id'] == tail_id
+            assert matches[0]['matched_tags'] == [many_tags[-1]]
             tag_file.write_bytes(b'\xef\xbb\xbf#Chemist\r\ngroceries\r\n\r\n')
             run('-C', str(verified), 'errands', 'tags', '--set-file', str(tag_file))
             tag_file.write_text('#postoffice\n#CHEMIST\n', encoding='utf-8')
@@ -126,7 +135,7 @@ def main():
             run('-C', str(local), 'remove', 'notes.txt')
             assert file.read_bytes() == remote_final
             assert api.get(remote.id).content == remote_final
-            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
+            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports with 900 tags, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
         finally:
             if watcher is not None and watcher.poll() is None:
                 watcher.terminate()

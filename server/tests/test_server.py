@@ -430,6 +430,31 @@ class ApiTests(unittest.TestCase):
         self.assertEqual("todo-doc",res_open["results"][0]["id"])
         self.assertEqual([1,3],[l["line_number"] for l in res_open["results"][0]["lines"]])
 
+    def test_errands_settings_and_hashtag_queries_preserve_900_tags(self):
+        self.login()
+        tags = [f'shop{number:04d}' for number in range(900)]
+        saved = self.client.put('/editor/api/errands', headers={'X-CSRF-Token': self.csrf},
+                                json={'hashtags': ['#' + tag.upper() for tag in tags + tags[:3]]})
+        self.assertEqual(200, saved.status_code)
+        self.assertEqual(tags, saved.json['hashtags'])
+        self.assertEqual(tags, self.client.get('/api/v1/errands', headers=self.headers).json['hashtags'])
+        same = self.client.put('/api/v1/errands', headers=self.headers, json={'hashtags': ' '.join(tags)})
+        self.assertEqual(saved.json, same.json)
+        self.assertEqual(tags, self.client.get('/editor/api/errands').json['hashtags'])
+        self.browser_put('many-tags', {
+            'name': 'many-tags.txt', 'text': f'[ ] First #{tags[0]}\n[ ] Last #{tags[-1]}\n',
+            'base_revision': None, 'request_id': 'many-tags-1',
+        })
+        for route, headers in (('/api/v1/hashtags', self.headers),
+                               ('/editor/api/hashtags', {'X-CSRF-Token': self.csrf})):
+            with self.subTest(route=route):
+                response = self.client.post(route, headers=headers, json={'tags': tags, 'hide_completed': True})
+                self.assertEqual(200, response.status_code)
+                self.assertEqual(1, len(response.json['results']))
+                match = response.json['results'][0]
+                self.assertEqual([tags[0], tags[-1]], match['matched_tags'])
+                self.assertEqual([1, 2], [line['line_number'] for line in match['lines']])
+
     def test_hashtags_hide_completed_includes_cancelled_tasks_and_bullets(self):
         self.login()
         text = ("[ ] Open #errands\r\n\t[C] Cancelled #errands #cancelled_only\r\n"

@@ -43,7 +43,11 @@ class Errands:
         if self.api is None:
             return cached
         try:
-            return self.store(self.api.errands(cached['hashtags']))
+            saved = self.api.errands(cached['hashtags'])
+            if saved['hashtags'] != cached['hashtags']:
+                raise SyncError('The server acknowledged a different errands hashtag list. '
+                                'Update the server before retrying.')
+            return self.store(saved)
         except (SyncError, OSError) as error:
             raise SyncError(str(error) + ' Errands hashtags are saved locally; run errands tags again to retry.') from error
 

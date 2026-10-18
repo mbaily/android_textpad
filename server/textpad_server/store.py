@@ -87,8 +87,6 @@ def normalize_hashtags(value):
         if len(norm) <= 64 and norm not in seen_set:
             seen_set.add(norm)
             seen.append(norm)
-            if len(seen) >= 200:
-                break
     return seen
 
 

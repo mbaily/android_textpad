@@ -34,7 +34,7 @@ def normalize_tags(values):
         values = [values]
     tags = dict.fromkeys(token.lower() for value in values for token in TAG_TOKEN_RE.findall(value)
                          if len(token) <= 64)
-    return list(tags)[:200]
+    return list(tags)
 
 
 def scan(value, targets, hide_completed=True):
