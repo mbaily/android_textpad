@@ -15,6 +15,8 @@ PYTHONPATH=server "$textpad_python" -m unittest discover -s server/tests -v
 PYTHONPATH=cli:server "$textpad_python" -m unittest discover -s cli/tests -v
 "$textpad_python" scripts/package-cli.py
 "$textpad_python" server/textpad_server/static/textpad-sync.pyz --version
+"$textpad_python" -m unittest discover -s vim/tests -v
+"$textpad_python" scripts/package-vim-plugin.py
 mkdir -p .server-package/wheels
 "$textpad_python" -m pip download --only-binary=:all: --requirement server/requirements.lock --dest .server-package/wheels
 textpad_stage="$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$textpad_host" 'mktemp -d /tmp/textpad-server.XXXXXXXX')"

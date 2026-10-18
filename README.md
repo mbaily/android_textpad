@@ -12,6 +12,8 @@ A native, dark-by-default text editor for **Android 16 / API 36 and later**. The
 
 The Python 3.11+ CLI syncs explicitly selected local files on Linux, Windows, and macOS, with SQLite mappings and recovery snapshots. Edit with any text editor and use `textpad-sync sync` or foreground `textpad-sync watch`. It holds suspicious blank/truncated saves and conflicts for explicit resolution. See the [setup, commands, and recovery guide](cli/README.md).
 
+The [Vim 9 plugin](vim/README.md) provides an assignable toggle for the same uncompleted-tasks view. It displays open tasks with their headings/context and lets you edit visible lines; `:write` saves the complete source file, including hidden text. [Download the Vim plugin](https://git23069.hopto.org/android_textpad/editor/static/textpad-tasks-vim.zip).
+
 The site uses the server's existing HTTPS certificate and is served from `/opt/android_textpad/deployment/`. Publish an updated APK with `./scripts/deploy-downloads.sh` after building it. See [server deployment instructions](server/README.md).
 
 ## Build and install

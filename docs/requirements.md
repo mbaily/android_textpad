@@ -50,3 +50,10 @@
 - Hold suspicious blank/large-deletion saves, preserve exact bytes, and require explicit conflict resolution when both copies change.
 - Use an opt-in atomic server revision precondition for CLI saves, while keeping existing Android/browser save behavior.
 - Preserve retry receipts across interruptions; retain snapshots before replacements and do not propagate local deletion as server deletion.
+
+## Vim plugin
+
+- Compatible with Vim 9.0+, with a toggle command and a user-assignable mapping; no default keystroke.
+- Match the uncompleted-task, ancestor, note, Markdown-heading, and divider-heading rules of the app/browser views.
+- Use an editable filtered projection while retaining the full source buffer; write the complete file through Vim's normal save path.
+- Keep line structure changes in the full view, preserve edits on mapping conflicts, and return to the corresponding real cursor line when disabling the view.

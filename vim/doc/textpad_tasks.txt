@@ -1,0 +1,70 @@
+*textpad_tasks.txt*  Uncompleted tasks view for Vim 9              *textpad-tasks*
+
+Textpad tasks plugin version 0.1.0
+
+COMMANDS                                             *:TextpadTasksToggle*
+
+:TextpadTasksToggle      Toggle the full/filtered view in the current window.
+:TextpadTasksOn          Enable the filtered view.      *:TextpadTasksOn*
+:TextpadTasksOff         Return to the full view.       *:TextpadTasksOff*
+:TextpadTasksRefresh     Recompute the visible rows.    *:TextpadTasksRefresh*
+:TextpadTasksRecover     Open an unnamed recovery copy. *:TextpadTasksRecover*
+
+MAPPING                                      *<Plug>(TextpadTasksToggle)*
+
+No default key is assigned. Example vimrc entries: >
+    nmap <F8> <Plug>(TextpadTasksToggle)
+    nmap <leader>u <Plug>(TextpadTasksToggle)
+<
+Or map the command directly: >
+    nnoremap <F8> <Cmd>TextpadTasksToggle<CR>
+<
+FILTER RULES                                        *textpad-tasks-filter*
+
+Keep open tasks starting with [ ], optionally preceded by - , * , or + .
+Keep their indentation ancestors, enclosing Markdown headings, and indented
+plain notes beneath open tasks. Context uses TextpadTasksContext, which links
+to Comment by default.
+
+A blank/title/dash-divider block is a heading for its section. At the beginning
+of a file, the title does not need a preceding blank line. A divider is a line
+of one or more dashes, with optional surrounding spaces/tabs. Its tasks need
+not be indented. Keep the heading only if that section contains an open task.
+The next divider heading or Markdown heading ends that section.
+
+Indentation uses a tab width of 4, independently of 'tabstop'. Configure with: >
+    let g:textpad_tasks_tab_size = 4
+    let b:textpad_tasks_tab_size = 8
+<
+EDITING                                             *textpad-tasks-editing*
+
+The filtered view is a separate |acwrite| buffer. Hidden source lines remain
+in the full source buffer, which stays loaded. Edits within displayed lines
+update the corresponding source lines. :write saves the FULL source through
+Vim's regular write machinery, including its write hooks and format options.
+No Python or server connection is involved.
+
+Toggle off for line insertion/deletion/splitting/joining. A change in projected
+line count stops propagation and writing; the typed text remains available.
+Undo it, or use :TextpadTasksRecover to keep a copy. Alternate-file/range writes,
+appends, shell filters, :saveas, and renaming the filtered buffer require the
+full view. Name an unnamed source from the full view before writing.
+
+Inline undo/redo works. Membership remains stable until refresh or another
+full/filtered toggle. Refreshing resets projection undo; source undo is kept.
+The cursor returns to its corresponding real line when the view is disabled.
+Projection line numbers refer to displayed rows, not source-file line numbers.
+
+CONFLICTS AND RECOVERY                              *textpad-tasks-recovery*
+
+If both source and projection change independently, propagation stops. Both
+buffers are kept. :TextpadTasksRecover creates a new unnamed full-file candidate
+from the last consistent source snapshot and the edited visible rows. With
+structural edits, the copy instead contains marked sections for the filtered
+fragment and the full source snapshot. Save this copy to a DIFFERENT file and
+undo the conflicting edit in the projection before refreshing/toggling off.
+
+The source retains normal Vim undo/swap behavior. The projection is temporary;
+this plugin does not implement persistent session or crash recovery.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
