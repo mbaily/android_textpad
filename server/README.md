@@ -25,6 +25,8 @@ ssh <user>@<your-server> 'sudo cat /etc/android-textpad/api-token'
 
 The editor supports desktop and mobile layouts. It lists the files stored in the server's SQLite database. Open files in tabs, create files, edit and rename them, search/replace, undo/redo, change font/wrapping/line-number settings, download saved bytes, and preview or restore older revisions. The sidebar toggle beside the tabs hides or shows the file list and remembers your choice in that browser. On phones, the tabs and horizontally scrollable toolbar stay above the software keyboard; tapping toolbar actions keeps the editor focused. **Connect Android** supplies the endpoint and API token for the app's sync settings.
 
+The editor fixes the page body and disables page scrolling, with document scrolling contained inside CodeMirror, to reduce the initial iOS keyboard scroll-jump. VisualViewport sizing and positioning remain as a fallback when iOS still pans the visible area. The native keyboard animation needs verification on a physical iPhone.
+
 The todo button adds `[ ]` to plain lines and cycles `[ ]` → `[X]` → `[C]` → `[ ]`, matching Android. `[C]` means cancelled; lowercase `[c]` and `[x]` and list bullets are accepted. The uncompleted-tasks view hides completed/cancelled rows except when needed as context for an open subtask. Hashtag and errands search's **Hide [X] / [C]** option excludes both closed states from open buffers, offline cached files, and server results. The existing API field `hide_completed` covers both states; task markers remain ordinary document text and require no database migration.
 
 When no file is open, the entry screen lists up to 30 recent files. Files opened or saved in this browser appear first, followed by other synced files in last-updated order. Opening history survives reloads on this device; cached files can be reopened offline. New unsaved documents are not added until saved.
@@ -127,7 +129,7 @@ The task-view smoke test checks filtering, dimmed context, divider headings abov
 
 The recent-file smoke test checks reopening from the entry screen, order and persistence across reloads, renamed files, mobile layout, offline reopening, and starting a new file from an empty list.
 
-The keyboard smoke test requires both Chrome and Playwright WebKit. It simulates the keyboard resizing and panning the visual viewport independently of the layout viewport, and checks visible tabs/toolbar, horizontal scrolling, touch actions without losing editor focus, cursor visibility, rotation, dismissal/reopening, and the fallback without VisualViewport. Headless browsers cannot open the native iOS keyboard, so a physical iPhone check remains useful.
+The keyboard smoke test requires both Chrome and Playwright WebKit. It checks scrolling through a long document without moving the page or top controls, then simulates the keyboard resizing the visible area with and without a viewport pan. It also checks visible tabs/toolbar, horizontal scrolling, touch actions without losing editor focus, cursor visibility, rotation, dismissal/reopening, and the fallback without VisualViewport. Headless browsers cannot open the native iOS keyboard, so a physical iPhone check remains useful.
 
 The errands pane scrolls as a whole, with its hashtag list, match mode, and Hide filter inside **Errands settings**, collapsed by default. Its browser check covers a 950-tag list, wheel scrolling, result navigation, settings editing, and desktop, tablet, mobile, and short viewports.
 

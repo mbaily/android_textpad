@@ -57,7 +57,23 @@ def check_keyboard(browser, base, name):
     }""")
     editor = page.get_by_role("textbox", name="Document text")
     editor.fill("\n".join(f"{name} task {line:03d}" for line in range(1, 101)))
+    # Moving through a long document must scroll CodeMirror without shifting
+    # the page, tabs, or toolbar in the fixed application shell.
+    editor.press("Control+Home")
+    page.wait_for_function("() => document.querySelector('.cm-scroller').scrollTop < 50")
+    toolbar_top = page.locator(".toolbar").bounding_box()["y"]
+    heading_top = page.locator(".editor-heading").bounding_box()["y"]
     editor.press("Control+End")
+    page.wait_for_function("() => document.querySelector('.cm-scroller').scrollTop > 1000")
+    assert_layout(page, 844, 0)
+    expect(editor).to_be_focused()
+
+    # When the keyboard overlays the fixed page without a visual pan, only
+    # the editor should shrink/scroll. The top controls must stay stationary.
+    set_visual_viewport(page, 350, 0)
+    assert abs(page.locator(".toolbar").bounding_box()["y"] - toolbar_top) < 1
+    assert abs(page.locator(".editor-heading").bounding_box()["y"] - heading_top) < 1
+    assert abs(page.locator("body").bounding_box()["y"]) < 1
     expect(editor).to_be_focused()
 
     # Keyboard opens without resizing the layout viewport, and iOS pans it.
