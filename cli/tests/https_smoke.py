@@ -114,7 +114,8 @@ def main():
             run('-C', str(local), 'errands', 'tags', '--insecure')
             with (root / 'watch.log').open('w') as log:
                 watcher = subprocess.Popen(command + ['-C', str(local), 'watch', '--insecure', '--settle', '0.3',
-                    '--interval', '0.05', '--remote-interval', '0.5'], env=env, stdout=log, stderr=subprocess.STDOUT)
+                    '--interval', '0.05', '--remote-interval', '120'], env=env, stdout=log, stderr=subprocess.STDOUT)
+                wait_for(lambda: 'live:' in (root / 'watch.log').read_text())
                 file.write_bytes(b'')
                 wait_for(lambda: 'held:' in (root / 'watch.log').read_text())
                 assert api.get(remote.id).content == content
@@ -135,7 +136,21 @@ def main():
             run('-C', str(local), 'remove', 'notes.txt')
             assert file.read_bytes() == remote_final
             assert api.get(remote.id).content == remote_final
-            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports with 900 tags, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
+            run('-C', str(verified), 'get', remote.id, 'notes.txt')
+            with (root / 'verified-watch.log').open('w') as log:
+                watcher = subprocess.Popen(command + ['-C', str(verified), 'watch', '--settle', '0.3',
+                    '--interval', '0.05', '--remote-interval', '120'], env=env, stdout=log, stderr=subprocess.STDOUT)
+                wait_for(lambda: 'live:' in (root / 'verified-watch.log').read_text())
+                # Let the initial ready reconciliation finish, then a later save
+                # must be delivered through the socket, not the 120-second timer.
+                wait_for(lambda: 'synced:' in (root / 'verified-watch.log').read_text())
+                saved = api.get(remote.id)
+                verified_final = remote_final + b'Live update with a trusted CA\r\n'
+                api.put(remote.id, remote.name, verified_final, saved.revision, str(uuid.uuid4()))
+                wait_for(lambda: (verified / 'notes.txt').read_bytes() == verified_final)
+                watcher.send_signal(signal.SIGINT)
+                assert watcher.wait(timeout=10) == 130
+            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports with 900 tags, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, live WebSocket remote pulls with trusted CA and insecure modes, Ctrl+C, history, snapshots, and untracking.')
         finally:
             if watcher is not None and watcher.poll() is None:
                 watcher.terminate()

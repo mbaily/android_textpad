@@ -90,11 +90,13 @@ textpad-sync watch
 
 `sync` reconciles both directions. A local-only change uploads; a remote-only change downloads after backing up the displaced local bytes. If both sides changed, it keeps the local file and reports a conflict. Saves use an atomic revision precondition on the server: a newer remote revision arriving between the client's check and upload is rejected rather than overwritten. Android and browser save behavior is unchanged.
 
-`watch` stays attached to your terminal until Ctrl+C. It checks tracked file metadata every 0.5 seconds, waits for two seconds of stability after a local change, then treats the saved bytes as an edit. This handles editors that truncate/rewrite a file or save by replacing its inode. It also reconciles remote changes every 30 seconds. It does not install or manage a service.
+`watch` stays attached to your terminal until Ctrl+C. It checks tracked file metadata every 0.5 seconds, waits for two seconds of stability after a local change, then treats the saved bytes as an edit. This handles editors that truncate/rewrite a file or save by replacing its inode. Server WebSocket notifications trigger immediate reconciliation of stable files, so a web or Android save does not need to wait for the periodic check. Notifications received while a file is settling are retained until it becomes stable. It also reconciles every 30 seconds as a fallback, including when live updates are unavailable. It does not install or manage a service.
 
 ```sh
 textpad-sync watch --settle 3 --interval 0.5 --remote-interval 15
 ```
+
+The console reports `live` when notifications are connected and `polling` when they are unavailable. The notification connection uses the same API token, trusted CA, and per-invocation `--insecure` setting as HTTPS requests. It reconnects with increasing delays up to 60 seconds and reconciles on each connection to catch changes missed while disconnected. `--remote-interval` controls the periodic check, even while live updates are connected; it does not delay notifications. Live updates support direct connections and HTTP CONNECT proxies; other proxy types retain periodic HTTPS checks. Repeated unchanged file statuses are suppressed, so an idle console can remain quiet. Stop and restart the command after updating its `.pyz` archive.
 
 The monitor retries network failures on subsequent reconciliation passes. Each uncertain upload's request ID, name, base revision, and exact bytes are persisted before the request. After a crash or lost response, it retries that same payload before processing newer edits, without replaying an older save ahead of a newer server save. Removing a mapping with an unacknowledged upload is refused until sync settles it.
 
@@ -219,6 +221,6 @@ python3 server/textpad_server/static/textpad-sync.pyz --help
 PYTHONPATH=cli:server /path/to/server-venv/bin/python cli/tests/https_smoke.py
 ```
 
-The integration tests use an isolated temporary server/database and normal HTTP sockets on loopback; production client URLs require HTTPS. Tests cover exact-byte transfers, conflict races, durable retries/restarts, blank/truncated saves, editor replacement saves, recovery, permissions, path checks, offline commands, and errands matching/settings. Native runtime verification was performed on Linux; Windows/macOS use the same standard-library code and platform file-lock branches and still need native smoke testing.
+The integration tests use an isolated temporary server/database and normal HTTP sockets on loopback; production client URLs require HTTPS. Tests cover exact-byte transfers, conflict races, durable retries/restarts, blank/truncated saves, editor replacement saves, live notifications and reconnect catch-up, polling fallback, WebSocket framing and authentication, recovery, permissions, path checks, offline commands, and errands matching/settings. The packaged HTTPS smoke test checks live remote pulls before the periodic deadline, with both a trusted CA and explicit `--insecure`. Native runtime verification was performed on Linux; Windows/macOS use the same standard-library code and platform file-lock branches and still need native smoke testing.
 
 `./scripts/deploy-server.sh` runs these tests and packages/publishes the archive and guide alongside the server. `package-cli.py` writes deterministic archives and a SHA-256 file; generated downloads are ignored by Git.

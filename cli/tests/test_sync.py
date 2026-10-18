@@ -18,6 +18,7 @@ from textpad_server import create_app
 from textpad_sync import BusyFile, SyncError
 from textpad_sync.api import Api, ApiError, Document, MAX_BYTES, endpoint
 from textpad_sync.cli import main, parser
+from textpad_sync.events import ChangeEvents, EventSocket
 from textpad_sync.filesystem import deletion_reason, read, write, workspace_lock
 from textpad_sync.hashtags import normalize_tags, scan
 from textpad_sync.storage import Workspace
@@ -691,6 +692,131 @@ class SyncTests(unittest.TestCase):
         watcher.step(30)
         self.assertEqual(b'Remote edit observed by monitor\r\n', self.path.read_bytes())
         self.assertIn(b'First version\r\n', self.backup_contents())
+
+    def test_live_notifications_reconcile_before_the_periodic_deadline(self):
+        self.tracked()
+        messages, hint = [], threading.Event()
+        watcher = Watcher(self.ws, self.api, report=messages.append)
+        watcher.step(0)
+        watcher.step(2)
+        def changed():
+            watcher.notify()
+            hint.set()
+        with ChangeEvents(self.api, changed, lambda: None) as events:
+            self.assertTrue(hint.wait(3), 'No initial ready notification')
+            self.assertEqual('live', events.status())
+            watcher.step(3)
+            hint.clear()
+            self.remote(b'Remote change received over WebSocket\r\n')
+            self.assertTrue(hint.wait(3), 'No committed-change notification')
+            watcher.step(4)
+            self.assertEqual(b'Remote change received over WebSocket\r\n', self.path.read_bytes())
+            self.assertTrue(any('downloaded:' in message for message in messages))
+        self.assertFalse(events.thread.is_alive())
+
+    def test_live_reconnect_checks_changes_missed_while_disconnected(self):
+        self.tracked()
+        hint, reconnecting, release = threading.Event(), threading.Event(), threading.Event()
+        watcher = Watcher(self.ws, self.api, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        original = EventSocket.connect
+        attempts = []
+        def connect(connection):
+            attempts.append(True)
+            if len(attempts) > 1:
+                reconnecting.set()
+                if not release.wait(3):
+                    raise SyncError('Test did not release reconnect')
+            original(connection)
+        def changed():
+            watcher.notify()
+            hint.set()
+        with patch.object(EventSocket, 'connect', connect):
+            with ChangeEvents(self.api, changed, lambda: None) as events:
+                try:
+                    self.assertTrue(hint.wait(3))
+                    watcher.step(3)
+                    hint.clear()
+                    with events.lock:
+                        events.socket.interrupt()
+                    self.assertTrue(reconnecting.wait(3))
+                    self.assertEqual('polling', events.status())
+                    self.remote(b'Change made while the socket was disconnected\n')
+                    self.assertEqual(b'First version\r\n', self.path.read_bytes())
+                    release.set()
+                    self.assertTrue(hint.wait(3), 'Reconnect did not request reconciliation')
+                    watcher.step(4)
+                    self.assertEqual(b'Change made while the socket was disconnected\n', self.path.read_bytes())
+                finally:
+                    release.set()
+        self.assertFalse(events.thread.is_alive())
+
+    def test_live_hint_waits_for_local_stability_without_losing_the_remote_check(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        stamp = self.path.stat()
+        os.utime(self.path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 1_000_000))
+        watcher.step(3)
+        self.remote(b'Remote change while local metadata settles\n')
+        watcher.notify()
+        watcher.step(3.5)
+        self.assertEqual(b'First version\r\n', self.path.read_bytes())
+        watcher.step(5.1)
+        self.assertEqual(b'Remote change while local metadata settles\n', self.path.read_bytes())
+
+    def test_live_hint_during_reconciliation_schedules_another_pass(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        listing = self.api.list
+        def change_after_listing():
+            documents = listing()
+            self.remote(b'Change committed during reconciliation\n')
+            watcher.notify()
+            return documents
+        watcher.notify()
+        with patch.object(self.api, 'list', side_effect=change_after_listing):
+            watcher.step(3)
+        self.assertEqual(b'First version\r\n', self.path.read_bytes())
+        watcher.step(3.1)
+        self.assertEqual(b'Change committed during reconciliation\n', self.path.read_bytes())
+
+    def test_live_hint_preserves_conflicting_local_and_remote_edits(self):
+        self.tracked()
+        messages = []
+        watcher = Watcher(self.ws, self.api, report=messages.append)
+        watcher.step(0)
+        watcher.step(2)
+        self.path.write_bytes(b'Unsynced local edit\n')
+        watcher.step(3)
+        self.remote(b'Conflicting remote edit\n')
+        watcher.notify()
+        watcher.step(5)
+        self.assertEqual(b'Unsynced local edit\n', self.path.read_bytes())
+        self.assertEqual(b'Conflicting remote edit\n', self.api.get(self.docid).content)
+        self.assertTrue(any('conflict:' in message for message in messages))
+        self.assertTrue({b'Unsynced local edit\n', b'Conflicting remote edit\n'} <= self.backup_contents())
+
+    def test_periodic_reconciliation_continues_when_live_updates_are_unavailable(self):
+        self.tracked()
+        wake = threading.Event()
+        watcher = Watcher(self.ws, self.api, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        with patch.object(EventSocket, 'connect', side_effect=SyncError('No WebSocket support')):
+            with ChangeEvents(self.api, watcher.notify, wake.set) as events:
+                self.assertTrue(wake.wait(3))
+                self.assertEqual('polling', events.status())
+                self.remote(b'Remote change found by periodic fallback\n')
+                watcher.step(29)
+                self.assertEqual(b'First version\r\n', self.path.read_bytes())
+                watcher.step(30)
+                self.assertEqual(b'Remote change found by periodic fallback\n', self.path.read_bytes())
+        self.assertFalse(events.thread.is_alive())
 
     def test_server_rename_is_pulled_as_metadata_without_moving_local_path(self):
         self.tracked()

@@ -90,7 +90,10 @@ class Api:
             context.load_verify_locations(cafile=str(ca_file))
         else:
             context = ssl.create_default_context()
-        self.opener = build_opener(ProxyHandler(), HTTPSHandler(context=context), NoRedirects())
+        self.ssl_context = context
+        proxies = ProxyHandler()
+        self.proxies = proxies.proxies
+        self.opener = build_opener(proxies, HTTPSHandler(context=context), NoRedirects())
         self.conditional_supported = False
 
     def request(self, method, path, body=None):

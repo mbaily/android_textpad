@@ -63,7 +63,7 @@ def parser():
     watch = commands.add_parser('watch', help='Monitor saved files in this terminal until Ctrl+C.')
     watch.add_argument('--settle', type=seconds, default=2.0, help='Seconds a file must remain unchanged before sync (default: 2).')
     watch.add_argument('--interval', type=seconds, default=0.5, help='Local file check interval (default: 0.5 seconds).')
-    watch.add_argument('--remote-interval', type=seconds, default=30.0, help='Server reconciliation interval (default: 30 seconds).')
+    watch.add_argument('--remote-interval', type=seconds, default=30.0, help='Periodic server reconciliation interval; live notifications also trigger sync (default: 30 seconds).')
     resolve = commands.add_parser('resolve', help='Choose a conflict version; first back up both saved copies.')
     resolve.add_argument('file')
     resolve.add_argument('--use', choices=['local', 'remote'], required=True)

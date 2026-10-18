@@ -1,8 +1,10 @@
-"""Foreground polling monitor; works without OS-specific watcher dependencies."""
+"""Foreground file polling with live remote hints and periodic reconciliation."""
 from datetime import datetime
+import threading
 import time
 
 from . import SyncError
+from .events import ChangeEvents
 from .filesystem import stamp
 from .sync import Engine, Result
 
@@ -13,14 +15,21 @@ class Watcher:
         self.settle, self.remote_interval = settle, remote_interval
         self.report = report if report is not None else lambda message: print(message, flush=True)
         self.observations, self.dirty, self.last_reports = {}, set(), {}
+        self.remote_pending = set()
+        self.remote_changed, self.wake = threading.Event(), threading.Event()
         self.next_remote = 0
+
+    def notify(self):
+        self.remote_changed.set()
+        self.wake.set()
 
     def emit(self, result):
         value = (result.state, result.message)
         if self.last_reports.get(result.path) != value:
             self.last_reports[result.path] = value
             timestamp = datetime.now().astimezone().isoformat(timespec='seconds')
-            self.report(f'{timestamp} {result.state}: {result.path!r}: {result.message}')
+            subject = f'{result.path!r}: ' if result.path else ''
+            self.report(f'{timestamp} {result.state}: {subject}{result.message}')
 
     def step(self, now=None):
         now = time.monotonic() if now is None else now
@@ -28,11 +37,17 @@ class Watcher:
             rows = self.workspace.files()
             keys = {row['path'] for row in rows}
             self.dirty.intersection_update(keys)
+            self.remote_pending.intersection_update(keys)
             for key in set(self.observations) - keys:
                 self.observations.pop(key, None)
                 self.last_reports.pop(key, None)
             due, signatures = [], {}
-            remote_due = now >= self.next_remote
+            notified = self.remote_changed.is_set()
+            if notified:
+                self.remote_changed.clear()
+            remote_due = notified or now >= self.next_remote
+            if remote_due:
+                self.remote_pending.update(keys)
             for row in rows:
                 key = row['path']
                 try:
@@ -50,7 +65,7 @@ class Watcher:
                     self.dirty.add(key)
                 since = self.observations[key][1]
                 if now - since >= self.settle and signature[0] not in ('missing', 'unavailable'):
-                    if remote_due or key in self.dirty:
+                    if key in self.remote_pending or key in self.dirty:
                         due.append(row)
                         signatures[key] = signature
             if remote_due:
@@ -65,8 +80,16 @@ class Watcher:
                     self.next_remote = now + self.remote_interval
                 finally:
                     self.dirty.difference_update(row['path'] for row in due)
+                    self.remote_pending.difference_update(row['path'] for row in due)
 
     def run(self, interval=0.5):
-        while True:
-            self.step()
-            time.sleep(interval)
+        with ChangeEvents(self.engine.api, self.notify, self.wake.set) as events:
+            while True:
+                self.wake.clear()
+                status = events.status()
+                if status:
+                    message = ('Connected to server; live updates enabled.' if status == 'live' else
+                               f'Live updates unavailable; retrying. Periodic checks every {self.remote_interval:g} seconds.')
+                    self.emit(Result('', status, message))
+                self.step()
+                self.wake.wait(interval)
