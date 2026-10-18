@@ -44,11 +44,12 @@ update the corresponding source lines. :write saves the FULL source through
 Vim's regular write machinery, including its write hooks and format options.
 No Python or server connection is involved.
 
-Toggle off for line insertion/deletion/splitting/joining. A change in projected
-line count stops propagation and writing; the typed text remains available.
-Undo it, or use :TextpadTasksRecover to keep a copy. Alternate-file/range writes,
-appends, shell filters, :saveas, and renaming the filtered buffer require the
-full view. Name an unnamed source from the full view before writing.
+Insertions, deletions, splits, and joins in the filtered view are tracked and
+synchronized to the underlying source buffer, preserving interleaved hidden
+lines. Undo/redo restores deleted rows to their positions around hidden text.
+Alternate-file/range writes, appends, shell filters, :saveas, and renaming the
+filtered buffer require the full view. Name an unnamed source from the full
+view before writing.
 
 Inline undo/redo works. Membership remains stable until refresh or another
 full/filtered toggle. Refreshing resets projection undo; source undo is kept.
@@ -57,12 +58,13 @@ Projection line numbers refer to displayed rows, not source-file line numbers.
 
 CONFLICTS AND RECOVERY                              *textpad-tasks-recovery*
 
-If both source and projection change independently, propagation stops. Both
-buffers are kept. :TextpadTasksRecover creates a new unnamed full-file candidate
-from the last consistent source snapshot and the edited visible rows. With
-structural edits, the copy instead contains marked sections for the filtered
-fragment and the full source snapshot. Save this copy to a DIFFERENT file and
-undo the conflicting edit in the projection before refreshing/toggling off.
+If both source and projection change independently or edits cannot be mapped,
+propagation stops. Both buffers are kept. :TextpadTasksRecover creates a new
+unnamed full-file candidate from the last consistent source snapshot and the
+edited visible rows. If row identities cannot be reconciled, the copy instead
+contains marked sections for the filtered fragment and the full source
+snapshot. Save this copy to a DIFFERENT file and undo the conflicting edit in
+the projection before refreshing/toggling off.
 
 The source retains normal Vim undo/swap behavior. The projection is temporary;
 this plugin does not implement persistent session or crash recovery.

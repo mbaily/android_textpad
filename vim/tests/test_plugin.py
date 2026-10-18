@@ -112,25 +112,154 @@ call feedkeys("\\<F8>", 'xt')
 call assert_equal(g:source_buffer, bufnr('%'))
 ''')
 
-    def test_line_count_changes_block_writes_and_never_modify_the_source(self):
+    def test_inserted_lines_can_be_saved_and_toggled_repeatedly(self):
         self.run_vim('''
 call textpad_tasks#On()
 let view = bufnr('%')
-let original = getbufline(g:source_buffer, 1, '$')
-call append(4, 'Inserted line')
+call append(4, '[ ] Inserted task')
 call textpad_tasks#Changed(view)
+let expected = ['Unrelated note', '', 'Shopping', '---', '[ ] Milk', '[ ] Inserted task', '    Organic note', '[X] Bread', '', 'Done', '---', '[x] Finished']
+write
+call assert_equal(expected, readfile(g:test_file))
+call cursor(5, 6)
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal([6, 6], [line('.'), col('.')])
+call assert_equal(expected, getline(1, '$'))
+call assert_equal(1, textpad_tasks#On())
+call assert_equal(['', 'Shopping', '---', '[ ] Milk', '[ ] Inserted task', '    Organic note'], getline(1, '$'))
+call assert_equal(1, textpad_tasks#Off())
+''')
+
+    def test_deleting_visible_rows_preserves_interleaved_hidden_lines(self):
+        self.file.write_text('[ ] First\n[X] Hidden A\n[ ] Second\n[X] Hidden B\n[ ] Third\n')
+        self.run_vim('''
+call textpad_tasks#On()
+1,2delete _
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[X] Hidden A', '[X] Hidden B', '[ ] Third'], getline(1, '$'))
+call assert_equal(3, line('.'))
+call assert_equal(1, textpad_tasks#On())
+call assert_equal(['[ ] Third'], getline(1, '$'))
+write
+call assert_equal(['[X] Hidden A', '[X] Hidden B', '[ ] Third'], readfile(g:test_file))
+call assert_equal(1, textpad_tasks#Off())
+''')
+
+    def test_split_and_join_preserve_hidden_rows(self):
+        self.file.write_text('[ ] First\n[X] Hidden A\n[ ] Second\n[X] Hidden B\n')
+        self.run_vim(r'''
+call textpad_tasks#On()
+call feedkeys("gg0fFi\<CR>\<Esc>", 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(['[ ] ', 'First', '[ ] Second'], getline(1, '$'))
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[ ] ', 'First', '[X] Hidden A', '[ ] Second', '[X] Hidden B'], getline(1, '$'))
+call textpad_tasks#On()
+call feedkeys('ggJ', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[ ] [ ] Second', 'First', '[X] Hidden A', '[X] Hidden B'], getline(1, '$'))
+''')
+
+    def test_structural_undo_redo_restores_original_positions_around_hidden_rows(self):
+        self.file.write_text('[ ] First\n[X] Hidden A\n[ ] Second\n[X] Hidden B\n[ ] Third\n')
+        self.run_vim(r'''
+let original = getline(1, '$')
+call textpad_tasks#On()
+call feedkeys('gg2dd', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+let deleted = ['[X] Hidden A', '[X] Hidden B', '[ ] Third']
+call assert_equal(deleted, getbufline(g:source_buffer, 1, '$'))
+call feedkeys('u', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
 call assert_equal(original, getbufline(g:source_buffer, 1, '$'))
-let stopped = 0
-try
-  write
-catch /Textpad tasks:/
-  let stopped = 1
-endtry
-call assert_equal(1, stopped)
-call assert_equal(original, readfile(g:test_file))
-call assert_equal(0, textpad_tasks#Off())
-call deletebufline(view, 5)
-call textpad_tasks#Changed(view)
+call feedkeys("\<C-R>", 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(deleted, getbufline(g:source_buffer, 1, '$'))
+call feedkeys('u', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(original, getline(1, '$'))
+''')
+
+    def test_join_undo_and_undo_branch_preserve_hidden_line_positions(self):
+        self.file.write_text('[X] Before\n[ ] First\n[X] Between\n[ ] Second\n[X] After\n')
+        self.run_vim(r'''
+let original = getline(1, '$')
+call textpad_tasks#On()
+call feedkeys('ggJ', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+let joined = ['[X] Before', '[ ] First [ ] Second', '[X] Between', '[X] After']
+call assert_equal(joined, getbufline(g:source_buffer, 1, '$'))
+call feedkeys('u', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(original, getbufline(g:source_buffer, 1, '$'))
+call feedkeys('dd', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(['[X] Before', '[X] Between', '[ ] Second', '[X] After'], getbufline(g:source_buffer, 1, '$'))
+call feedkeys('u', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(original, getbufline(g:source_buffer, 1, '$'))
+call feedkeys("\<C-R>", 'xt')
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[X] Before', '[X] Between', '[ ] Second', '[X] After'], getline(1, '$'))
+''')
+
+    def test_insertion_at_projection_edges_keeps_hidden_prefix_and_suffix(self):
+        self.file.write_text('[X] Before\n[ ] First\n[X] Between\n[ ] Second\n[X] After\n')
+        self.run_vim('''
+call textpad_tasks#On()
+call append(0, '[ ] New first')
+call append(line('$'), ['[ ] New last', '[ ] Another new last'])
+write
+call cursor(line('$'), 6)
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[X] Before', '[ ] New first', '[ ] First', '[X] Between', '[ ] Second', '[ ] New last', '[ ] Another new last', '[X] After'], getline(1, '$'))
+call assert_equal(7, line('.'))
+call assert_equal(getline(1, '$'), readfile(g:test_file))
+call assert_equal(1, textpad_tasks#On())
+call assert_equal(1, textpad_tasks#Off())
+''')
+
+    def test_insert_then_delete_without_intermediate_sync_preserves_hidden_rows(self):
+        self.file.write_text('[ ] First\n[X] Hidden A\n[ ] Second\n[X] Hidden B\n[ ] Third\n')
+        self.run_vim('''
+call textpad_tasks#On()
+call append(1, '[ ] Inserted')
+3delete _
+call setline(3, '[ ] Renamed third')
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[ ] First', '[ ] Inserted', '[X] Hidden A', '[X] Hidden B', '[ ] Renamed third'], getline(1, '$'))
+''')
+
+    def test_duplicate_rows_and_batched_edits_use_actual_edit_positions(self):
+        self.file.write_text('[ ] Same\n[X] Hidden A\n[ ] Same\n[X] Hidden B\n[ ] Last\n')
+        self.run_vim('''
+call textpad_tasks#On()
+2delete _
+call append(2, '[ ] New')
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[ ] Same', '[X] Hidden A', '[X] Hidden B', '[ ] Last', '[ ] New'], getline(1, '$'))
+call assert_equal(1, textpad_tasks#On())
+call assert_equal(['[ ] Same', '[ ] Last', '[ ] New'], getline(1, '$'))
+''')
+
+    def test_deleting_all_visible_rows_preserves_hidden_text_and_can_undo(self):
+        self.file.write_text('[X] Before\n[ ] First\n[X] Between\n[ ] Second\n[X] After\n')
+        self.run_vim('''
+let original = getline(1, '$')
+call textpad_tasks#On()
+call feedkeys('ggdG', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(['[X] Before', '', '[X] Between', '[X] After'], getbufline(g:source_buffer, 1, '$'))
+call feedkeys('u', 'xt')
+call textpad_tasks#Changed(bufnr('%'))
+call assert_equal(original, getbufline(g:source_buffer, 1, '$'))
+call feedkeys('ggdG', 'xt')
+call assert_equal(1, textpad_tasks#Off())
+call assert_equal(['[X] Before', '', '[X] Between', '[X] After'], getline(1, '$'))
+call assert_equal(1, textpad_tasks#On())
+call assert_equal(['No uncompleted tasks found.'], getline(1, '$'))
 call assert_equal(1, textpad_tasks#Off())
 ''')
 
@@ -284,6 +413,22 @@ call textpad_tasks#Recover()
 call assert_true(index(getline(1, '$'), 'An inserted recovery line') >= 0)
 call assert_true(index(getline(1, '$'), '[X] Bread') >= 0)
 call assert_equal('[ ] Milk', getbufline(g:source_buffer, 5)[0])
+''')
+
+    def test_concurrent_source_edits_hold_structural_edits_without_losing_either(self):
+        self.run_vim('''
+call textpad_tasks#On()
+let view = bufnr('%')
+call setbufline(g:source_buffer, 7, '[X] Updated elsewhere')
+call append(4, '[ ] Inserted here')
+call textpad_tasks#Changed(view)
+call assert_equal(0, textpad_tasks#Off())
+call assert_equal('[X] Updated elsewhere', getbufline(g:source_buffer, 7)[0])
+call assert_equal(1, textpad_tasks#Recover())
+call assert_equal('[ ] Inserted here', getline(6))
+call assert_equal('[X] Bread', getline(8))
+call assert_equal('[X] Updated elsewhere', getbufline(g:source_buffer, 7)[0])
+call assert_equal('[ ] Inserted here', getbufline(view, 5)[0])
 ''')
 
     def test_multiple_windows_and_original_bufhidden_settings_are_preserved(self):

@@ -120,21 +120,113 @@ function! s:SourceExists(state) abort
   return bufloaded(a:state.source)
 endfunction
 
+function! textpad_tasks#LinesChanged(buffer, start, end, added, changes) abort
+  let state = s:State(a:buffer)
+  if empty(state) || state.busy
+    return
+  endif
+  " Listener callbacks run under textlock: only update our row bookkeeping.
+  " Copy before modifying so undo snapshots keep their original positions.
+  for change in a:changes
+    if change.added > 0
+      let index = min([change.end - 1, len(state.edit_map)])
+      let real = index > 0 ? state.edit_map[index - 1]
+            \ : empty(state.edit_map) ? 0 : state.edit_map[0] - 1
+      let state.template = copy(state.template)
+      call extend(state.template, repeat([''], change.added), real)
+      let state.edit_map = map(copy(state.edit_map), 'v:val > real ? v:val + change.added : v:val')
+      call extend(state.edit_map, range(real + 1, real + change.added), index)
+    elseif change.added < 0
+      " A replacement can retain some changed rows before the removed rows.
+      let index = max([0, change.end + change.added - 1])
+      let amount = min([-change.added, len(state.edit_map) - index])
+      if amount <= 0
+        continue
+      endif
+      let state.edit_map = copy(state.edit_map)
+      let removed = remove(state.edit_map, index, index + amount - 1)
+      let deleted = {}
+      for real in removed
+        let deleted[real] = 1
+      endfor
+      let state.template = filter(copy(state.template), '!has_key(deleted, v:key + 1)')
+      let offset = 0
+      for i in range(len(state.edit_map))
+        while offset < len(removed) && removed[offset] < state.edit_map[i]
+          let offset += 1
+        endwhile
+        let state.edit_map[i] -= offset
+      endfor
+      " Vim keeps one empty row after deleting every displayed line.
+      if empty(state.edit_map) && getbufline(a:buffer, 1, '$') ==# ['']
+        let real = min([removed[0] - 1, len(state.template)])
+        call insert(state.template, '', real)
+        let state.edit_map = [real + 1]
+      endif
+    endif
+  endfor
+endfunction
+
+function! s:Remember(view) abort
+  if bufnr('%') != a:view
+    return
+  endif
+  let state = s:State(a:view)
+  let state.history[changenr()] = {'template': state.template,
+        \ 'map': state.edit_map, 'projected': state.projected}
+  if len(state.history) > max([&undolevels + 2, 20])
+    let valid = {'0': 1}
+    let valid[changenr()] = 1
+    let entries = copy(undotree().entries)
+    while !empty(entries)
+      let entry = remove(entries, -1)
+      let valid[entry.seq] = 1
+      call extend(entries, get(entry, 'alt', []))
+    endwhile
+    call filter(state.history, 'has_key(valid, v:key)')
+  endif
+endfunction
+
+function! s:Candidate(view) abort
+  call listener_flush(a:view)
+  let state = s:State(a:view)
+  let current = getbufline(a:view, 1, '$')
+  let previous = bufnr('%') == a:view ? get(state.history, changenr(), {}) : {}
+  if !empty(previous) && current ==# previous.projected
+    " Undo/redo restores deleted rows on the correct side of hidden text.
+    let state.template = previous.template
+    let state.edit_map = previous.map
+  endif
+  if empty(state.map) && current ==# state.projected
+    return {'projected': current, 'complete': state.lines, 'map': []}
+  endif
+  if len(current) != len(state.edit_map)
+    return {}
+  endif
+  let complete = copy(state.template)
+  for i in range(len(state.edit_map))
+    let complete[state.edit_map[i] - 1] = current[i]
+  endfor
+  return {'projected': current, 'complete': complete, 'map': state.edit_map}
+endfunction
+
 function! s:Sync(view, quiet) abort
   let state = s:State(a:view)
   if empty(state) || state.busy
     return 1
   endif
-  let current = getbufline(a:view, 1, '$')
-  if current ==# state.projected && s:SourceExists(state)
+  let candidate = s:Candidate(a:view)
+  if !empty(candidate) && candidate.projected ==# state.projected
+        \ && candidate.complete ==# state.lines && s:SourceExists(state)
     call setbufvar(a:view, '&modified', getbufvar(state.source, '&modified'))
+    call s:Remember(a:view)
     return 1
   endif
   let problem = ''
   if !s:SourceExists(state)
     let problem = 'Source buffer is unavailable. Use :TextpadTasksRecover to preserve these edits.'
-  elseif empty(state.map) || len(current) != len(state.map)
-    let problem = 'Toggle to the full view before inserting/deleting lines. Undo that operation, or use :TextpadTasksRecover to keep a copy.'
+  elseif empty(candidate)
+    let problem = 'Could not map these edits to source rows. Undo the operation, or use :TextpadTasksRecover to keep a copy.'
   elseif getbufline(state.source, 1, '$') !=# state.lines
     let problem = 'Source changed in another window. Use :TextpadTasksRecover to keep these edits; undo them here before :TextpadTasksRefresh.'
   elseif !getbufvar(state.source, '&modifiable')
@@ -149,20 +241,23 @@ function! s:Sync(view, quiet) abort
     endif
     return 0
   endif
-  let complete = copy(state.lines)
-  for i in range(len(state.map))
-    let complete[state.map[i] - 1] = current[i]
-  endfor
+  let complete = candidate.complete
   let state.busy = 1
   try
     if setbufline(state.source, 1, complete) != 0
       throw 'Textpad tasks: Could not update the full source buffer.'
     endif
+    if len(getbufline(state.source, 1, '$')) > len(complete)
+          \ && deletebufline(state.source, len(complete) + 1, '$') != 0
+      throw 'Textpad tasks: Could not remove deleted source rows.'
+    endif
     let state.lines = complete
-    let state.projected = current
+    let state.projected = candidate.projected
+    let state.map = candidate.map
     let state.problem = ''
     let state.last_problem = ''
     call setbufvar(a:view, '&modified', getbufvar(state.source, '&modified'))
+    call s:Remember(a:view)
   finally
     let state.busy = 0
   endtry
@@ -195,6 +290,9 @@ function! s:Render(view) abort
   let state.lines = source_lines
   let state.map = map(copy(result.visible), 'v:val + 1')
   let state.projected = map(copy(state.map), 'source_lines[v:val - 1]')
+  let state.template = copy(source_lines)
+  let state.edit_map = copy(state.map)
+  let state.history = {}
   if empty(state.projected)
     let state.projected = ['No uncompleted tasks found.']
   endif
@@ -224,9 +322,11 @@ function! s:Render(view) abort
     call setbufvar(a:view, '&modifiable', !empty(state.map) && getbufvar(state.source, '&modifiable'))
     call setbufvar(a:view, '&readonly', getbufvar(state.source, '&readonly'))
     call setbufvar(a:view, '&modified', getbufvar(state.source, '&modified'))
+    call listener_flush(a:view)
   finally
     let state.busy = 0
   endtry
+  call s:Remember(a:view)
 endfunction
 
 function! textpad_tasks#On() abort
@@ -246,7 +346,9 @@ function! textpad_tasks#On() abort
     let view = bufadd('')
     call bufload(view)
     let s:views[view] = {'source': source, 'source_hidden': &l:bufhidden, 'busy': 0,
-          \ 'start_line': real, 'start_col': column, 'projected': [], 'map': [], 'lines': [], 'name': name}
+          \ 'start_line': real, 'start_col': column, 'projected': [], 'map': [], 'lines': [],
+          \ 'template': [], 'edit_map': [], 'history': {}, 'name': name}
+    let s:views[view].listener = listener_add('textpad_tasks#LinesChanged', view)
     let b:textpad_tasks_view = view
     call setbufvar(source, '&bufhidden', 'hide')
     call setbufvar(view, 'textpad_tasks_source', source)
@@ -272,6 +374,7 @@ function! textpad_tasks#On() abort
     execute 'silent noautocmd file ' . fnameescape(s:views[view].name)
   endif
   setlocal nofoldenable
+  call s:Remember(view)
   call s:Place(s:views[view], real, column)
   return 1
 endfunction
@@ -379,19 +482,18 @@ function! textpad_tasks#Write(view, target, bang, arguments) abort
 endfunction
 
 function! textpad_tasks#Recover() abort
-  let state = s:State(s:Current())
+  let view = s:Current()
+  let state = s:State(view)
   if empty(state)
     return 0
   endif
-  let current = getbufline(s:Current(), 1, '$')
-  let complete = copy(state.lines)
-  if len(current) == len(state.map)
-    for i in range(len(state.map))
-      let complete[state.map[i] - 1] = current[i]
-    endfor
+  let candidate = s:Candidate(view)
+  if !empty(candidate)
+    let complete = candidate.complete
   else
     " Keep every typed line and the full snapshot if line identities are unknown.
-    let complete = ['=== FILTERED EDITS ==='] + current + ['', '=== FULL SOURCE SNAPSHOT ==='] + complete
+    let complete = ['=== FILTERED EDITS ==='] + getbufline(view, 1, '$')
+          \ + ['', '=== FULL SOURCE SNAPSHOT ==='] + state.lines
   endif
   keepalt hide enew
   call setline(1, complete)
@@ -403,6 +505,7 @@ endfunction
 function! textpad_tasks#Wiped(buffer) abort
   let state = s:State(a:buffer)
   if !empty(state)
+    call listener_remove(state.listener)
     if bufexists(state.source)
       call setbufvar(state.source, '&bufhidden', state.source_hidden)
       call setbufvar(state.source, 'textpad_tasks_view', -1)
