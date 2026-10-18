@@ -8,6 +8,9 @@ The Debian server hosts the Android sync API, a desktop browser editor, and APK 
 | Android sync endpoint | `https://git23069.hopto.org/android_textpad` |
 | APK download page | https://git23069.hopto.org/android_textpad/ |
 | Latest APK | https://git23069.hopto.org/android_textpad/textpad-latest.apk |
+| Python CLI | https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz |
+
+The [Python CLI](../cli/README.md) works with tracked files in a normal local directory, independently of the browser and Android editors. Its foreground monitor observes saved files, defers suspicious truncations, and preserves local recovery snapshots. Server saves opt into an atomic revision precondition so a newer concurrent save is rejected. Deploying the server also tests and packages the dependency-free CLI archive, checksum, and usage guide.
 
 ## Browser editor
 

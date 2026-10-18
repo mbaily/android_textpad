@@ -20,6 +20,7 @@ IDs and revision identifiers contain 1–128 ASCII letters, digits, `_` or `-`. 
 
 | Request | Response |
 | --- | --- |
+| `GET /api/v1/capabilities` | `{"conditional_put": true, "max_document_bytes": 10485760}` |
 | `GET /api/v1/documents` | `{"documents": [metadata, ...]}` for current documents |
 | `GET /api/v1/documents/{id}` | Current metadata plus `content_base64` |
 | `PUT /api/v1/documents/{id}` | Metadata of the accepted revision |
@@ -38,6 +39,10 @@ A PUT body contains:
 ```
 
 For a new document, `base_revision` is null. It is informational, not a conflict rejection condition: the latest accepted write becomes current even if the client edited offline from an older base. Keep the displaced current version in history within the same SQLite transaction. Validate text encodings, names, sizes and request identifiers before accepting a revision.
+
+Filesystem clients can opt into stricter writes by adding `"require_base_revision": true`. After checking an existing retry receipt, the server compares `base_revision` against the current revision inside the same `BEGIN IMMEDIATE` transaction as the save. A mismatch returns HTTP 409 with `"code": "revision_conflict"` and creates neither a revision nor a receipt. A null base requires a nonexistent document. A previously accepted request still returns its original receipt even if the server has since advanced. The flag must be a JSON boolean. Omitting it retains existing Android/browser behavior. Clients that depend on this guard must verify `conditional_put` before saving, rather than assuming an older server understands the flag.
+
+The [Python CLI](../cli/README.md) uses this opt-in guard, exact persisted retry payloads, full-content SQLite recovery snapshots, file stability checks, explicit conflict resolution, and holds on suspicious blank/large-deletion saves. It never propagates local file deletion as a server deletion.
 
 `(document_id, request_id)` is an idempotency key. Persist its receipt atomically with accepting the revision. A retry returns the original accepted metadata without creating another revision or moving that old write ahead of newer writes. Reusing a request ID with different content must be rejected. Do not discard idempotency receipts merely because a revision was manually removed.
 

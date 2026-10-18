@@ -12,6 +12,9 @@ npm ci --prefix server/frontend --no-audit --no-fund
 npm test --prefix server/frontend
 npm run build --prefix server/frontend
 PYTHONPATH=server "$textpad_python" -m unittest discover -s server/tests -v
+PYTHONPATH=cli:server "$textpad_python" -m unittest discover -s cli/tests -v
+"$textpad_python" scripts/package-cli.py
+"$textpad_python" server/textpad_server/static/textpad-sync.pyz --version
 mkdir -p .server-package/wheels
 "$textpad_python" -m pip download --only-binary=:all: --requirement server/requirements.lock --dest .server-package/wheels
 textpad_stage="$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$textpad_host" 'mktemp -d /tmp/textpad-server.XXXXXXXX')"

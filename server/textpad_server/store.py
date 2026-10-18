@@ -27,6 +27,10 @@ class RequestConflict(ValueError):
     pass
 
 
+class RevisionConflict(ValueError):
+    pass
+
+
 def identifier(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
         raise ValueError("Invalid document, revision, or request identifier.")
@@ -288,11 +292,14 @@ class Store:
             return [representation(row) for row in db.execute(
                 f"SELECT {METADATA} FROM revisions WHERE document_id=? ORDER BY sequence DESC", (document_id,))]
 
-    def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None, client_id=None, source=None):
+    def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None, client_id=None, source=None,
+            require_base_revision=False):
         identifier(document_id), identifier(request_id)
         name = filename(name)
         if base_revision is not None:
             identifier(str(base_revision))
+        if not isinstance(require_base_revision, bool):
+            raise ValueError("require_base_revision must be true or false.")
         if client_id is not None:
             identifier(str(client_id))
         rev_source = infer_source(client_id, source)
@@ -314,6 +321,9 @@ class Store:
                        WHERE d.id=?""",
                     (document_id,),
                 ).fetchone()
+                current_revision = str(previous["sequence"]) if previous is not None else None
+                if require_base_revision and current_revision != (str(base_revision) if base_revision is not None else None):
+                    raise RevisionConflict("The server revision changed. Reconcile before saving again.")
                 if (
                     previous is not None
                     and previous["name"] == name

@@ -18,3 +18,9 @@ server/textpad_server/static/editor.js.LEGAL.txt
 *.sqlite3
 *.sqlite3-*
 .venv/
+.venv-cli/
+*.egg-info/
+.textpad/
+server/textpad_server/static/textpad-sync.pyz
+server/textpad_server/static/textpad-sync.pyz.sha256
+server/textpad_server/static/textpad-sync-README.txt

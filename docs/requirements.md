@@ -40,3 +40,13 @@
 - Retain unsaved browser buffers when remote revisions arrive. Reload clean buffers, show changes elsewhere for dirty buffers, and retain displaced revisions when saving.
 - Single-user browser sign-in uses the configured shared API token unless a separate password is explicitly selected.
 - The API contract is documented separately. SQLite data and credentials remain outside the public deployment directory.
+
+## Python filesystem CLI
+
+- Linux, Windows, and macOS terminal client using Python 3.11+ with no runtime package dependencies.
+- Explicitly add/remove local files, download/link existing server documents, inspect status/history, sync on demand, and edit files with a separate editor.
+- Store mappings, exact acknowledged and pending contents, and retained recovery snapshots in a private SQLite workspace.
+- Foreground terminal monitor with file stability checks; no systemd service. Observe saved local edits and periodically check for server changes.
+- Hold suspicious blank/large-deletion saves, preserve exact bytes, and require explicit conflict resolution when both copies change.
+- Use an opt-in atomic server revision precondition for CLI saves, while keeping existing Android/browser save behavior.
+- Preserve retry receipts across interruptions; retain snapshots before replacements and do not propagate local deletion as server deletion.

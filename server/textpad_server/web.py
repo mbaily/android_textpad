@@ -23,7 +23,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .codec import MAX_BYTES, InvalidText, decode, edited, merge_3way
 from .events import ChangeSignal
-from .store import NotFound, RequestConflict, Store, filename, identifier
+from .store import NotFound, RequestConflict, RevisionConflict, Store, filename, identifier
 
 
 def read_secret(path):
@@ -185,6 +185,10 @@ def create_app(test_config=None):
     def request_conflict(error):
         return jsonify(error=str(error)), 409
 
+    @app.errorhandler(RevisionConflict)
+    def revision_conflict(error):
+        return jsonify(error=str(error), code="revision_conflict"), 409
+
     @app.errorhandler(sqlite3.Error)
     def storage_failure(error):
         app.logger.error("SQLite operation failed: %s", type(error).__name__)
@@ -199,6 +203,10 @@ def create_app(test_config=None):
     @app.get("/api/v1/documents")
     def api_documents():
         return jsonify(documents=store.list())
+
+    @app.get("/api/v1/capabilities")
+    def api_capabilities():
+        return jsonify(conditional_put=True, max_document_bytes=MAX_BYTES)
 
     def client_cursor_id(payload=None):
         candidate = (payload.get("client_id") if isinstance(payload, dict) else None) or request.headers.get("X-Textpad-Client")
@@ -247,7 +255,7 @@ def create_app(test_config=None):
             raise ValueError("Invalid Base64 file contents.") from error
         return jsonify(store.put(document_id, payload.get("name"), raw, payload.get("base_revision"),
                                  payload.get("request_id"), payload.get("encoding"), client_id=client_cursor_id(payload),
-                                 source=payload.get("source")))
+                                 source=payload.get("source"), require_base_revision=payload.get("require_base_revision", False)))
 
     @app.get("/api/v1/documents/<document_id>/revisions")
     def api_revisions(document_id):

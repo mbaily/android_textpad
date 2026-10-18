@@ -8,6 +8,10 @@ A native, dark-by-default text editor for **Android 16 / API 36 and later**. The
 
 [Download page](https://git23069.hopto.org/android_textpad/) · [Latest APK](https://git23069.hopto.org/android_textpad/textpad-latest.apk) · [Desktop editor](https://git23069.hopto.org/android_textpad/editor/)
 
+[Python CLI client](cli/README.md) · [Download CLI](https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz)
+
+The Python 3.11+ CLI syncs explicitly selected local files on Linux, Windows, and macOS, with SQLite mappings and recovery snapshots. Edit with any text editor and use `textpad-sync sync` or foreground `textpad-sync watch`. It holds suspicious blank/truncated saves and conflicts for explicit resolution. See the [setup, commands, and recovery guide](cli/README.md).
+
 The site uses the server's existing HTTPS certificate and is served from `/opt/android_textpad/deployment/`. Publish an updated APK with `./scripts/deploy-downloads.sh` after building it. See [server deployment instructions](server/README.md).
 
 ## Build and install
