@@ -97,11 +97,12 @@
   let hashtagsTab = $state("search");
   let hashtagQuery = $state("");
   let hashtagMatchMode = $state("lines");
-  let hashtagHideCompleted = $state(false);
+  let hashtagHideCompleted = $state(true);
   let errandsTags = $state(initialErrands.hashtags);
   let errandsUpdatedAt = $state(initialErrands.updated_at);
   let errandsDirty = $state(initialErrands.dirty);
   let editingErrands = $state(false);
+  let errandsSettingsOpen = $state(false);
   let errandsInput = $state("");
   let discoveredHashtags = $state([]);
   let hashtagResults = $state([]);
@@ -1482,6 +1483,8 @@
     closeHistory();
     hashtagsTab = tab;
     hashtagsPanelOpen = true;
+    errandsSettingsOpen = false;
+    requestAnimationFrame(() => document.getElementById("hashtags-panel")?.scrollTo(0, 0));
     if (tab === "errands" && errandsTags.length === 0) {
       editingErrands = true;
       errandsInput = "";
@@ -1492,6 +1495,7 @@
   function closeHashtagsPanel() {
     hashtagsPanelOpen = false;
     editingErrands = false;
+    errandsSettingsOpen = false;
   }
 
   async function jumpToHashtagResult(fileId, lineNumber = null) {
@@ -2584,7 +2588,7 @@
     </div>
   </aside>
 
-  <aside id="hashtags-panel" class="hashtags-panel" class:hidden={!hashtagsPanelOpen} aria-label="Hashtags and Errands">
+  <aside id="hashtags-panel" class="history-panel hashtags-panel" class:hidden={!hashtagsPanelOpen} aria-label="Hashtags and Errands">
     <div class="history-heading">
       <h2>Hashtags &amp; Errands</h2>
       <div>
@@ -2620,6 +2624,31 @@
     </div>
 
     <div class="hashtag-controls">
+      {#snippet hashtagFilters()}
+        <div class="hashtag-filter-row">
+          <div class="mode-switch" role="group" aria-label="Match mode">
+            <button
+              type="button"
+              class:active={hashtagMatchMode === "lines"}
+              onclick={() => (hashtagMatchMode = "lines")}
+            >Line matching</button>
+            <button
+              type="button"
+              class:active={hashtagMatchMode === "files"}
+              onclick={() => (hashtagMatchMode = "files")}
+            >File matching</button>
+          </div>
+          <label class="inline small">
+            <input
+              id="hashtag-hide-completed"
+              type="checkbox"
+              bind:checked={hashtagHideCompleted}
+              onchange={runHashtagSearch}
+            >
+            Hide [X] / [C]
+          </label>
+        </div>
+      {/snippet}
       {#if hashtagsTab === "search"}
         <input
           id="hashtag-query-input"
@@ -2643,94 +2672,80 @@
             {/each}
           </div>
         {/if}
+        {@render hashtagFilters()}
       {:else}
-        <div class="errands-box">
-          <div class="errands-box-header">
-            <span class="small muted">Errands hashtags (matches any)</span>
-            {#if !editingErrands}
-              <button
-                id="edit-errands"
-                type="button"
-                class="text-button small"
-                onclick={() => {
-                  errandsInput = formatTagListJs(errandsTags);
-                  editingErrands = true;
-                }}
-              >Edit</button>
-            {/if}
-          </div>
-          {#if editingErrands}
-            <textarea
-              id="errands-textarea"
-              aria-label="Errands hashtags"
-              placeholder="#chemist #bunnings #postoffice #groceries"
-              bind:value={errandsInput}
-            ></textarea>
-            {#if discoveredHashtags.length > 0}
-              <div class="tag-chips" aria-label="Tap to add or remove hashtag">
-                {#each discoveredHashtags as tag (tag)}
-                  {@const inDraft = parseTagListJs(errandsInput).includes(tag)}
+        <details id="errands-settings" class="errands-settings" bind:open={errandsSettingsOpen}>
+          <summary>
+            Errands settings
+            <span class="small muted">{errandsTags.length ? `${errandsTags.length} hashtags` : "Add hashtags"}</span>
+          </summary>
+          <div class="errands-settings-body">
+            <div class="errands-box">
+              <div class="errands-box-header">
+                <span class="small muted">Errands hashtags (matches any)</span>
+                {#if !editingErrands}
                   <button
+                    id="edit-errands"
                     type="button"
-                    class="tag-chip"
-                    class:active={inDraft}
+                    class="text-button small"
                     onclick={() => {
-                      const current = parseTagListJs(errandsInput);
-                      const idx = current.indexOf(tag);
-                      if (idx >= 0) current.splice(idx, 1);
-                      else current.push(tag);
-                      errandsInput = formatTagListJs(current);
+                      errandsInput = formatTagListJs(errandsTags);
+                      editingErrands = true;
                     }}
-                  >#{tag}</button>
-                {/each}
+                  >Edit</button>
+                {/if}
               </div>
-            {/if}
-            <div class="errands-actions">
-              <button type="button" class="text-button small" onclick={() => (editingErrands = false)}>Cancel</button>
-              <button id="save-errands" type="button" class="primary small" onclick={saveErrandsFromInput}>Save Errands</button>
+              {#if editingErrands}
+                <textarea
+                  id="errands-textarea"
+                  aria-label="Errands hashtags"
+                  placeholder="#chemist #bunnings #postoffice #groceries"
+                  bind:value={errandsInput}
+                ></textarea>
+                {#if discoveredHashtags.length > 0}
+                  <div class="tag-chips" aria-label="Tap to add or remove hashtag">
+                    {#each discoveredHashtags as tag (tag)}
+                      {@const inDraft = parseTagListJs(errandsInput).includes(tag)}
+                      <button
+                        type="button"
+                        class="tag-chip"
+                        class:active={inDraft}
+                        onclick={() => {
+                          const current = parseTagListJs(errandsInput);
+                          const idx = current.indexOf(tag);
+                          if (idx >= 0) current.splice(idx, 1);
+                          else current.push(tag);
+                          errandsInput = formatTagListJs(current);
+                        }}
+                      >#{tag}</button>
+                    {/each}
+                  </div>
+                {/if}
+                <div class="errands-actions">
+                  <button type="button" class="text-button small" onclick={() => (editingErrands = false)}>Cancel</button>
+                  <button id="save-errands" type="button" class="primary small" onclick={saveErrandsFromInput}>Save Errands</button>
+                </div>
+              {:else if errandsTags.length > 0}
+                <div class="tag-chips">
+                  {#each errandsTags as tag (tag)}
+                    <span class="tag-chip active">#{tag}</span>
+                  {/each}
+                </div>
+              {:else}
+                <p class="small muted">No errands hashtags configured yet. Add tags like #chemist or #bunnings to see all your errands in one place.</p>
+              {/if}
             </div>
-          {:else if errandsTags.length > 0}
-            <div class="tag-chips">
-              {#each errandsTags as tag (tag)}
-                <span class="tag-chip active">#{tag}</span>
-              {/each}
-            </div>
-          {:else}
-            <p class="small muted">No errands hashtags configured yet. Add tags like #chemist or #bunnings to see all your errands in one place.</p>
-          {/if}
-        </div>
+            {@render hashtagFilters()}
+          </div>
+        </details>
       {/if}
-
-      <div class="hashtag-filter-row">
-        <div class="mode-switch" role="group" aria-label="Match mode">
-          <button
-            type="button"
-            class:active={hashtagMatchMode === "lines"}
-            onclick={() => (hashtagMatchMode = "lines")}
-          >Line matching</button>
-          <button
-            type="button"
-            class:active={hashtagMatchMode === "files"}
-            onclick={() => (hashtagMatchMode = "files")}
-          >File matching</button>
-        </div>
-        <label class="inline small">
-          <input
-            id="hashtag-hide-completed"
-            type="checkbox"
-            bind:checked={hashtagHideCompleted}
-            onchange={runHashtagSearch}
-          >
-          Hide [X] / [C]
-        </label>
-      </div>
     </div>
 
     <div id="hashtag-results" class="hashtag-results" aria-live="polite">
       {#if hashtagSearching}
         <p class="small muted">Searching open &amp; synced files…</p>
       {:else if hashtagsTab === "errands" && errandsTags.length === 0}
-        <p class="small muted">Save your errands hashtags above to view matching lines or files.</p>
+        <p class="small muted">Expand Errands settings to add hashtags and view matching lines or files.</p>
       {:else if hashtagsTab === "search" && parseTagListJs(hashtagQuery).length === 0}
         <p class="small muted">Select or type one or more hashtags above to search across open and synced files.</p>
       {:else if hashtagResults.length === 0}

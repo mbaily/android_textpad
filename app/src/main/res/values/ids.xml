@@ -3,4 +3,7 @@
     <item name="recent_files" type="id" />
     <item name="recent_file_list" type="id" />
     <item name="recent_files_empty" type="id" />
+    <item name="hashtag_results" type="id" />
+    <item name="hashtag_chips" type="id" />
+    <item name="hashtag_hide_completed" type="id" />
 </resources>

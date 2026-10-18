@@ -18,6 +18,7 @@ public final class Hashtags {
             "(?:(?<=^)|(?<=[\\s(\\[{\"']))#([A-Za-z_][A-Za-z0-9_-]*)(?=$|\\s|[.,;:!?)\\]}\"'])"
     );
     private static final Pattern TAG_TOKEN = Pattern.compile("#?([A-Za-z_][A-Za-z0-9_-]*)");
+    private static final Pattern TAG_NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_-]*");
 
     public record LineMatch(int lineNumber, int lineStartOffset, String lineText, List<String> matchedTags) {}
 
@@ -34,7 +35,7 @@ public final class Hashtags {
         if (raw == null) return null;
         String trimmed = raw.trim();
         if (trimmed.startsWith("#")) trimmed = trimmed.substring(1).trim();
-        if (trimmed.isEmpty() || !trimmed.matches("[A-Za-z_][A-Za-z0-9_-]*")) return null;
+        if (!TAG_NAME.matcher(trimmed).matches()) return null;
         return trimmed.toLowerCase(Locale.ROOT);
     }
 

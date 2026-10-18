@@ -116,6 +116,7 @@ npm run build --prefix server/frontend
 # Requires Playwright and Chrome in the selected Python environment:
 PYTHONPATH=server python3 server/tests/browser_smoke.py
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
+PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py
 ```
 
@@ -124,6 +125,8 @@ The Chrome smoke test starts an isolated temporary server/database, verifies liv
 The task-view smoke test checks filtering, dimmed context, divider headings above unindented tasks and at the start of a file, line-edit restrictions, tab switching, empty results, keeping the cursor visible when returning to the full document, and saving edits while preserving hidden text and CRLF line endings. JavaScript unit tests also cover the heading recognition rule, including whitespace, divider lengths, section boundaries, and hiding sections without open tasks.
 
 The recent-file smoke test checks reopening from the entry screen, order and persistence across reloads, renamed files, mobile layout, offline reopening, and starting a new file from an empty list.
+
+The errands pane scrolls as a whole, with its hashtag list, match mode, and Hide filter inside **Errands settings**, collapsed by default. Its browser check covers a 950-tag list, wheel scrolling, result navigation, settings editing, and desktop, tablet, mobile, and short viewports.
 
 `LiveSyncInstrumentedTest` is an optional real Android-to-HTTPS contract test. Normal runs skip it. To opt in, supply `files/live-sync-test.json` (token and a fresh disposable `document_id`) and `files/live-sync-ca.crt` to the test application's private directory, then run that class with instrumentation argument `liveTextpadServer=true`. It trusts only the supplied public CA for that test, preserves hostname verification, checks Unicode/UTF-16 bytes, history and retry ordering, automatic WebSocket pulls, deferred dirty buffers, and a real HTTPS background-worker pull, and removes its local credential files afterward. Remove only its known disposable document from the server after verification.
 

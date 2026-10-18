@@ -170,6 +170,9 @@ def main():
         page.locator("#hashtags").click()
         page.locator("#hashtag-query-input").fill("#errands")
         results = page.locator("#hashtag-results .hashtag-line-item")
+        expect(page.get_by_label("Hide [X] / [C]", exact=True)).to_be_checked()
+        expect(results).to_have_count(3)
+        page.get_by_label("Hide [X] / [C]", exact=True).uncheck()
         expect(results).to_have_count(11)
         page.get_by_label("Hide [X] / [C]", exact=True).check()
         expect(results).to_have_count(3)
@@ -187,6 +190,24 @@ def main():
         expect(results.filter(has_text="[ ] Open #errands")).to_have_count(2)
         expect(results.filter(has_text="[ ] Unsaved open #errands")).to_have_count(1)
         context.set_offline(False)
+
+        # Errands starts with the same default and retains the user's filter choice.
+        response = context.request.put(base + "/api/v1/errands", headers=headers, data={"hashtags": ["errands"]})
+        assert response.ok
+        page.reload()
+        page.locator("#hashtags").click()
+        page.get_by_role("tab", name="Errands (1)", exact=True).click()
+        expect(page.locator("#errands-settings")).to_have_js_property("open", False)
+        page.locator("#errands-settings > summary").click()
+        hide_closed = page.get_by_label("Hide [X] / [C]", exact=True)
+        expect(hide_closed).to_be_checked()
+        expect(results).to_have_count(2)
+        hide_closed.uncheck()
+        expect(results).to_have_count(9)
+        page.get_by_role("tab", name="Search", exact=True).click()
+        page.get_by_role("tab", name="Errands (1)", exact=True).click()
+        expect(hide_closed).not_to_be_checked()
+        expect(results).to_have_count(9)
 
         assert not errors, errors
         browser.close()

@@ -16,10 +16,10 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
-import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import org.hopto.git23069.textpad.core.Hashtags;
 import org.hopto.git23069.textpad.core.TextCodec;
 import java.util.ArrayList;
@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 final class HashtagUi {
     private static final int BG = 0xff101313, SURFACE = 0xff19201d, SURFACE_ALT = 0xff222b26,
@@ -43,31 +44,36 @@ final class HashtagUi {
 
     private boolean errandsTab;
     private boolean fileMatchMode;
-    private boolean hideCompleted; // default false
+    private boolean hideCompleted = true;
     private boolean editingErrands;
     private String searchQuery = "";
     private List<String> discoveredTags = List.of();
     private List<FileResult> currentResults = List.of();
     private boolean searching;
+    private List<String> errandsTags;
 
     private AlertDialog dialog;
     private Button searchTabBtn, errandsTabBtn, lineModeBtn, fileModeBtn;
-    private LinearLayout modeContainer, resultsContainer, chipsRow, errandsChipsRow;
+    private LinearLayout modeContainer;
+    private RecyclerView resultsList;
+    private final ResultsAdapter resultsAdapter = new ResultsAdapter();
+    private TagChipAdapter queryChips, errandsEditChips;
     private EditText searchInput, errandsEditInput;
     private TextView statusLabel;
 
     HashtagUi(MainActivity activity, TextpadApplication app) {
         this.activity = activity;
         this.app = app;
+        this.errandsTags = app.settings.errandsHashtags();
     }
 
     private boolean alive() {
         return !activity.isFinishing() && !activity.isDestroyed();
     }
 
-    void show(boolean startOnErrands) {
+    AlertDialog show(boolean startOnErrands) {
         this.errandsTab = startOnErrands;
-        if (startOnErrands && app.settings.errandsHashtags().isEmpty()) {
+        if (startOnErrands && errandsTags.isEmpty()) {
             this.editingErrands = true;
         }
         LinearLayout root = column();
@@ -122,6 +128,7 @@ final class HashtagUi {
         filterRow.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
         CheckBox hideBox = new CheckBox(activity);
+        hideBox.setId(R.id.hashtag_hide_completed);
         hideBox.setText("Hide [X] / [C]");
         hideBox.setTextColor(TEXT);
         hideBox.setTextSize(12);
@@ -142,12 +149,13 @@ final class HashtagUi {
         root.addView(div, new LinearLayout.LayoutParams(-1, dp(1)));
 
         // Scrollable results area
-        ScrollView resultsScroll = new ScrollView(activity);
-        resultsScroll.setFillViewport(true);
-        resultsContainer = column();
-        resultsContainer.setPadding(0, dp(8), 0, dp(8));
-        resultsScroll.addView(resultsContainer);
-        root.addView(resultsScroll, new LinearLayout.LayoutParams(-1, dp(360), 1));
+        resultsList = new RecyclerView(activity);
+        resultsList.setId(R.id.hashtag_results);
+        resultsList.setLayoutManager(new LinearLayoutManager(activity));
+        resultsList.setItemAnimator(null);
+        resultsList.setPadding(0, dp(8), 0, dp(8));
+        resultsList.setAdapter(resultsAdapter);
+        root.addView(resultsList, new LinearLayout.LayoutParams(-1, dp(360), 1));
 
         rebuildModeControls();
 
@@ -155,15 +163,20 @@ final class HashtagUi {
                 .setView(root)
                 .setNegativeButton("Close", null)
                 .create();
+        dialog.setOnDismissListener(d -> searchGen.incrementAndGet());
         dialog.show();
         if (dialog.getWindow() != null) {
             dialog.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
             dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
 
-        // Sync errands in background when opening dialog, then refresh if needed
+        // Search local files first; settings synchronization shares the I/O executor.
+        runSearch();
         app.sync.syncErrandsInBackground(() -> {
             if (!alive() || dialog == null || !dialog.isShowing()) return;
+            List<String> syncedTags = app.settings.errandsHashtags();
+            if (errandsTags.equals(syncedTags)) return;
+            errandsTags = syncedTags;
             errandsTabBtn.setText(errandsTabLabel());
             if (errandsTab && !editingErrands) {
                 rebuildModeControls();
@@ -171,7 +184,7 @@ final class HashtagUi {
             }
         });
 
-        runSearch();
+        return dialog;
     }
 
     void onFolderTreeGranted() {
@@ -181,13 +194,13 @@ final class HashtagUi {
     }
 
     private String errandsTabLabel() {
-        int count = app.settings.errandsHashtags().size();
+        int count = errandsTags.size();
         return count > 0 ? "Errands (" + count + ")" : "Errands";
     }
 
     private void switchTab(boolean toErrands) {
         this.errandsTab = toErrands;
-        if (toErrands && app.settings.errandsHashtags().isEmpty()) {
+        if (toErrands && errandsTags.isEmpty()) {
             this.editingErrands = true;
         } else {
             this.editingErrands = false;
@@ -206,6 +219,10 @@ final class HashtagUi {
 
     private void rebuildModeControls() {
         modeContainer.removeAllViews();
+        queryChips = null;
+        errandsEditChips = null;
+        searchInput = null;
+        errandsEditInput = null;
         if (!errandsTab) {
             searchInput = new EditText(activity);
             searchInput.setHint("Search hashtags (e.g. #chemist #bunnings)…");
@@ -228,13 +245,13 @@ final class HashtagUi {
             });
             modeContainer.addView(searchInput, new LinearLayout.LayoutParams(-1, -2));
 
-            HorizontalScrollView chipScroll = new HorizontalScrollView(activity);
-            chipScroll.setHorizontalScrollBarEnabled(false);
-            chipsRow = row();
-            chipsRow.setPadding(0, dp(6), 0, dp(2));
-            chipScroll.addView(chipsRow);
-            modeContainer.addView(chipScroll, new LinearLayout.LayoutParams(-1, -2));
-            updateDiscoveredChips();
+            queryChips = new TagChipAdapter(discoveredTags, Set.copyOf(Hashtags.parseTagList(searchQuery)), tag -> {
+                List<String> current = new ArrayList<>(Hashtags.parseTagList(searchQuery));
+                if (!current.remove(tag)) current.add(tag);
+                searchInput.setText(Hashtags.formatTagList(current));
+                searchInput.setSelection(searchInput.getText().length());
+            });
+            modeContainer.addView(chipList(queryChips));
         } else {
             LinearLayout box = column();
             box.setBackground(rounded(SURFACE, 8, BORDER));
@@ -252,7 +269,7 @@ final class HashtagUi {
             }
             box.addView(boxHeader);
 
-            List<String> currentErrands = app.settings.errandsHashtags();
+            List<String> currentErrands = errandsTags;
             if (editingErrands) {
                 errandsEditInput = new EditText(activity);
                 errandsEditInput.setHint("#chemist #bunnings #postoffice #groceries");
@@ -270,12 +287,13 @@ final class HashtagUi {
                 inputLp.setMargins(0, dp(6), 0, dp(6));
                 box.addView(errandsEditInput, inputLp);
 
-                HorizontalScrollView chipScroll = new HorizontalScrollView(activity);
-                chipScroll.setHorizontalScrollBarEnabled(false);
-                errandsChipsRow = row();
-                chipScroll.addView(errandsChipsRow);
-                box.addView(chipScroll, new LinearLayout.LayoutParams(-1, -2));
-                updateErrandsEditChips();
+                errandsEditChips = new TagChipAdapter(discoveredTags, Set.copyOf(currentErrands), tag -> {
+                    List<String> current = new ArrayList<>(Hashtags.parseTagList(errandsEditInput.getText().toString()));
+                    if (!current.remove(tag)) current.add(tag);
+                    errandsEditInput.setText(Hashtags.formatTagList(current));
+                    errandsEditInput.setSelection(errandsEditInput.getText().length());
+                });
+                box.addView(chipList(errandsEditChips));
 
                 errandsEditInput.addTextChangedListener(new TextWatcher() {
                     public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -297,18 +315,7 @@ final class HashtagUi {
                 actionsRow.addView(saveBtn, new LinearLayout.LayoutParams(-2, dp(34)));
                 box.addView(actionsRow);
             } else if (!currentErrands.isEmpty()) {
-                HorizontalScrollView chipScroll = new HorizontalScrollView(activity);
-                chipScroll.setHorizontalScrollBarEnabled(false);
-                LinearLayout tagList = row();
-                tagList.setPadding(0, dp(6), 0, dp(2));
-                for (String tag : currentErrands) {
-                    Button chip = pillButton("#" + tag, true, null);
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(30));
-                    lp.setMarginEnd(dp(6));
-                    tagList.addView(chip, lp);
-                }
-                chipScroll.addView(tagList);
-                box.addView(chipScroll);
+                box.addView(chipList(new TagChipAdapter(currentErrands, Set.copyOf(currentErrands), null)));
             } else {
                 TextView emptyMsg = label("No errands hashtags configured yet. Tap Edit to add tags like #chemist or #bunnings.", 12, MUTED);
                 emptyMsg.setPadding(0, dp(6), 0, dp(2));
@@ -322,6 +329,7 @@ final class HashtagUi {
         String raw = errandsEditInput != null ? errandsEditInput.getText().toString() : "";
         List<String> parsed = Hashtags.parseTagList(raw);
         app.settings.setErrandsHashtags(parsed, app.settings.errandsUpdatedAt(), true);
+        errandsTags = parsed;
         editingErrands = false;
         errandsTabBtn.setText(errandsTabLabel());
         rebuildModeControls();
@@ -330,51 +338,74 @@ final class HashtagUi {
     }
 
     private void updateDiscoveredChips() {
-        if (chipsRow == null) return;
-        chipsRow.removeAllViews();
-        List<String> active = Hashtags.parseTagList(searchQuery);
-        for (String tag : discoveredTags) {
-            boolean selected = active.contains(tag);
-            Button chip = pillButton("#" + tag, selected, v -> {
-                List<String> cur = new ArrayList<>(Hashtags.parseTagList(searchQuery));
-                if (cur.contains(tag)) cur.remove(tag);
-                else cur.add(tag);
-                searchQuery = Hashtags.formatTagList(cur);
-                if (searchInput != null) {
-                    searchInput.setText(searchQuery);
-                    searchInput.setSelection(searchInput.getText().length());
-                }
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(30));
-            lp.setMarginEnd(dp(6));
-            chipsRow.addView(chip, lp);
-        }
+        if (queryChips != null) queryChips.update(discoveredTags, Hashtags.parseTagList(searchQuery));
     }
 
     private void updateErrandsEditChips() {
-        if (errandsChipsRow == null || errandsEditInput == null) return;
-        errandsChipsRow.removeAllViews();
-        List<String> draft = Hashtags.parseTagList(errandsEditInput.getText().toString());
-        for (String tag : discoveredTags) {
-            boolean selected = draft.contains(tag);
-            Button chip = pillButton("#" + tag, selected, v -> {
-                List<String> cur = new ArrayList<>(Hashtags.parseTagList(errandsEditInput.getText().toString()));
-                if (cur.contains(tag)) cur.remove(tag);
-                else cur.add(tag);
-                String formatted = Hashtags.formatTagList(cur);
-                errandsEditInput.setText(formatted);
-                errandsEditInput.setSelection(formatted.length());
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(30));
-            lp.setMarginEnd(dp(6));
-            errandsChipsRow.addView(chip, lp);
+        if (errandsEditChips != null && errandsEditInput != null) {
+            errandsEditChips.update(discoveredTags, Hashtags.parseTagList(errandsEditInput.getText().toString()));
         }
+    }
+
+    private RecyclerView chipList(TagChipAdapter adapter) {
+        RecyclerView list = new RecyclerView(activity);
+        list.setId(R.id.hashtag_chips);
+        list.setLayoutManager(new LinearLayoutManager(activity, RecyclerView.HORIZONTAL, false));
+        list.setItemAnimator(null);
+        list.setHasFixedSize(true);
+        list.setPadding(0, dp(6), 0, dp(2));
+        list.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(38)));
+        list.setAdapter(adapter);
+        return list;
+    }
+
+    private static final class ChipHolder extends RecyclerView.ViewHolder {
+        final Button button;
+        ChipHolder(Button button) { super(button); this.button = button; }
+    }
+
+    private final class TagChipAdapter extends RecyclerView.Adapter<ChipHolder> {
+        private List<String> tags;
+        private Set<String> selected;
+        private final Consumer<String> onClick;
+
+        TagChipAdapter(List<String> tags, Set<String> selected, Consumer<String> onClick) {
+            this.tags = tags;
+            this.selected = selected;
+            this.onClick = onClick;
+        }
+
+        @android.annotation.SuppressLint("NotifyDataSetChanged")
+        void update(List<String> tags, List<String> selected) {
+            this.tags = tags;
+            this.selected = Set.copyOf(selected);
+            notifyDataSetChanged();
+        }
+
+        @Override public ChipHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            Button button = pillButton("", false, null);
+            button.setSingleLine(true);
+            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(-2, dp(30));
+            lp.setMarginEnd(dp(6));
+            button.setLayoutParams(lp);
+            return new ChipHolder(button);
+        }
+
+        @Override public void onBindViewHolder(ChipHolder holder, int position) {
+            String tag = tags.get(position);
+            holder.button.setText("#" + tag);
+            stylePill(holder.button, selected.contains(tag));
+            holder.button.setOnClickListener(onClick == null ? null : v -> onClick.accept(tag));
+            holder.button.setClickable(onClick != null);
+        }
+
+        @Override public int getItemCount() { return tags.size(); }
     }
 
     private void runSearch() {
         final int gen = searchGen.incrementAndGet();
         final List<String> targetTags = errandsTab
-                ? app.settings.errandsHashtags()
+                ? errandsTags
                 : Hashtags.parseTagList(searchQuery);
         final boolean hideDone = this.hideCompleted;
 
@@ -397,8 +428,10 @@ final class HashtagUi {
 
         searching = true;
         statusLabel.setText("Searching open, recent, synced, and same-folder files…");
+        renderResults();
 
         app.io.execute(() -> {
+            if (searchGen.get() != gen) return;
             List<ScannedFile> allFiles = new ArrayList<>(openSnap);
 
             // Collect candidate URIs from Recents, Synced bindings, and Same-directory / Folder trees
@@ -464,84 +497,129 @@ final class HashtagUi {
     }
 
     private void renderResults() {
-        if (resultsContainer == null) return;
-        resultsContainer.removeAllViews();
+        if (resultsList == null) return;
 
         List<String> targetTags = errandsTab
-                ? app.settings.errandsHashtags()
+                ? errandsTags
                 : Hashtags.parseTagList(searchQuery);
 
-        if (searching && currentResults.isEmpty()) {
-            resultsContainer.addView(emptyState("Searching files…"));
+        if (searching) {
+            resultsAdapter.showMessage("Searching files…");
             return;
         }
         if (errandsTab && targetTags.isEmpty()) {
-            resultsContainer.addView(emptyState("Save your errands hashtags above to view matching lines or files."));
+            resultsAdapter.showMessage("Save your errands hashtags above to view matching lines or files.");
             return;
         }
         if (!errandsTab && targetTags.isEmpty()) {
-            resultsContainer.addView(emptyState("Tap a hashtag chip or type one or more hashtags above to search."));
+            resultsAdapter.showMessage("Tap a hashtag chip or type one or more hashtags above to search.");
             return;
         }
         if (currentResults.isEmpty()) {
-            resultsContainer.addView(emptyState("No matching " + (fileMatchMode ? "files" : "lines") + " found."));
+            resultsAdapter.showMessage("No matching " + (fileMatchMode ? "files" : "lines") + " found.");
             return;
         }
 
+        List<ResultRow> rows = new ArrayList<>();
         for (FileResult res : currentResults) {
-            LinearLayout card = column();
-            card.setBackground(rounded(SURFACE, 8, BORDER));
-            LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(-1, -2);
-            cardLp.setMargins(0, 0, 0, dp(8));
-            card.setLayoutParams(cardLp);
-
-            // File header button
-            LinearLayout fileHeader = column();
-            fileHeader.setPadding(dp(12), dp(10), dp(12), dp(10));
-            fileHeader.setBackground(rounded(SURFACE_ALT, 8, 0));
-            fileHeader.setOnClickListener(v -> openResult(res.file(), null));
-
-            LinearLayout titleRow = row();
-            TextView nameView = label(res.file().name(), 14, ACCENT);
-            nameView.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
-            titleRow.addView(nameView, new LinearLayout.LayoutParams(0, -2, 1));
-
-            int lineCount = res.match().lines().size();
-            String meta = fileMatchMode
-                    ? Hashtags.formatTagList(res.match().matchedTags()) + " · " + lineCount + (lineCount == 1 ? " line" : " lines")
-                    : lineCount + (lineCount == 1 ? " line" : " lines");
-            TextView countView = label(meta, 11, MUTED);
-            titleRow.addView(countView);
-            fileHeader.addView(titleRow);
-
-            TextView locView = label(res.file().locationLabel(), 11, MUTED);
-            locView.setPadding(0, dp(2), 0, 0);
-            fileHeader.addView(locView);
-            card.addView(fileHeader);
-
-            // In line-matching mode, render every matching line in full without cutting off or truncating!
+            rows.add(new ResultRow(res, null, null));
             if (!fileMatchMode) {
                 for (Hashtags.LineMatch lineMatch : res.match().lines()) {
-                    View lineDiv = new View(activity);
-                    lineDiv.setBackgroundColor(BORDER);
-                    card.addView(lineDiv, new LinearLayout.LayoutParams(-1, dp(1)));
-
-                    TextView lineView = new TextView(activity);
-                    String prefix = "Ln " + lineMatch.lineNumber() + "  ";
-                    SpannableStringBuilder sb = new SpannableStringBuilder(prefix).append(lineMatch.lineText());
-                    sb.setSpan(new ForegroundColorSpan(ACCENT), 0, prefix.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    lineView.setText(sb);
-                    lineView.setTextColor(TEXT);
-                    lineView.setTextSize(13);
-                    lineView.setTypeface(Typeface.MONOSPACE);
-                    lineView.setSingleLine(false); // Never cut off or truncate matching lines
-                    lineView.setPadding(dp(12), dp(10), dp(12), dp(10));
-                    lineView.setOnClickListener(v -> openResult(res.file(), lineMatch.lineNumber()));
-                    card.addView(lineView, new LinearLayout.LayoutParams(-1, -2));
+                    rows.add(new ResultRow(res, lineMatch, null));
                 }
             }
+        }
+        resultsAdapter.update(rows);
+    }
 
-            resultsContainer.addView(card);
+    private record ResultRow(FileResult file, Hashtags.LineMatch line, String message) {}
+
+    private static final class ResultHolder extends RecyclerView.ViewHolder {
+        final TextView text, meta, location;
+        ResultHolder(View view, TextView text, TextView meta, TextView location) {
+            super(view);
+            this.text = text;
+            this.meta = meta;
+            this.location = location;
+        }
+    }
+
+    private final class ResultsAdapter extends RecyclerView.Adapter<ResultHolder> {
+        private List<ResultRow> rows = List.of();
+
+        void showMessage(String message) {
+            update(List.of(new ResultRow(null, null, message)));
+        }
+
+        @android.annotation.SuppressLint("NotifyDataSetChanged")
+        void update(List<ResultRow> rows) {
+            this.rows = rows;
+            notifyDataSetChanged();
+            resultsList.scrollToPosition(0);
+        }
+
+        @Override public int getItemCount() { return rows.size(); }
+
+        @Override public int getItemViewType(int position) {
+            ResultRow row = rows.get(position);
+            return row.message() != null ? 0 : row.line() == null ? 1 : 2;
+        }
+
+        @Override public ResultHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            if (viewType == 0) {
+                TextView text = emptyState("");
+                text.setLayoutParams(new RecyclerView.LayoutParams(-1, -2));
+                return new ResultHolder(text, text, null, null);
+            }
+            if (viewType == 1) {
+                LinearLayout header = column();
+                header.setPadding(dp(12), dp(10), dp(12), dp(10));
+                header.setBackground(rounded(SURFACE_ALT, 8, BORDER));
+                RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(-1, -2);
+                lp.topMargin = dp(8);
+                header.setLayoutParams(lp);
+                TextView name = label("", 14, ACCENT);
+                name.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+                TextView meta = label("", 11, MUTED);
+                TextView location = label("", 11, MUTED);
+                location.setPadding(0, dp(2), 0, 0);
+                header.addView(name);
+                header.addView(meta);
+                header.addView(location);
+                return new ResultHolder(header, name, meta, location);
+            }
+            TextView text = label("", 13, TEXT);
+            text.setTypeface(Typeface.MONOSPACE);
+            text.setSingleLine(false);
+            text.setPadding(dp(12), dp(10), dp(12), dp(10));
+            text.setBackgroundColor(SURFACE);
+            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(-1, -2);
+            lp.bottomMargin = dp(1);
+            text.setLayoutParams(lp);
+            return new ResultHolder(text, text, null, null);
+        }
+
+        @Override public void onBindViewHolder(ResultHolder holder, int position) {
+            ResultRow row = rows.get(position);
+            if (row.message() != null) {
+                holder.text.setText(row.message());
+            } else if (row.line() == null) {
+                FileResult file = row.file();
+                holder.text.setText(file.file().name());
+                int count = file.match().lines().size();
+                String meta = count + (count == 1 ? " line" : " lines");
+                if (fileMatchMode) meta = Hashtags.formatTagList(file.match().matchedTags()) + " · " + meta;
+                holder.meta.setText(meta);
+                holder.location.setText(file.file().locationLabel());
+                holder.itemView.setOnClickListener(v -> openResult(file.file(), null));
+            } else {
+                Hashtags.LineMatch line = row.line();
+                String prefix = "Ln " + line.lineNumber() + "  ";
+                SpannableStringBuilder text = new SpannableStringBuilder(prefix).append(line.lineText());
+                text.setSpan(new ForegroundColorSpan(ACCENT), 0, prefix.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                holder.text.setText(text);
+                holder.itemView.setOnClickListener(v -> openResult(row.file().file(), line.lineNumber()));
+            }
         }
     }
 

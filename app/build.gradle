@@ -8,8 +8,8 @@ android {
         applicationId 'org.hopto.git23069.textpad'
         minSdk 36
         targetSdk 36
-        versionCode 30
-        versionName '0.1.29'
+        versionCode 31
+        versionName '0.1.30'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {
@@ -23,6 +23,7 @@ android {
 }
 dependencies {
     implementation project(':core')
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'androidx.work:work-runtime:2.12.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     androidTestImplementation 'androidx.test:runner:1.6.2'
