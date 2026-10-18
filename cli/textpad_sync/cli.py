@@ -13,6 +13,7 @@ from . import SyncError, __version__
 from .api import Api, endpoint, identifier
 from .errands import run as run_errands
 from .filesystem import filename, is_link, read, settled_read, write
+from .hashtags import tags_from_file
 from .storage import Workspace
 from .sync import Engine
 from .watch import Watcher
@@ -102,6 +103,9 @@ def parser():
     edit.add_argument('--set', nargs='+', metavar='TAG', help='Replace the list (accepts space/comma-separated tags).')
     edit.add_argument('--add', nargs='+', metavar='TAG', help='Add tags to the list.')
     edit.add_argument('--remove', nargs='+', metavar='TAG', help='Remove tags from the list.')
+    edit.add_argument('--set-file', dest='set', type=tags_from_file, metavar='FILE', help='Replace the list from a UTF-8 file, one hashtag per line.')
+    edit.add_argument('--add-file', dest='add', type=tags_from_file, metavar='FILE', help='Add tags from a UTF-8 file, one hashtag per line.')
+    edit.add_argument('--remove-file', dest='remove', type=tags_from_file, metavar='FILE', help='Remove tags from a UTF-8 file, one hashtag per line.')
     edit.add_argument('--clear', action='store_true', help='Clear the saved list.')
     edit.add_argument('--available', action='store_true', help='List discovered hashtags, including those on [X]/[C] tasks.')
     tags.add_argument('--json', action='store_true', default=argparse.SUPPRESS)

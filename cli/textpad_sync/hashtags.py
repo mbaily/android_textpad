@@ -1,9 +1,32 @@
 """Hashtag parsing and matching, shared with the other clients' search rules."""
+from pathlib import Path
 import re
+
+from . import SyncError
 
 HASHTAG_RE = re.compile(r"(?:^|(?<=[\s(\[{\"']))#([A-Za-z_][A-Za-z0-9_-]*)(?=$|\s|[.,;:!?)\]}\"'])")
 CLOSED_TASK_RE = re.compile(r"^[ \t]*(?:[-*+] )?\[[XxCc]\]")
 TAG_TOKEN_RE = re.compile(r"#?([A-Za-z_][A-Za-z0-9_-]*)")
+TAG_LINE_RE = re.compile(r"#?([A-Za-z_][A-Za-z0-9_-]{0,63})")
+
+
+def tags_from_file(value):
+    path = Path(value).expanduser()
+    tags = []
+    try:
+        with path.open(encoding='utf-8-sig') as stream:
+            for number, line in enumerate(stream, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                match = TAG_LINE_RE.fullmatch(line)
+                if match is None:
+                    raise SyncError(f'Invalid hashtag in {str(path)!r} at line {number}: '
+                                    'expected one hashtag per line (optional #, up to 64 characters).')
+                tags.append(match[1])
+    except (OSError, UnicodeError) as error:
+        raise SyncError(f'Could not read hashtag file {str(path)!r}: {error}') from error
+    return tags
 
 
 def normalize_tags(values):

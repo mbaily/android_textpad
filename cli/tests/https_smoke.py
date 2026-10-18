@@ -79,6 +79,15 @@ def main():
             api.put(errands_id, 'errands.txt', errands_content, None, str(uuid.uuid4()))
             saved_tags = json.loads(run('-C', str(verified), 'errands', 'tags', '--set', '#chemist #groceries', '--json'))
             assert saved_tags['hashtags'] == api.errands()['hashtags'] == ['chemist', 'groceries']
+            tag_file = root / 'errands tags.txt'
+            tag_file.write_bytes(b'\xef\xbb\xbf#Chemist\r\ngroceries\r\n\r\n')
+            run('-C', str(verified), 'errands', 'tags', '--set-file', str(tag_file))
+            tag_file.write_text('#postoffice\n#CHEMIST\n', encoding='utf-8')
+            run('-C', str(verified), 'errands', 'tags', '--add-file', str(tag_file))
+            assert api.errands()['hashtags'] == ['chemist', 'groceries', 'postoffice']
+            tag_file.write_text('#postoffice\n', encoding='utf-8')
+            run('-C', str(verified), 'errands', 'tags', '--remove-file', str(tag_file))
+            assert api.errands()['hashtags'] == ['chemist', 'groceries']
             matches = json.loads(run('-C', str(verified), 'errands', '--json'))['results']
             assert len(matches) == 1 and matches[0]['id'] == errands_id
             assert [line['line_number'] for line in matches[0]['lines']] == [1]
@@ -117,7 +126,7 @@ def main():
             run('-C', str(local), 'remove', 'notes.txt')
             assert file.read_bytes() == remote_final
             assert api.get(remote.id).content == remote_final
-            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
+            print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, remote pull, Ctrl+C, history, snapshots, and untracking.')
         finally:
             if watcher is not None and watcher.poll() is None:
                 watcher.terminate()

@@ -1,5 +1,5 @@
 """Real HTTP/SQLite tests for preservation, conflicts, monitor saves, and retries."""
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import chdir, redirect_stdout, redirect_stderr
 from base64 import b64encode
 import io
 import json
@@ -110,6 +110,96 @@ class SyncTests(unittest.TestCase):
         self.assertEqual((0, ''), (code, err))
         self.assertEqual([], json.loads(out)['hashtags'])
         self.assertEqual([], self.store.get_errands()['hashtags'])
+
+    def test_errands_tag_files_set_add_and_remove_shared_tags(self):
+        self.store.put_errands(['old'])
+        with tempfile.TemporaryDirectory() as folder:
+            tag_file = Path(folder) / 'errands tags.txt'
+            contents = b'\xef\xbb\xbf#Chemist\r\n \r\n groceries \r\n#CHEMIST\r\n_hardware-store\r\n'
+            tag_file.write_bytes(contents)
+            code, out, err = self.cli('errands', 'tags', '--set-file', str(tag_file), '--json')
+            self.assertEqual((0, ''), (code, err))
+            self.assertEqual(['chemist', 'groceries', '_hardware-store'], json.loads(out)['hashtags'])
+            self.assertEqual(json.loads(out)['hashtags'], self.store.get_errands()['hashtags'])
+            self.assertEqual(contents, tag_file.read_bytes())
+            tag_file.write_text('#postoffice\n#GROCERIES\n', encoding='utf-8')
+            code, out, err = self.cli('errands', 'tags', '--add-file', str(tag_file), '--json')
+            self.assertEqual((0, ''), (code, err))
+            self.assertEqual(['chemist', 'groceries', '_hardware-store', 'postoffice'], json.loads(out)['hashtags'])
+            tag_file.write_bytes(b'#CHEMIST\r#not_present\r')
+            code, out, err = self.cli('errands', 'tags', '--remove-file', str(tag_file), '--json')
+            self.assertEqual((0, ''), (code, err))
+            self.assertEqual(['groceries', '_hardware-store', 'postoffice'], json.loads(out)['hashtags'])
+            self.assertEqual(json.loads(out)['hashtags'], self.store.get_errands()['hashtags'])
+
+    def test_errands_tag_file_paths_are_relative_to_shell_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tag_file = Path(folder) / 'relative-tags.txt'
+            tag_file.write_text('chemist\n', encoding='utf-8')
+            with chdir(folder):
+                code, out, err = self.cli('errands', 'tags', '--set-file', 'relative-tags.txt', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertEqual(['chemist'], json.loads(out)['hashtags'])
+
+    def test_errands_empty_tag_files_clear_or_leave_settings_unchanged(self):
+        tag_file = self.root / 'empty-tags.txt'
+        tag_file.write_bytes(b'\xef\xbb\xbf \r\n\t\r\n')
+        original = self.store.put_errands(['chemist'])
+        for option in ('--add-file', '--remove-file', '--set-file'):
+            code, out, err = self.cli('errands', 'tags', option, str(tag_file), '--json')
+            self.assertEqual((0, ''), (code, err))
+            self.assertEqual([] if option == '--set-file' else ['chemist'], json.loads(out)['hashtags'])
+            if option != '--set-file':
+                self.assertEqual(original, self.store.get_errands())
+        self.assertEqual([], self.store.get_errands()['hashtags'])
+
+    def test_errands_tag_files_work_offline_and_sync_after_restart(self):
+        self.store.put_errands(['untouched'])
+        tag_file = self.root / 'tags.txt'
+        with patch('textpad_sync.cli.api_for', side_effect=AssertionError('Offline command accessed the network')):
+            for option, content, expected in (
+                    ('--set-file', 'Chemist\ngroceries\n', ['chemist', 'groceries']),
+                    ('--add-file', '#postoffice\n#chemist\n', ['chemist', 'groceries', 'postoffice']),
+                    ('--remove-file', 'GROCERIES\n', ['chemist', 'postoffice'])):
+                tag_file.write_text(content, encoding='utf-8')
+                code, out, err = self.cli('errands', 'tags', option, str(tag_file), '--offline', '--json')
+                self.assertEqual(0, code)
+                self.assertIn('saved locally', err)
+                self.assertTrue(json.loads(out)['dirty'])
+                self.assertEqual(expected, json.loads(out)['hashtags'])
+        self.assertEqual(['untouched'], self.store.get_errands()['hashtags'])
+        code, out, err = self.cli('errands', 'tags', '--json')
+        self.assertEqual((0, ''), (code, err))
+        self.assertFalse(json.loads(out)['dirty'])
+        self.assertEqual(['chemist', 'postoffice'], self.store.get_errands()['hashtags'])
+
+    def test_errands_invalid_tag_files_preserve_remote_and_pending_local_settings(self):
+        self.store.put_errands(['original'])
+        self.assertEqual(0, self.cli('errands', 'tags', '--set', 'pending', '--offline')[0])
+        cached = self.ws.setting('errands')
+        tag_file = self.root / 'invalid-tags.txt'
+        for content in ('chemist\n#two tags\n', 'chemist\n#café\n', 'chemist\n#\n',
+                        'chemist\n#123\n', 'chemist\n' + 'a' * 65 + '\n'):
+            tag_file.write_text(content, encoding='utf-8')
+            for option in ('--set-file', '--add-file', '--remove-file'):
+                with self.subTest(option=option, content=content), patch('textpad_sync.cli.api_for') as api:
+                    code, out, err = self.cli('errands', 'tags', option, str(tag_file))
+                    self.assertEqual((1, ''), (code, out))
+                    self.assertIn('line 2', err)
+                    self.assertIn(str(tag_file), err)
+                    api.assert_not_called()
+                    self.assertEqual(cached, self.ws.setting('errands'))
+                    self.assertEqual(['original'], self.store.get_errands()['hashtags'])
+        for path, message in ((self.root / 'missing-tags.txt', 'Could not read'),
+                              (self.root, 'Could not read'), (tag_file, 'Could not read')):
+            tag_file.write_bytes(b'\xffinvalid UTF-8')
+            with self.subTest(path=path), patch('textpad_sync.cli.api_for') as api:
+                code, out, err = self.cli('errands', 'tags', '--set-file', str(path))
+                self.assertEqual((1, ''), (code, out))
+                self.assertIn(message, err)
+                api.assert_not_called()
+                self.assertEqual(cached, self.ws.setting('errands'))
+                self.assertEqual(['original'], self.store.get_errands()['hashtags'])
 
     def test_errands_defaults_hide_both_closed_states_locally_and_on_server(self):
         tag = 'cli_' + self.docid.replace('-', '')
@@ -685,6 +775,16 @@ class SyncTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_errands_tag_file_operations_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tag_file = Path(folder) / 'tags.txt'
+            tag_file.write_text('chemist\n', encoding='utf-8')
+            for option, other in (('--set-file', ['--add', 'groceries']),
+                                  ('--add-file', ['--remove-file', str(tag_file)]),
+                                  ('--remove-file', ['--clear']), ('--set-file', ['--available'])):
+                with self.subTest(option=option, other=other), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    parser().parse_args(['errands', 'tags', option, str(tag_file), *other])
+
     def test_errands_parser_defaults_and_nested_common_flags(self):
         args = parser().parse_args(['errands'])
         self.assertEqual(('lines', True, False), (args.mode, args.hide_completed, args.offline))

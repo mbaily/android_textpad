@@ -49,7 +49,7 @@ textpad-sync --insecure -C ~/Documents/Textpad watch
 
 This flag applies only to that invocation, including all requests made while `watch` runs. It is not saved in the workspace, so repeat it on each network command that needs it. HTTPS remains required; server identity is not checked when this flag is set.
 
-All file arguments are relative to the workspace root. Run in that directory, let the CLI discover it from a subdirectory, or use `textpad-sync -C /path/to/workspace COMMAND ...`. Absolute paths inside the workspace are also accepted. Paths outside it, `.textpad` contents, symlinks, special files, and Windows reparse points are excluded.
+Document file arguments are relative to the workspace root. Run in that directory, let the CLI discover it from a subdirectory, or use `textpad-sync -C /path/to/workspace COMMAND ...`. Absolute document paths inside the workspace are also accepted. Document paths outside it, `.textpad` contents, symlinks, special files, and Windows reparse points are excluded. Configuration inputs such as `--token-file`, `--ca-file`, and the errands tag-file options use the current shell directory and can be outside the workspace.
 
 ## Add local files or download server files
 
@@ -112,6 +112,9 @@ textpad-sync errands tags                         # View the shared errands hash
 textpad-sync errands tags --set '#chemist #groceries #bunnings'
 textpad-sync errands tags --add postoffice
 textpad-sync errands tags --remove groceries
+textpad-sync errands tags --set-file errands-tags.txt
+textpad-sync errands tags --add-file extra-tags.txt
+textpad-sync errands tags --remove-file finished-tags.txt
 textpad-sync errands tags --clear
 textpad-sync errands tags --available              # Discover tags to add, including tags on closed tasks
 ```
@@ -119,6 +122,16 @@ textpad-sync errands tags --available              # Discover tags to add, inclu
 `errands` matches lines containing **any** saved errands hashtag, using the same boundaries and case-insensitive matching as Android and the browser. Line matching and **Hide [X] / [C]** are on by default for every invocation. Use `--lines` or `--hide-completed` to select those defaults explicitly. The filter recognises lowercase `[x]`/`[c]`, indentation, and `- `, `* `, or `+ ` list bullets. File matching excludes files whose only matches are hidden tasks. Lines are printed in full with their original line numbers.
 
 The hashtag list is shared with Android and the browser through the server. Tags accept optional `#` prefixes and whitespace/comma separators, are lowercased, and are deduplicated. Quote strings containing `#` in your shell. `--set` replaces the list, while `--add` and `--remove` update the current list. Each tag is limited to 64 characters and the list to 200 tags, matching the server.
+
+Use `--set-file`, `--add-file`, or `--remove-file` to read tags from a UTF-8 file with **one hashtag per line**:
+
+```text
+#chemist
+groceries
+#postoffice
+```
+
+These options perform the same operations as `--set`, `--add`, and `--remove`, and support `--offline` and `--json`. UTF-8 BOMs and LF, CRLF, or CR line endings are accepted. Surrounding whitespace and blank lines are ignored; `#` is optional, case is normalized, and duplicates are removed. Each nonblank line must contain one valid hashtag, starting with an ASCII letter or `_`, followed by ASCII letters, digits, `_`, or `-`. Invalid lines report their line number and leave settings untouched. An empty `--set-file` clears the list; empty add/remove files leave it unchanged. Tag file paths are relative to the current shell directory, including when using `-C`; absolute paths and files outside the workspace are also accepted. Select one tag operation per command.
 
 Search covers saved tracked files and other server documents. A readable tracked file takes precedence over its server copy, including edits that have not synced yet; unrelated local files are excluded. Searching leaves document contents and sync baselines untouched. Local matches show `path:line: text`; server-only matches show `name [DOCUMENT_ID]:line: text`. File matching prints each matching file once, with its matching tags and line count. An unreadable tracked file is reported, and its server copy can still appear; exit code `2` indicates incomplete local results.
 
