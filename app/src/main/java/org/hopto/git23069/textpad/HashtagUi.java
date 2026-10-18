@@ -578,7 +578,7 @@ final class HashtagUi {
                 RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(-1, -2);
                 lp.topMargin = dp(8);
                 header.setLayoutParams(lp);
-                TextView name = label("", 14, ACCENT);
+                TextView name = label("", app.settings.fontSize(), ACCENT);
                 name.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
                 TextView meta = label("", 11, MUTED);
                 TextView location = label("", 11, MUTED);
@@ -588,7 +588,7 @@ final class HashtagUi {
                 header.addView(location);
                 return new ResultHolder(header, name, meta, location);
             }
-            TextView text = label("", 13, TEXT);
+            TextView text = label("", app.settings.fontSize(), TEXT);
             text.setTypeface(Typeface.MONOSPACE);
             text.setSingleLine(false);
             text.setPadding(dp(12), dp(10), dp(12), dp(10));
