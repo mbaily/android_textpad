@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { filterTasks } from "./taskFilter.js";
+import { classifyLine, filterTasks, isClosedTask } from "./taskFilter.js";
+
+test("cancelled tasks are hidden instead of becoming notes under open tasks", () => {
+  for (const marker of ["[C]", "[c]", "- [C]", "* [c]", "+ [C]"]) {
+    assert.equal(classifyLine(`\t${marker} Cancelled`), "CANCELLED_TASK");
+    assert.equal(isClosedTask(`\t${marker} Cancelled`), true);
+    const text = `[ ] Parent\r\n    Keep this note\r\n    ${marker} Cancelled child\r\n        Hidden note\r\n`;
+    assert.deepEqual(filterTasks(text).visibleLines, [0, 1]);
+  }
+});
+
+test("cancelled parents remain as context for open children", () => {
+  const result = filterTasks("[C] Cancelled parent\n    [ ] Open child\n    [c] Cancelled sibling\n"
+    + "\nCancelled section\n---\n[C] Cancelled task\n");
+  assert.deepEqual(result.visibleLines, [0, 1]);
+  assert.equal(result.isContext[0], 1);
+  assert.equal(result.isUncompleted[0], 0);
+  assert.equal(result.isUncompleted[1], 1);
+});
 
 test("divider headings retain the blank, title, and divider above unindented tasks", () => {
   const result = filterTasks("Unrelated notes\n\nShopping\n--------\n[ ] Milk\n[X] Bread\n");

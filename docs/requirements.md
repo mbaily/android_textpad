@@ -9,6 +9,8 @@
 - No tab/session restoration, persistent unsaved drafts, or crash recovery after process death. Screen rotation and other configuration changes retain in-memory text; normal task switching retains it while the process survives.
 - Manual save; autosave optional and off by default. Available intervals: 30 seconds; 1, 2, 3, 5, 8, 10, 15 minutes. Timers operate while the application is in the foreground.
 - Undo/redo, find/replace, selection/clipboard, wrap and line-number toggles, customizable font/size, toolbar indentation. Syntax highlighting deferred.
+- Android and browser todo buttons add `[ ]` to plain lines and cycle open `[ ]` → completed `[X]` → cancelled `[C]` → open `[ ]`, preserving indentation and list bullets. Recognize lowercase `[x]` and `[c]`. Bulk selections advance plain lines first, then open, completed, and cancelled tasks, skipping blank lines when nonblank lines are selected.
+- Open-task views exclude completed/cancelled tasks and their notes unless needed as context for open descendants. Hashtag/errands **Hide [X] / [C]** excludes both closed states consistently across local, cached, and server searches.
 - UTF-8 default; ASCII and UTF-16 LE/BE supported. Emoji and other Unicode text supported. Preserve BOMs and line endings, and preserve the exact bytes of unchanged supported files.
 - Maximum file size 10 MiB; reject binary files, invalid encodings and unrepresentable saves. Ambiguous BOM-less encodings can be chosen explicitly when opening.
 - Before overwriting, check for changes since opening/last save. Save failure never silently drops open edits; prior contents are backed up before overwriting. Backups can be opened/restored or explicitly deleted.

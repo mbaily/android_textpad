@@ -26,8 +26,14 @@ export function classifyLine(line) {
   }
   if (taskRest.startsWith("[ ]")) return "UNCOMPLETED_TASK";
   if (taskRest.startsWith("[X]") || taskRest.startsWith("[x]")) return "COMPLETED_TASK";
+  if (taskRest.startsWith("[C]") || taskRest.startsWith("[c]")) return "CANCELLED_TASK";
   if (isMarkdownHeader(rest)) return "HEADER";
   return "PLAIN";
+}
+
+export function isClosedTask(line) {
+  const type = classifyLine(line);
+  return type === "COMPLETED_TASK" || type === "CANCELLED_TASK";
 }
 
 function isMarkdownHeader(rest) {

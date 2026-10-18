@@ -47,6 +47,8 @@ For example, `:map <F8> <Plug>(TextpadTasksToggle)` assigns the toggle in Normal
 
 The filtered buffer shows `[ ]` tasks (including `- [ ]`, `* [ ]`, and `+ [ ]`), their indentation ancestors, enclosing Markdown headings, and plain notes indented beneath open tasks. Context lines use the `Comment` highlight group through `TextpadTasksContext`.
 
+Completed `[X]`/`[x]` and cancelled `[C]`/`[c]` tasks stay hidden unless they are ancestors of an open task. They are not treated as plain notes beneath open tasks.
+
 It also keeps blank/title/dash-divider heading blocks only when that section contains an open task. A title at the beginning of the file does not need a preceding blank line. Dash dividers may have surrounding spaces/tabs and any positive dash count. Tasks do not need to be indented beneath these headings. A new divider heading or Markdown heading ends a divider section.
 
 The default indentation tab width is four columns, matching Textpad. It is independent of Vim's display `tabstop`. Override it globally or for a source buffer if needed:

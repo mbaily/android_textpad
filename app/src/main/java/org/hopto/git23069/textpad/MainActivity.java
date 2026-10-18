@@ -202,6 +202,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
+        todoButton.setTooltipText("Toggle todo ([ ] → [X] → [C] → [ ])");
         taskFilterButton = iconButton(Icon.TASK_FILTER, TEXT, "Filter uncompleted tasks", v -> toggleTasksFilter());
         dateButton = iconButton(Icon.DATE, TEXT, "Insert date", v -> insertSnippet(LocalDate.now().toString()));
         timeButton = iconButton(Icon.TIME, TEXT, "Insert time", v -> insertSnippet(currentTimeString()));
@@ -246,13 +247,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                     int lineStart = currentBuf.lineStart(v);
                     int lineEnd = v + 1 < currentBuf.lineCount() ? currentBuf.lineStart(v + 1) - 1 : currentBuf.length();
                     String lineText = currentBuf.text().substring(lineStart, lineEnd);
-                    String trimmed = lineText.stripLeading();
-                    if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
-                        trimmed = trimmed.substring(2).stripLeading();
-                    }
-                    boolean isCompleted = trimmed.startsWith("[X]") || trimmed.startsWith("[x]");
                     boolean isContext = realLine < shownTab.taskFilterResult.isContext().length && shownTab.taskFilterResult.isContext()[realLine];
-                    if (isCompleted || isContext) {
+                    if (TaskFilter.isClosedTask(lineText) || isContext) {
                         editable.setSpan(new ForegroundColorSpan(0x88e3e8df), lineStart, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                     } else {
                         ForegroundColorSpan[] spans = editable.getSpans(lineStart, lineEnd, ForegroundColorSpan.class);
@@ -730,7 +726,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         String block = text.substring(blockStart, blockEnd);
         String[] rawLines = block.split("\n", -1);
         int n = rawLines.length;
-        int[] indentEnds = new int[n];
+        int[] markerOffsets = new int[n];
         int[] states = new int[n];
         boolean[] blanks = new boolean[n];
         boolean hasNonBlank = false;
@@ -739,21 +735,24 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             int len = raw.endsWith("\r") ? raw.length() - 1 : raw.length();
             int ie = 0;
             while (ie < len && (raw.charAt(ie) == ' ' || raw.charAt(ie) == '\t')) ie++;
-            indentEnds[i] = ie;
             blanks[i] = ie == len;
             if (!blanks[i]) hasNonBlank = true;
+            if (ie + 1 < len && "-*+".indexOf(raw.charAt(ie)) >= 0 && raw.charAt(ie + 1) == ' ') ie += 2;
+            markerOffsets[i] = ie;
             String rest = raw.substring(ie, len);
             if (rest.startsWith("[ ]")) states[i] = 1;
             else if (rest.startsWith("[X]") || rest.startsWith("[x]")) states[i] = 2;
+            else if (rest.startsWith("[C]") || rest.startsWith("[c]")) states[i] = 3;
             else states[i] = 0;
         }
-        boolean anyPlain = false, anyUnchecked = false;
+        boolean anyPlain = false, anyUnchecked = false, anyChecked = false;
         for (int i = 0; i < n; i++) {
             if (hasNonBlank && blanks[i]) continue;
             if (states[i] == 0) anyPlain = true;
             else if (states[i] == 1) anyUnchecked = true;
+            else if (states[i] == 2) anyChecked = true;
         }
-        int action = anyPlain ? 0 : anyUnchecked ? 1 : 2;
+        int action = anyPlain ? 0 : anyUnchecked ? 1 : anyChecked ? 2 : 3;
         StringBuilder out = new StringBuilder(block.length() + n * 4);
         int lineOffset = blockStart;
         int newSelStart = selStart, newSelEnd = selEnd, singleCursor = selStart;
@@ -762,7 +761,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             int len = raw.endsWith("\r") ? raw.length() - 1 : raw.length();
             String cr = raw.substring(len);
             String line = raw.substring(0, len);
-            int ie = indentEnds[i];
+            int ie = markerOffsets[i];
             String rest = line.substring(ie);
             boolean target = !hasNonBlank || !blanks[i];
             int editFrom = lineOffset + ie, editTo = editFrom, insertLen = 0;
@@ -776,10 +775,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                     editTo = editFrom + 3;
                     insertLen = 3;
                 } else if (action == 2 && states[i] == 2) {
-                    int removeLen = rest.startsWith("[X] ") || rest.startsWith("[x] ") ? 4 : 3;
-                    modified = line.substring(0, ie) + rest.substring(removeLen);
-                    editTo = editFrom + removeLen;
-                    insertLen = 0;
+                    modified = line.substring(0, ie) + "[C]" + rest.substring(3);
+                    editTo = editFrom + 3;
+                    insertLen = 3;
+                } else if (action == 3 && states[i] == 3) {
+                    modified = line.substring(0, ie) + "[ ]" + rest.substring(3);
+                    editTo = editFrom + 3;
+                    insertLen = 3;
                 }
             }
             if (insertLen > 0 || editTo > editFrom) {
@@ -787,8 +789,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 int delta = insertLen - removed;
                 if (selStart == selEnd) {
                     if (action == 0) singleCursor = Math.max(editFrom + 4, selStart + 4);
-                    else if (action == 1) singleCursor = Math.max(editFrom + 3, selStart);
-                    else singleCursor = selStart <= editFrom ? selStart : Math.max(editFrom, selStart + delta);
+                    else singleCursor = Math.max(editFrom + 3, selStart);
                 } else {
                     if (editFrom < selStart) newSelStart += editTo <= selStart ? delta : insertLen - (selStart - editFrom);
                     if (editFrom <= selEnd) newSelEnd += editTo <= selEnd ? delta : insertLen - (selEnd - editFrom);
@@ -1443,12 +1444,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             if (lineEnd == -1) lineEnd = filteredText.length();
             int realLine = visible[v];
             boolean isContext = realLine < res.isContext().length && res.isContext()[realLine];
-            String trimmed = filteredText.substring(offset, lineEnd).stripLeading();
-            if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
-                trimmed = trimmed.substring(2).stripLeading();
-            }
-            boolean isCompleted = trimmed.startsWith("[X]") || trimmed.startsWith("[x]");
-            if (isContext || isCompleted) {
+            if (isContext || TaskFilter.isClosedTask(filteredText.substring(offset, lineEnd))) {
                 ssb.setSpan(new ForegroundColorSpan(0x88e3e8df), offset, lineEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
             offset = lineEnd + 1;

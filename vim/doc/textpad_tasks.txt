@@ -32,6 +32,9 @@ of one or more dashes, with optional surrounding spaces/tabs. Its tasks need
 not be indented. Keep the heading only if that section contains an open task.
 The next divider heading or Markdown heading ends that section.
 
+Completed [X]/[x] and cancelled [C]/[c] tasks stay hidden unless they are
+ancestors of an open task, including tasks with list bullets.
+
 Indentation uses a tab width of 4, independently of 'tabstop'. Configure with: >
     let g:textpad_tasks_tab_size = 4
     let b:textpad_tasks_tab_size = 8

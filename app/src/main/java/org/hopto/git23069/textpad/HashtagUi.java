@@ -100,7 +100,7 @@ final class HashtagUi {
         modeContainer = column();
         root.addView(modeContainer);
 
-        // Match mode + Hide [X] row
+        // Match mode + hide completed/cancelled row
         LinearLayout filterRow = row();
         filterRow.setPadding(0, dp(6), 0, dp(6));
         lineModeBtn = pillButton("Line matching", !fileMatchMode, v -> {
@@ -122,7 +122,7 @@ final class HashtagUi {
         filterRow.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
 
         CheckBox hideBox = new CheckBox(activity);
-        hideBox.setText("Hide [X]");
+        hideBox.setText("Hide [X] / [C]");
         hideBox.setTextColor(TEXT);
         hideBox.setTextSize(12);
         hideBox.setChecked(hideCompleted);

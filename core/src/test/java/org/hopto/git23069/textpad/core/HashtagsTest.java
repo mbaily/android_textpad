@@ -42,4 +42,16 @@ public final class HashtagsTest {
         assertEquals(1, uncompletedOnly.lines().get(0).lineNumber());
         assertEquals(3, uncompletedOnly.lines().get(1).lineNumber());
     }
+
+    @Test
+    public void hidesCompletedAndCancelledTasksWithBulletsAndPreservesResultOffsets() {
+        String text = "[ ] Open #errands\r\n\t[C] Cancelled #errands\r\n"
+                + "    - [c] Cancelled bullet #errands\r\n* [X] Done #errands\r\n"
+                + "+ [x] Done too #errands\r\nNote about [C] #errands\r\n";
+        assertEquals(6, Hashtags.search(text, List.of("errands"), false).lines().size());
+        Hashtags.FileMatch filtered = Hashtags.search(text, List.of("errands"), true);
+        assertEquals(List.of(1, 6), filtered.lines().stream().map(Hashtags.LineMatch::lineNumber).toList());
+        assertEquals(text.indexOf("Note about"), filtered.lines().get(1).lineStartOffset());
+        assertFalse(Hashtags.isCompletedTodoLine("[C] Cancelled"));
+    }
 }

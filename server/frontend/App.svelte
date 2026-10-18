@@ -3,9 +3,9 @@
   import { SvelteMap } from "svelte/reactivity";
   import { EditorState, Compartment, EditorSelection, ChangeSet, StateField } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration } from "@codemirror/view";
-  import { defaultKeymap, history, historyKeymap, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
+  import { defaultKeymap, history, historyKeymap, isolateHistory, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
-  import { filterTasks } from "./taskFilter.js";
+  import { filterTasks, isClosedTask } from "./taskFilter.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -562,13 +562,8 @@
       const builder = [];
       for (let i = 1; i <= state.doc.lines; i++) {
         const line = state.doc.line(i);
-        let trimmed = line.text.trimStart();
-        if (trimmed.startsWith("- ") || trimmed.startsWith("* ") || trimmed.startsWith("+ ")) {
-          trimmed = trimmed.slice(2).trimStart();
-        }
-        const isCompleted = trimmed.startsWith("[X]") || trimmed.startsWith("[x]");
         const isContext = filterRes.isContext[i - 1] === 1;
-        if (isCompleted || isContext) {
+        if (isClosedTask(line.text) || isContext) {
           builder.push(Decoration.line({ class: "cm-task-context" }).range(line.from));
         }
       }
@@ -1376,8 +1371,7 @@
     let offset = 0;
     for (let i = 0; i < rawLines.length; i++) {
       const line = rawLines[i];
-      const stripped = line.replace(/^[ \t]+/, "");
-      if (!hideCompleted || !(stripped.startsWith("[X]") || stripped.startsWith("[x]"))) {
+      if (!hideCompleted || !isClosedTask(line)) {
         const lineTags = [];
         const lineTagsSet = new Set();
         for (const m of line.matchAll(HASHTAG_TEXT_RE)) {
@@ -1831,16 +1825,17 @@
     const lines = [];
     for (let n = startLine.number; n <= endLine.number; n++) {
       const line = doc.line(n);
-      const match = line.text.match(/^[ \t]*/);
-      const indentEnd = match ? match[0].length : 0;
-      const rest = line.text.slice(indentEnd);
-      const blank = indentEnd === line.text.length;
+      const markerOffset = line.text.match(/^[ \t]*(?:[-*+] )?/)[0].length;
+      const rest = line.text.slice(markerOffset);
+      const blank = /^[ \t]*$/.test(line.text);
       const state = rest.startsWith("[ ]")
         ? "unchecked"
         : rest.startsWith("[X]") || rest.startsWith("[x]")
           ? "checked"
-          : "plain";
-      lines.push({ line, indentEnd, rest, blank, state });
+          : rest.startsWith("[C]") || rest.startsWith("[c]")
+            ? "cancelled"
+            : "plain";
+      lines.push({ line, markerOffset, blank, state });
     }
     const hasNonBlank = lines.some((l) => !l.blank);
     const targets = hasNonBlank ? lines.filter((l) => !l.blank) : lines;
@@ -1848,17 +1843,20 @@
       ? "add"
       : targets.some((l) => l.state === "unchecked")
         ? "check"
-        : "remove";
+        : targets.some((l) => l.state === "checked")
+          ? "cancel"
+          : "reopen";
     const changes = [];
     for (const item of targets) {
-      const pos = item.line.from + item.indentEnd;
+      const pos = item.line.from + item.markerOffset;
       if (action === "add" && item.state === "plain") {
         changes.push({ from: pos, to: pos, insert: "[ ] " });
       } else if (action === "check" && item.state === "unchecked") {
         changes.push({ from: pos, to: pos + 3, insert: "[X]" });
-      } else if (action === "remove" && item.state === "checked") {
-        const removeLen = item.rest.startsWith("[X] ") || item.rest.startsWith("[x] ") ? 4 : 3;
-        changes.push({ from: pos, to: pos + removeLen, insert: "" });
+      } else if (action === "cancel" && item.state === "checked") {
+        changes.push({ from: pos, to: pos + 3, insert: "[C]" });
+      } else if (action === "reopen" && item.state === "cancelled") {
+        changes.push({ from: pos, to: pos + 3, insert: "[ ]" });
       }
     }
     if (!changes.length) {
@@ -1869,13 +1867,10 @@
     let nextHead = sel.head;
     if (sel.empty) {
       const ch = changes[0];
-      const delta = ch.insert.length - (ch.to - ch.from);
       if (action === "add") {
         nextHead = Math.max(ch.from + 4, sel.head + 4);
-      } else if (action === "check") {
-        nextHead = Math.max(ch.from + 3, sel.head);
       } else {
-        nextHead = sel.head <= ch.from ? sel.head : Math.max(ch.from, sel.head + delta);
+        nextHead = Math.max(ch.from + 3, sel.head);
       }
       nextAnchor = nextHead;
     } else {
@@ -1902,6 +1897,7 @@
     view.dispatch({
       changes,
       selection: { anchor: nextAnchor, head: nextHead },
+      annotations: isolateHistory.of("full"),
       scrollIntoView: true,
     });
     view.focus();
@@ -2389,7 +2385,7 @@
       <button id="indent-more" class="icon-button" title="Increase indentation" aria-label="Increase indentation" disabled={!activeDoc || readOnly} onclick={() => { indentMore(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="5" x2="4" y2="19"/><line x1="8" y1="12" x2="19" y2="12"/><polyline points="15 8 19 12 15 16"/></svg>
       </button>
-      <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] / [X])" aria-label="Toggle todo" disabled={!activeDoc || readOnly} onclick={toggleTodo}>
+      <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] → [X] → [C] → [ ])" aria-label="Toggle todo" disabled={!activeDoc || readOnly} onclick={toggleTodo}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="8.5 12.5 11 15 16 9.5"/></svg>
       </button>
       <button id="toggle-tasks-filter" class="icon-button" class:active={activeDoc?.tasksOnly} aria-pressed={String(Boolean(activeDoc?.tasksOnly))} title={activeDoc?.tasksOnly ? "Show all tasks (Ctrl+Alt+T)" : "Show uncompleted tasks only (Ctrl+Alt+T)"} aria-label="Show uncompleted tasks only" disabled={!activeDoc} onclick={() => toggleTasksFilter()}>
@@ -2725,7 +2721,7 @@
             bind:checked={hashtagHideCompleted}
             onchange={runHashtagSearch}
           >
-          Hide [X]
+          Hide [X] / [C]
         </label>
       </div>
     </div>

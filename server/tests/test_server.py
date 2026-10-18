@@ -430,5 +430,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual("todo-doc",res_open["results"][0]["id"])
         self.assertEqual([1,3],[l["line_number"] for l in res_open["results"][0]["lines"]])
 
+    def test_hashtags_hide_completed_includes_cancelled_tasks_and_bullets(self):
+        self.login()
+        text = ("[ ] Open #errands\r\n\t[C] Cancelled #errands #cancelled_only\r\n"
+                "    - [c] Cancelled bullet #errands\r\n* [X] Done #errands\r\n"
+                "+ [x] Done too #errands\r\nNote about [C] #errands\r\n")
+        self.browser_put("cancelled-tasks", {
+            "name": "Cancelled.txt", "text": text, "base_revision": None, "request_id": "cancelled-1",
+        })
+        for hide_completed, expected in [(False, [1, 2, 3, 4, 5, 6]), (True, [1, 6])]:
+            response = self.client.post("/editor/api/hashtags", headers={"X-CSRF-Token": self.csrf},
+                                        json={"tags": ["errands"], "hide_completed": hide_completed})
+            self.assertEqual(200, response.status_code)
+            self.assertIn("cancelled_only", response.json["all_hashtags"])
+            lines = response.json["results"][0]["lines"]
+            self.assertEqual(expected, [line["line_number"] for line in lines])
+            self.assertEqual(text.replace("\r\n", "\n").index("Note about"), lines[-1]["offset"])
+
+
 
 if __name__=="__main__": unittest.main()

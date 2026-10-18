@@ -6,6 +6,28 @@ import static org.junit.Assert.*;
 public class TaskFilterTest {
 
     @Test
+    public void cancelledTasksAreHiddenInsteadOfBecomingNotesUnderOpenTasks() {
+        for (String marker : new String[]{"[C]", "[c]", "- [C]", "* [c]", "+ [C]"}) {
+            assertEquals(TaskFilter.LineType.CANCELLED_TASK, TaskFilter.classifyLine("\t" + marker + " Cancelled"));
+            assertTrue(TaskFilter.isClosedTask("\t" + marker + " Cancelled"));
+            String doc = "[ ] Parent\r\n    Keep this note\r\n    " + marker
+                    + " Cancelled child\r\n        Hidden note\r\n";
+            assertArrayEquals(new int[]{0, 1}, TaskFilter.filter(doc, 4).visibleLines());
+        }
+    }
+
+    @Test
+    public void cancelledParentsRemainAsContextForOpenChildren() {
+        String doc = "[C] Cancelled parent\n    [ ] Open child\n    [c] Cancelled sibling\n"
+                + "\nCancelled section\n---\n[C] Cancelled task\n";
+        TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);
+        assertArrayEquals(new int[]{0, 1}, res.visibleLines());
+        assertTrue(res.isContext()[0]);
+        assertFalse(res.isUncompleted()[0]);
+        assertTrue(res.isUncompleted()[1]);
+    }
+
+    @Test
     public void testSimpleUncompletedTasks() {
         String doc = "[ ] Task 1\n[X] Completed task\n[ ] Task 2\n";
         TaskFilter.FilterResult res = TaskFilter.filter(doc, 4);

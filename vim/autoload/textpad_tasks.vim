@@ -26,7 +26,7 @@ function! textpad_tasks#Filter(raw_lines, tab_size) abort
     let header = rest =~# '^#\{1,6}\%($\| \)'
     call add(levels, header ? strlen(matchstr(rest, '^#\+')) : 0)
     call add(types, empty(rest) ? 0 : stridx(task, '[ ]') == 0 ? 1
-          \ : task =~# '^\[[Xx]\]' ? 2 : header ? 3 : 4)
+          \ : task =~# '^\[[XxCc]\]' ? 2 : header ? 3 : 4)
   endfor
   let divider_ends = repeat([-1], line_count)
   if line_count > 1

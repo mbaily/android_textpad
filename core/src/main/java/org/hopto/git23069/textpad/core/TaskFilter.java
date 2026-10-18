@@ -17,6 +17,7 @@ public final class TaskFilter {
         BLANK,
         UNCOMPLETED_TASK,
         COMPLETED_TASK,
+        CANCELLED_TASK,
         HEADER,
         PLAIN
     }
@@ -72,8 +73,14 @@ public final class TaskFilter {
         }
         if (taskRest.startsWith("[ ]")) return LineType.UNCOMPLETED_TASK;
         if (taskRest.startsWith("[X]") || taskRest.startsWith("[x]")) return LineType.COMPLETED_TASK;
+        if (taskRest.startsWith("[C]") || taskRest.startsWith("[c]")) return LineType.CANCELLED_TASK;
         if (isMarkdownHeader(rest)) return LineType.HEADER;
         return LineType.PLAIN;
+    }
+
+    public static boolean isClosedTask(String line) {
+        LineType type = classifyLine(line);
+        return type == LineType.COMPLETED_TASK || type == LineType.CANCELLED_TASK;
     }
 
     private static boolean isMarkdownHeader(String rest) {

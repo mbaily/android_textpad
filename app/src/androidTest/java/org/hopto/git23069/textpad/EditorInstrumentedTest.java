@@ -212,7 +212,13 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
                 assertTrue(editor.getText().toString().endsWith("\n[X] task item"));
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
-                assertTrue(editor.getText().toString().endsWith("\ntask item"));
+                assertTrue(editor.getText().toString().endsWith("\n[C] task item"));
+                button(activity.getWindow().getDecorView(),"Undo").performClick();
+                assertTrue(editor.getText().toString().endsWith("\n[X] task item"));
+                button(activity.getWindow().getDecorView(),"Redo").performClick();
+                assertTrue(editor.getText().toString().endsWith("\n[C] task item"));
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertTrue(editor.getText().toString().endsWith("\n[ ] task item"));
                 editor.getText().replace(0, editor.length(), "    indented\n  [ ] open\n\t[X] done");
                 editor.setSelection(4); // cursor on indented line
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
@@ -225,7 +231,19 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
                 assertEquals("    [X] indented\n  [X] open\n\t[X] done", editor.getText().toString());
                 button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
-                assertEquals("    indented\n  open\n\tdone", editor.getText().toString());
+                assertEquals("    [C] indented\n  [C] open\n\t[C] done", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("    [ ] indented\n  [ ] open\n\t[ ] done", editor.getText().toString());
+                editor.getText().replace(0, editor.length(), "  - plain\n\n\t* [x] done\n+ [c] cancelled\n[ ]open");
+                editor.setSelection(0, editor.length());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("  - [ ] plain\n\n\t* [x] done\n+ [c] cancelled\n[ ]open", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("  - [X] plain\n\n\t* [x] done\n+ [c] cancelled\n[X]open", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("  - [C] plain\n\n\t* [C] done\n+ [c] cancelled\n[C]open", editor.getText().toString());
+                button(activity.getWindow().getDecorView(),"Toggle todo").performClick();
+                assertEquals("  - [ ] plain\n\n\t* [ ] done\n+ [ ] cancelled\n[ ]open", editor.getText().toString());
                 editor.getText().replace(0, editor.length(), "line1\nline2\nline3");
                 editor.setSelection(6); // cursor on line2
                 button(activity.getWindow().getDecorView(),"Move line up").performClick();

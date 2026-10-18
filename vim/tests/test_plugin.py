@@ -70,6 +70,38 @@ call assert_equal(g:source_buffer, bufnr('%'))
 call assert_equal(0, &modified)
 ''')
 
+    def test_cancelled_tasks_and_their_notes_are_hidden_in_uncompleted_view(self):
+        lines = ['[ ] Open task', '    Keep this note']
+        for prefix in ['', '- ', '* ', '+ ']:
+            for marker in ['[C]', '[c]']:
+                lines.extend(['    ' + prefix + marker + ' Cancelled child', '        Hidden note'])
+        lines.extend(['', 'Cancelled section', '---', '[C] Cancelled task'])
+        self.file.write_text('\n'.join(lines) + '\n')
+        self.run_vim('''
+let original = getline(1, '$')
+TextpadTasksOn
+call assert_equal(['[ ] Open task', '    Keep this note'], getline(1, '$'))
+call assert_equal(original, getbufline(g:source_buffer, 1, '$'))
+TextpadTasksOff
+call assert_equal(original, getline(1, '$'))
+call assert_equal(0, &modified)
+''')
+
+    def test_cancelling_a_visible_task_hides_it_on_refresh_and_preserves_saved_text(self):
+        self.file.write_text('[ ] First\n[C] Hidden\n[ ] Second\n')
+        self.run_vim('''
+TextpadTasksOn
+call assert_equal(['[ ] First', '[ ] Second'], getline(1, '$'))
+call setline(1, '[C] First')
+call textpad_tasks#Changed(bufnr('%'))
+TextpadTasksRefresh
+call assert_equal(['[ ] Second'], getline(1, '$'))
+write
+call assert_equal(['[C] First', '[C] Hidden', '[ ] Second'], readfile(g:test_file))
+TextpadTasksOff
+call assert_equal(['[C] First', '[C] Hidden', '[ ] Second'], getline(1, '$'))
+''')
+
     def test_edit_and_write_preserve_hidden_lines_and_vim_write_hooks(self):
         self.run_vim('''
 let g:post_writes = 0
@@ -502,10 +534,13 @@ qa!
         cases = [self.initial, ['Shopping', '---', '[ ] Milk', '[X] Bread'],
                  ['# Work', '## First', '- [ ] Open', '* [x] Done'],
                  ['[ ] Parent', '\tPlain note', '\t[X] Completed child', '\t\t[ ] Open child'],
+                 ['[ ] Parent', '    [C] Cancelled child', '        Hidden note'],
+                 ['[c] Cancelled parent', '    [ ] Open child', '    - [C] Cancelled sibling'],
                  ['', '# Shopping', '---', '[ ] Milk'], ['', 'Finished', '---', '[X] Done', '# Open', '[ ] Todo'],
                  ['[X] Old', '', '    New', '    ---', '    [ ] Todo'], [''], []]
         rng = random.Random(9329)
-        tokens = ['', 'plain', '[ ] Open', '[x] Done', '[X] Done', '- [ ] Bullet', '+ [x] Bullet', '* [ ] Bullet',
+        tokens = ['', 'plain', '[ ] Open', '[x] Done', '[X] Done', '[C] Cancelled', '[c] Cancelled',
+                  '- [C] Bullet', '* [c] Bullet', '- [ ] Bullet', '+ [x] Bullet', '* [ ] Bullet',
                   '# Root', '## Section', '#### Deep', '####### Not a heading', '#tag', '---', '- - -', '===', 'Title']
         for _ in range(160):
             cases.append([rng.choice(['', ' ', '    ', '\t', '\t\t', '  \t']) + rng.choice(tokens)

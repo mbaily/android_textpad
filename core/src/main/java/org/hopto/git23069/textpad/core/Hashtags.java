@@ -76,10 +76,7 @@ public final class Hashtags {
 
     /** Check whether a line is a completed '[X]' or '[x]' todo item. */
     public static boolean isCompletedTodoLine(String line) {
-        if (line == null) return false;
-        int i = 0, len = line.length();
-        while (i < len && (line.charAt(i) == ' ' || line.charAt(i) == '\t')) i++;
-        return line.startsWith("[X]", i) || line.startsWith("[x]", i);
+        return line != null && TaskFilter.classifyLine(line) == TaskFilter.LineType.COMPLETED_TASK;
     }
 
     /**
@@ -87,7 +84,7 @@ public final class Hashtags {
      *
      * @param text          Document text
      * @param targetTags    Collection of tags to match (OR semantics)
-     * @param hideCompleted If true, lines starting with '[X]' or '[x]' are excluded
+     * @param hideCompleted If true, completed and cancelled task lines are excluded (including list bullets)
      */
     public static FileMatch search(String text, Collection<String> targetTags, boolean hideCompleted) {
         if (text == null || text.isEmpty() || targetTags == null || targetTags.isEmpty()) {
@@ -110,7 +107,7 @@ public final class Hashtags {
             if (lineEnd < 0) lineEnd = len;
             int contentEnd = (lineEnd > lineStart && text.charAt(lineEnd - 1) == '\r') ? lineEnd - 1 : lineEnd;
             String line = text.substring(lineStart, contentEnd);
-            if (!hideCompleted || !isCompletedTodoLine(line)) {
+            if (!hideCompleted || !TaskFilter.isClosedTask(line)) {
                 Set<String> lineMatched = null;
                 Matcher m = HASHTAG_IN_TEXT.matcher(line);
                 while (m.find()) {

@@ -63,6 +63,7 @@ def filename(value):
 
 
 HASHTAG_RE = re.compile(r"(?:^|(?<=[\s(\[{\"']))#([A-Za-z_][A-Za-z0-9_-]*)(?=$|\s|[.,;:!?)\]}\"'])")
+CLOSED_TASK_RE = re.compile(r"^[ \t]*(?:[-*+] )?\[[XxCc]\]")
 TAG_TOKEN_RE = re.compile(r"#?([A-Za-z_][A-Za-z0-9_-]*)")
 
 
@@ -655,8 +656,7 @@ class Store:
             line_matches = []
             offset = 0
             for idx, line in enumerate(text.split("\n"), start=1):
-                stripped = line.lstrip(" \t")
-                if not hide_completed or not (stripped.startswith("[X]") or stripped.startswith("[x]")):
+                if not hide_completed or not CLOSED_TASK_RE.match(line):
                     line_tags = []
                     line_tags_set = set()
                     for m in HASHTAG_RE.finditer(line):
