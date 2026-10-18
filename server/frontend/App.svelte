@@ -2150,6 +2150,31 @@
       state: EditorState.create({ doc: "", extensions: [EditorView.cspNonce.of(nonce)] }),
     });
 
+    // iOS pans and shrinks the visual viewport for the keyboard without
+    // resizing 100dvh. Keep the whole editor inside the area above it.
+    const viewport = window.visualViewport;
+    const rootStyle = document.documentElement.style;
+    let viewportFrame = null;
+    let viewportHeight = window.innerHeight;
+    const updateViewport = () => {
+      viewportFrame = null;
+      const height = viewport?.height ?? window.innerHeight;
+      rootStyle.setProperty("--editor-viewport-height", `${height}px`);
+      rootStyle.setProperty("--editor-viewport-top", `${viewport?.offsetTop ?? 0}px`);
+      if (height < viewportHeight && view.hasFocus) {
+        view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
+      }
+      viewportHeight = height;
+    };
+    const scheduleViewport = () => {
+      if (viewportFrame === null) viewportFrame = requestAnimationFrame(updateViewport);
+    };
+    updateViewport();
+    viewport?.addEventListener("resize", scheduleViewport);
+    viewport?.addEventListener("scroll", scheduleViewport);
+    window.addEventListener("resize", scheduleViewport);
+    window.addEventListener("pageshow", scheduleViewport);
+
     applyPreferences();
     refreshFiles().catch(failure);
     syncErrands().catch(() => {});
@@ -2236,6 +2261,13 @@
 
     return () => {
       clearInterval(pollInterval);
+      if (viewportFrame !== null) cancelAnimationFrame(viewportFrame);
+      viewport?.removeEventListener("resize", scheduleViewport);
+      viewport?.removeEventListener("scroll", scheduleViewport);
+      window.removeEventListener("resize", scheduleViewport);
+      window.removeEventListener("pageshow", scheduleViewport);
+      rootStyle.removeProperty("--editor-viewport-height");
+      rootStyle.removeProperty("--editor-viewport-top");
       window.removeEventListener("beforeunload", onBeforeUnload);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("online", onOnline);
@@ -2357,7 +2389,19 @@
       </div>
     </div>
 
-    <div class="toolbar">
+    <div
+      class="toolbar"
+      role="toolbar"
+      aria-label="Editor tools"
+      tabindex="-1"
+      onmousedown={(event) => {
+        // Preserve focus without cancelling touch/pointer events: WebKit
+        // suppresses the subsequent click if pointerdown is cancelled.
+        if (event.button === 0 && view?.hasFocus && event.target.closest("button")) {
+          event.preventDefault();
+        }
+      }}
+    >
       <button id="save" class="primary icon-button" title="Save (Ctrl+S)" aria-label="Save" disabled={!activeDoc || activeDoc.saving || !activeDoc.dirty} onclick={() => save().catch(failure)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       </button>

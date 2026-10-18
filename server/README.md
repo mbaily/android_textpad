@@ -23,7 +23,7 @@ Sign in with the API token. Retrieve it over SSH; credentials are generated on t
 ssh <user>@<your-server> 'sudo cat /etc/android-textpad/api-token'
 ```
 
-The editor targets Chrome on a desktop or laptop. It lists the files stored in the server's SQLite database. Open files in tabs, create files, edit and rename them, search/replace, undo/redo, change font/wrapping/line-number settings, download saved bytes, and preview or restore older revisions. The sidebar toggle beside the tabs hides or shows the file list and remembers your choice in that browser. **Connect Android** supplies the endpoint and API token for the app's sync settings.
+The editor supports desktop and mobile layouts. It lists the files stored in the server's SQLite database. Open files in tabs, create files, edit and rename them, search/replace, undo/redo, change font/wrapping/line-number settings, download saved bytes, and preview or restore older revisions. The sidebar toggle beside the tabs hides or shows the file list and remembers your choice in that browser. On phones, the tabs and horizontally scrollable toolbar stay above the software keyboard; tapping toolbar actions keeps the editor focused. **Connect Android** supplies the endpoint and API token for the app's sync settings.
 
 The todo button adds `[ ]` to plain lines and cycles `[ ]` → `[X]` → `[C]` → `[ ]`, matching Android. `[C]` means cancelled; lowercase `[c]` and `[x]` and list bullets are accepted. The uncompleted-tasks view hides completed/cancelled rows except when needed as context for an open subtask. Hashtag and errands search's **Hide [X] / [C]** option excludes both closed states from open buffers, offline cached files, and server results. The existing API field `hide_completed` covers both states; task markers remain ordinary document text and require no database migration.
 
@@ -118,6 +118,7 @@ PYTHONPATH=server python3 server/tests/browser_smoke.py
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
 PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py
+PYTHONPATH=server python3 server/tests/browser_keyboard_smoke.py
 ```
 
 The Chrome smoke test starts an isolated temporary server/database, verifies live WebSocket updates without manual refresh, and exercises editing, Unicode/newline preservation, remote updates with clean/dirty buffers, revision restore, tabs, undo/redo, search, settings, rename, downloads, close confirmation, and logout. Backend tests cover the API contract, authentication/CSRF, byte-exact encodings, 10 MiB boundaries, concurrent writes, idempotent retries, history, and online backups. Event tests also verify zero periodic SQLite reads while idle, notification only after commit, rollback/retry suppression, coalescing, saves during delivery, disconnect cleanup, and real two-worker delivery/replacement under Gunicorn.
@@ -125,6 +126,8 @@ The Chrome smoke test starts an isolated temporary server/database, verifies liv
 The task-view smoke test checks filtering, dimmed context, divider headings above unindented tasks and at the start of a file, line-edit restrictions, tab switching, empty results, keeping the cursor visible when returning to the full document, and saving edits while preserving hidden text and CRLF line endings. JavaScript unit tests also cover the heading recognition rule, including whitespace, divider lengths, section boundaries, and hiding sections without open tasks.
 
 The recent-file smoke test checks reopening from the entry screen, order and persistence across reloads, renamed files, mobile layout, offline reopening, and starting a new file from an empty list.
+
+The keyboard smoke test requires both Chrome and Playwright WebKit. It simulates the keyboard resizing and panning the visual viewport independently of the layout viewport, and checks visible tabs/toolbar, horizontal scrolling, touch actions without losing editor focus, cursor visibility, rotation, dismissal/reopening, and the fallback without VisualViewport. Headless browsers cannot open the native iOS keyboard, so a physical iPhone check remains useful.
 
 The errands pane scrolls as a whole, with its hashtag list, match mode, and Hide filter inside **Errands settings**, collapsed by default. Its browser check covers a 950-tag list, wheel scrolling, result navigation, settings editing, and desktop, tablet, mobile, and short viewports.
 
