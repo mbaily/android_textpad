@@ -138,8 +138,8 @@ def main():
             assert api.get(remote.id).content == remote_final
             run('-C', str(verified), 'get', remote.id, 'notes.txt')
             with (root / 'verified-watch.log').open('w') as log:
-                watcher = subprocess.Popen(command + ['-C', str(verified), 'watch', '--settle', '0.3',
-                    '--interval', '0.05', '--remote-interval', '120'], env=env, stdout=log, stderr=subprocess.STDOUT)
+                watcher = subprocess.Popen(command + ['-C', str(verified), 'watch', '--settle', '3',
+                    '--interval', '5', '--remote-interval', '120'], env=env, stdout=log, stderr=subprocess.STDOUT)
                 wait_for(lambda: 'live:' in (root / 'verified-watch.log').read_text())
                 # Let the initial ready reconciliation finish, then a later save
                 # must be delivered through the socket, not the 120-second timer.
@@ -147,7 +147,13 @@ def main():
                 saved = api.get(remote.id)
                 verified_final = remote_final + b'Live update with a trusted CA\r\n'
                 api.put(remote.id, remote.name, verified_final, saved.revision, str(uuid.uuid4()))
-                wait_for(lambda: (verified / 'notes.txt').read_bytes() == verified_final)
+                wait_for(lambda: (verified / 'notes.txt').read_bytes() == verified_final, timeout=2)
+                saved = api.get(remote.id)
+                verified_next = verified_final + b'Another immediate live update\r\n'
+                api.put(remote.id, remote.name, verified_next, saved.revision, str(uuid.uuid4()))
+                # A completed download must not restart the 3-second editor
+                # settling wait or defer a socket hint to the 5-second local tick.
+                wait_for(lambda: (verified / 'notes.txt').read_bytes() == verified_next, timeout=2)
                 watcher.send_signal(signal.SIGINT)
                 assert watcher.wait(timeout=10) == 130
             print('Packaged HTTPS client passed: verified defaults, explicit certificate/hostname bypass, per-invocation flags, setup, upload, errands settings and tag-file imports with 900 tags, line/file matching, closed-task filters, local overrides, offline search without a token, foreground monitor, blank-file hold, external-editor save, live WebSocket remote pulls with trusted CA and insecure modes, Ctrl+C, history, snapshots, and untracking.')

@@ -662,6 +662,28 @@ class SyncTests(unittest.TestCase):
         watcher.step(11.1)
         self.assertEqual(LONG + b'Final saved text\n', self.api.get(self.docid).content)
 
+    def test_watch_ignores_brief_absence_during_rename_save_but_reports_persistent_absence(self):
+        self.tracked()
+        messages = []
+        watcher = Watcher(self.ws, self.api, report=messages.append)
+        watcher.step(0)
+        watcher.step(2)
+        backup = self.root / 'notes.txt~'
+        os.replace(self.path, backup)  # Vim-style save: original moved aside first.
+        watcher.step(3)
+        watcher.step(3.5)
+        self.path.write_bytes(b'Saved by rename\r\n')
+        backup.unlink()
+        watcher.step(4)
+        watcher.step(6)
+        self.assertFalse(any('missing:' in message for message in messages), messages)
+        self.assertEqual(b'Saved by rename\r\n', self.api.get(self.docid).content)
+        self.path.unlink()
+        watcher.step(7)
+        self.assertFalse(any('missing:' in message for message in messages), messages)
+        watcher.step(9)
+        self.assertEqual(1, sum('missing:' in message for message in messages))
+
     def test_idle_watch_does_not_make_http_requests_each_local_tick(self):
         self.tracked()
         watcher = Watcher(self.ws, self.api, remote_interval=30, report=lambda text: None)
@@ -766,6 +788,61 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(b'First version\r\n', self.path.read_bytes())
         watcher.step(5.1)
         self.assertEqual(b'Remote change while local metadata settles\n', self.path.read_bytes())
+
+    def test_live_downloads_do_not_restart_the_editor_settle_timer(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, settle=10, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(10)
+        self.remote(b'First live remote edit\n')
+        watcher.notify()
+        watcher.step(10.1)
+        self.assertEqual(b'First live remote edit\n', self.path.read_bytes())
+        self.remote(b'Second live remote edit\n')
+        watcher.notify()
+        watcher.step(10.2)
+        self.assertEqual(b'Second live remote edit\n', self.path.read_bytes())
+        self.remote(b'Third live remote edit\n')
+        watcher.notify()
+        watcher.step(10.3)
+        self.assertEqual(b'Third live remote edit\n', self.path.read_bytes())
+
+    def test_editor_writes_after_download_still_wait_for_stability(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        self.remote(b'Live remote edit\n')
+        watcher.notify()
+        watcher.step(3)
+        self.path.write_bytes(b'Saved editor change after the download\n')
+        watcher.notify()
+        watcher.step(3.1)
+        watcher.step(5)
+        self.assertEqual(b'Live remote edit\n', self.api.get(self.docid).content)
+        watcher.step(5.2)
+        self.assertEqual(b'Saved editor change after the download\n', self.api.get(self.docid).content)
+
+    def test_editor_writes_during_download_reporting_are_not_marked_as_settled(self):
+        self.tracked()
+        watcher = Watcher(self.ws, self.api, report=lambda message: None)
+        watcher.step(0)
+        watcher.step(2)
+        self.remote(b'Live remote edit\n')
+        sync = watcher.engine.sync
+        def edit_after_download(*args, **kwargs):
+            results = sync(*args, **kwargs)
+            self.path.write_bytes(b'Editor saved while the download completed\n')
+            return results
+        watcher.notify()
+        with patch.object(watcher.engine, 'sync', side_effect=edit_after_download):
+            watcher.step(3)
+        watcher.notify()
+        watcher.step(3.1)
+        watcher.step(5)
+        self.assertEqual(b'Live remote edit\n', self.api.get(self.docid).content)
+        watcher.step(5.2)
+        self.assertEqual(b'Editor saved while the download completed\n', self.api.get(self.docid).content)
 
     def test_live_hint_during_reconciliation_schedules_another_pass(self):
         self.tracked()

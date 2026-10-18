@@ -5,7 +5,7 @@ import time
 
 from . import SyncError
 from .events import ChangeEvents
-from .filesystem import stamp
+from .filesystem import read, stamp
 from .sync import Engine, Result
 
 
@@ -31,6 +31,20 @@ class Watcher:
             subject = f'{result.path!r}: ' if result.path else ''
             self.report(f'{timestamp} {result.state}: {subject}{result.message}')
 
+    def observe_download(self, result, now):
+        if result.state != 'downloaded':
+            return
+        try:
+            path, _ = self.workspace.path(result.path)
+            saved = read(path)
+            if saved.content != self.workspace.file(result.path)['base_content']:
+                return
+        except (SyncError, OSError):
+            return
+        # Our atomic download is already a complete save. Only this verified
+        # signature bypasses settling; a subsequent editor write starts it anew.
+        self.observations[result.path] = (saved.signature, now - self.settle)
+
     def step(self, now=None):
         now = time.monotonic() if now is None else now
         with self.workspace.lock():
@@ -55,24 +69,30 @@ class Watcher:
                     signature = stamp(path.stat())
                 except FileNotFoundError:
                     signature = ('missing',)
-                    self.emit(Result(key, 'missing', 'Local file is missing; no deletion was propagated.'))
                 except (SyncError, OSError) as error:
                     signature = ('unavailable', str(error))
-                    self.emit(Result(key, 'waiting', str(error)))
                 previous = self.observations.get(key)
                 if previous is None or previous[0] != signature:
                     self.observations[key] = (signature, now)
                     self.dirty.add(key)
                 since = self.observations[key][1]
-                if now - since >= self.settle and signature[0] not in ('missing', 'unavailable'):
-                    if key in self.remote_pending or key in self.dirty:
-                        due.append(row)
-                        signatures[key] = signature
+                if now - since < self.settle:
+                    continue
+                # Editors that save by rename or unlink-and-recreate briefly
+                # remove the path; only a persistent absence is reported.
+                if signature[0] == 'missing':
+                    self.emit(Result(key, 'missing', 'Local file is missing; no deletion was propagated.'))
+                elif signature[0] == 'unavailable':
+                    self.emit(Result(key, 'waiting', signature[1]))
+                elif key in self.remote_pending or key in self.dirty:
+                    due.append(row)
+                    signatures[key] = signature
             if remote_due:
                 self.next_remote = now + self.remote_interval
             if due:
                 try:
                     for result in self.engine.sync(due, settle=0, expected_signatures=signatures):
+                        self.observe_download(result, now)
                         self.emit(result)
                     self.last_reports.pop('', None)
                 except (SyncError, OSError) as error:

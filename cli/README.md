@@ -92,6 +92,8 @@ textpad-sync watch
 
 `watch` stays attached to your terminal until Ctrl+C. It checks tracked file metadata every 0.5 seconds, waits for two seconds of stability after a local change, then treats the saved bytes as an edit. This handles editors that truncate/rewrite a file or save by replacing its inode. Server WebSocket notifications trigger immediate reconciliation of stable files, so a web or Android save does not need to wait for the periodic check. Notifications received while a file is settling are retained until it becomes stable. It also reconciles every 30 seconds as a fallback, including when live updates are unavailable. It does not install or manage a service.
 
+The settling delay applies to local editor changes. Completed downloads do not restart that delay, so successive remote saves can arrive immediately, even with a long `--interval` or `--settle`. A local edit made during or after a download still requires stability before it syncs.
+
 ```sh
 textpad-sync watch --settle 3 --interval 0.5 --remote-interval 15
 ```
