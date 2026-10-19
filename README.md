@@ -18,16 +18,17 @@ The site uses the server's existing HTTPS certificate and is served from `/opt/a
 
 ## Build and install
 
-Open this directory in Android Studio, or use a JDK 17/21 and Android SDK platform 36 with build tools 36.0.0:
+Open this directory in Android Studio, or use JDK 25 (LTS) and Android SDK platform 37.2 with build tools 37.0.0:
 
 ```sh
 export JAVA_HOME=/path/to/jdk
 export ANDROID_HOME=/path/to/android-sdk
+sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
 ./scripts/build.sh
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The build script also finds the isolated toolchain installed for this workspace at `~/.cache/android-textpad/`. The Gradle wrapper pins Gradle 8.13 and Android Gradle Plugin 8.13.2. The debug APK is signed automatically. Keep the same debug keystore when building subsequent updates.
+The build script also finds the isolated toolchain installed for this workspace at `~/.cache/android-textpad/`. Both modules use the JDK 25 compiler toolchain and retain Java 17 source/bytecode compatibility. The Gradle wrapper pins Gradle 9.8.2 and Android Gradle Plugin 9.4.1. Compilation uses Android SDK 37.2 for OkHttp 5.5.0; the minimum and target SDK remain API 36 (Android 16). The debug APK is signed automatically. Keep the same debug keystore when building subsequent updates.
 
 ## Editor
 

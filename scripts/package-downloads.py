@@ -35,7 +35,7 @@ def main():
         sdk_paths = [Path(value) for value in [os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT")] if value]
         sdk_paths += [Path.home() / "Android/Sdk", Path.home() / ".cache/android-textpad/sdk"]
         for sdk in sdk_paths:
-            candidate = sdk / "build-tools/36.0.0/apksigner"
+            candidate = sdk / "build-tools/37.0.0/apksigner"
             if candidate.is_file():
                 signer = str(candidate)
                 break

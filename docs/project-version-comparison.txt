@@ -1,0 +1,940 @@
+TEXTPAD PROJECT: VERSION COMPARISON WITH INTERNET RELEASES
+Checked: 2026-10-20T05:46:09+11:00 (Australia/Melbourne)
+Repository: android_textpad
+Snapshot: working tree after the JDK 25 / Gradle 9.8.2 / AGP 9.4.1 upgrade.
+This is a read-only inventory. No software was upgraded or deployed while producing it.
+
+HOW TO READ THIS REPORT
+=======================
+Project versions come from repository manifests, lockfiles, resolved Gradle graphs,
+local executable version commands, and a read-only check of the deployed server.
+Latest versions come from official project pages, Google Maven, Maven Central,
+npm, PyPI, Google SDK metadata, and official project GitHub repositories.
+Preview, alpha, beta, RC, EAP, nightly and snapshot releases are excluded where
+the upstream package version or release channel identifies them as such.
+For npm, latest means the publisher's latest distribution tag. For Maven, it
+means the highest stable-looking version published under the same coordinates.
+Changing Maven coordinates, switching a platform variant, or moving to another
+framework generation is not treated as an ordinary same-package update.
+Published numeric R8 versions do not independently identify the AGP stable channel;
+the R8 entry calls out that limitation explicitly.
+CURRENT describes version equality, not a security audit or a compatibility guarantee.
+NEWER UPSTREAM AVAILABLE does not imply that forcing that version is safe.
+OS packages may carry Debian backports without matching upstream version numbers.
+Multiple versions of a module can occur in separate build-tool and app classpaths.
+Installed tools that are not pinned are labelled as observations, not reproducible pins.
+Coverage includes all declared dependencies, all 60 frontend lockfile package entries,
+the resolved app/core compile and runtime graphs (including test graphs and BOMs),
+the resolved Android build-plugin classpath, major bundled compiler components,
+and the development/deployment tools used by this repository. It does not enumerate
+every OS package, Python standard-library module, JDK module, or browser internal.
+A newer app/CLI version has no independent third-party upstream: these are this
+repository's own products. Optional tools with no installed version are identified.
+
+OVERVIEW
+========
+- The Android build uses the latest stable Gradle (9.8.2), AGP (9.4.1),
+  compile SDK (37.2), Build Tools (37.0.0), and JDK 25 LTS patch (25.0.4.1).
+- All directly declared Android libraries match the latest stable release under
+  their existing coordinates. JUnit 4 is current within JUnit 4; JUnit 6 is a migration.
+- Node 24.22.0 is the latest LTS; Node 26.12.0 is the latest Current release.
+- All 12 locked Python server libraries match their latest PyPI releases.
+- The server/build Python is 3.13.5; latest upstream is 3.15.0, or 3.13.16
+  within the existing 3.13 series. Default local python3 is separately 3.14.0.
+- Direct frontend dependency @codemirror/view is 6.43.14 versus 6.43.15.
+- Other frontend lockfile differences: aria-query 5.3.1 vs 5.3.2, devalue
+  5.9.4 vs 6.0.3, and magic-string 0.30.21 vs 1.4.3; these are transitive packages.
+- Other older upstream versions include npm, pip, SQLite, Vim, and several
+  deployment utilities. Detailed entries below distinguish installed and declared use.
+- Build plugins and application libraries select older transitive libraries,
+  including Kotlin and coroutines. The complete comparisons are included below;
+  they are not independently pinned by this project and were not force-upgraded.
+
+PROJECT PRODUCT VERSIONS
+========================
+Android application: 0.1.31; Android versionCode: 32 (app/build.gradle).
+Python CLI textpad-sync: 0.1.8 (cli/pyproject.toml).
+Frontend package textpad-desktop-editor: 0.1.0; private package (server/frontend/package.json).
+Server application: no separate project release version declared.
+Vim plugin: no separate plugin release version declared; requires Vim >=9.0.
+These are product versions, not third-party dependency version comparisons.
+The recent Android toolchain/dependency upgrades have been built locally; this
+inventory does not assert that an upgraded APK has been deployed or installed.
+
+PROGRAMMING LANGUAGES, RUNTIMES, AND COMPILERS
+==============================================
+Java source/bytecode compatibility | Project/installed: 17 | Latest: 27 (language/platform) | COMPATIBILITY SETTING
+  Internet source: https://www.oracle.com/java/technologies/downloads/
+  Note: Intentional compatibility setting, separate from the compiler version.
+OpenJDK / javac used for builds | Project/installed: Temurin 25.0.4.1+1 LTS | Latest: 25.0.4.1+1 LTS; Java 27 overall | CURRENT LTS
+  Internet source: https://api.github.com/repos/adoptium/temurin25-binaries/releases/latest
+  Note: Both app and core request JavaLanguageVersion.of(25). Java 25 is the latest LTS; Java 27 is the latest overall release.
+  Java overall/LTS source: https://www.oracle.com/java/technologies/downloads/
+Python server and deployment build venv | Project/installed: 3.13.5 | Latest: 3.15.0; 3.13.16 in the 3.13 series | NEWER UPSTREAM AVAILABLE
+  Internet source: https://www.python.org/downloads/
+  Note: Both the local server-venv and the deployed server currently report Python 3.13.5.
+Python CLI requirement | Project/installed: >=3.11; no exact runtime pin | Latest: 3.15.0 | MINIMUM REQUIREMENT
+  Internet source: https://www.python.org/downloads/
+  Note: The requirement allows newer interpreters; it is not a pin to 3.11.
+Default local python3 | Project/installed: 3.14.0 | Latest: 3.15.0; 3.14.8 in the 3.14 series | NEWER UPSTREAM AVAILABLE
+  Internet source: https://www.python.org/downloads/
+  Note: Observed /usr/local/bin/python3; deployment scripts use the separate 3.13 environment.
+JavaScript / ECMAScript | Project/installed: ES modules; no edition pinned | Latest: ECMAScript 2026, edition 17 | NO EDITION PIN
+  Internet source: https://ecma-international.org/publications-and-standards/standards/ecma-262/
+  Note: server/frontend/build.mjs targets chrome110; language standard, browser target and Node version are distinct.
+Node.js | Project/installed: 24.22.0 | Latest: 24.22.0 LTS; 26.12.0 Current | CURRENT LTS
+  Internet source: https://nodejs.org/dist/index.json
+  Note: Installed tool, not pinned by package.json or a Node version file.
+Vim / Vimscript runtime | Project/installed: 9.1 (Debian patches through 1244) | Latest: 9.2.1209 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://api.github.com/repos/vim/vim/tags?per_page=1
+  Note: Installed patch set: 1-948, 950-1230, 1242, 1244. Plugin minimum is Vim 9.0; it uses compatible Vimscript.
+Bash scripting runtime | Project/installed: 5.2.37 | Latest: 5.3.20 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://ftp.gnu.org/gnu/bash/bash-5.3-patches/
+  Note: Latest patch level is determined from the GNU Bash 5.3 patch directory. Bash is used by build/deploy scripts.
+Svelte framework/compiler | Project/installed: 5.57.2 | Latest: 5.57.2 | CURRENT
+  Internet source: https://registry.npmjs.org/svelte/latest
+  Note: package.json permits ^5.57.2; package-lock.json resolves exactly 5.57.2.
+esbuild | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/esbuild/latest
+  Note: JavaScript bundler/compiler used by the frontend build.
+D8 / R8 bundled with AGP | Project/installed: 9.4.24 (inside builder 9.4.1) | Latest: 9.5.26 latest published numeric artifact; stable AGP bundle remains 9.4.24 | LATEST STABLE AGP BUNDLE
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/r8/maven-metadata.xml
+  Note: Verified by invoking the bundled D8/R8 --version. Numeric publication alone does not establish a stable release channel. The project uses the version bundled with latest stable AGP; release minification is disabled.
+AAPT2 resource compiler | Project/installed: 9.4.1-15978811 | Latest: 9.4.1-15978811 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/maven-metadata.xml
+  Note: The resource compiler downloaded by AGP; distinct from the SDK Build Tools package version.
+Android Lint | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/lint/lint/maven-metadata.xml
+  Note: AGP-managed tool, not a separately pinned application library.
+No Kotlin application source is present. Kotlin is supplied by build-tool and
+library dependencies; its embedded and resolved versions are listed below.
+No project C/C++ compilation, Android NDK or CMake configuration is present.
+The Python interpreter reports GCC 14.2.0 as its own build compiler; that is not
+a compiler invoked to build this project.
+
+ANDROID PLATFORM AND BUILD TOOLS
+================================
+Gradle wrapper | Project/installed: 9.8.2 | Latest: 9.8.2 | CURRENT
+  Internet source: https://services.gradle.org/versions/current
+  Note: Pinned in gradle/wrapper/gradle-wrapper.properties with distribution SHA-256.
+com.android.tools.build:gradle | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml
+  Note: Android Gradle Plugin pinned in root build.gradle.
+Android compile SDK | Project/installed: 37.2 | Latest: 37.2 | CURRENT
+  Internet source: https://dl.google.com/android/repository/repository2-3.xml
+  Note: platforms;android-37.2, revision 1.
+Android minimum and target SDK | Project/installed: 36 / Android 16 | Latest: Android 17 / SDK 37.2 | COMPATIBILITY SETTINGS
+  Internet source: https://dl.google.com/android/repository/repository2-3.xml
+  Note: These are support/behavior settings, not the installed compiler SDK. Android 16 support is retained.
+Android SDK Build Tools | Project/installed: 37.0.0 | Latest: 37.0.0 | CURRENT
+  Internet source: https://dl.google.com/android/repository/repository2-3.xml
+  Note: Used by app/build.gradle and scripts/package-downloads.py.
+Android SDK Platform Tools / ADB | Project/installed: 37.0.1 | Latest: 37.0.1 | CURRENT
+  Internet source: https://dl.google.com/android/repository/repository2-3.xml
+  Note: adb also reports protocol version 1.0.41; package version 37.0.1 is the useful release comparison.
+Android SDK Command-line Tools | Project/installed: 23.0 | Latest: 23.0 | CURRENT
+  Internet source: https://dl.google.com/android/repository/repository2-3.xml
+  Note: Installed cmdline-tools/latest points to package revision 23.0.
+Android CLI | Project/installed: 1.0.16625370 | Latest: bundled with Command-line Tools 23.0 | CURRENT SDK TOOL BUNDLE
+  Internet source: https://developer.android.com/tools/agents/android-cli
+  Note: android --version; sdkmanager currently delegates to Android CLI. No separate version pin.
+Android Studio (optional IDE) | Project/installed: not pinned; installation not established | Latest: Rabbit 1 / 2026.2.1 | OPTIONAL / NOT PINNED
+  Internet source: https://developer.android.com/studio/releases
+  Note: The verified build uses the Gradle command line and does not require the IDE.
+Android Emulator (optional test tool) | Project/installed: not installed in workspace SDK | Latest: 37.2.12 | OPTIONAL / NOT INSTALLED
+  Internet source: https://dl.google.com/android/repository/repository2-3.xml
+  Note: No emulator or physical device is connected; instrumentation APK can be built but was not run on-device.
+
+MAJOR COMPONENTS BUNDLED INSIDE GRADLE
+======================================
+Embedded Kotlin | Project/installed: 2.4.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/maven-metadata.xml
+  Note: Reported by Gradle --version; not an independently upgradeable application compiler pin.
+org.apache.groovy:groovy | Project/installed: 4.0.33 | Latest: 6.0.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/groovy/groovy/maven-metadata.xml
+  Note: Reported by Gradle --version. Gradle selects this Groovy version; project build files use Groovy DSL.
+org.apache.ant:ant | Project/installed: 1.10.17 | Latest: 1.10.18 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/ant/ant/maven-metadata.xml
+  Note: Reported by Gradle --version. Ant is embedded support code, not this project's build entry point.
+
+DIRECT ANDROID / JVM LIBRARIES
+==============================
+androidx.recyclerview:recyclerview | Project/installed: 1.4.0 | Latest: 1.4.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/recyclerview/recyclerview/maven-metadata.xml
+  Note: Application dependency.
+androidx.work:work-runtime | Project/installed: 2.12.0 | Latest: 2.12.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/work/work-runtime/maven-metadata.xml
+  Note: Application background work dependency.
+com.squareup.okhttp3:okhttp | Project/installed: 5.5.0 | Latest: 5.5.0 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp/maven-metadata.xml
+  Note: WebSocket networking; resolves the Android platform variant below.
+androidx.test:runner | Project/installed: 1.7.0 | Latest: 1.7.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/test/runner/maven-metadata.xml
+  Note: Android instrumentation tests.
+androidx.test:core | Project/installed: 1.7.0 | Latest: 1.7.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/test/core/maven-metadata.xml
+  Note: Android instrumentation tests.
+junit:junit | Project/installed: 4.13.2 | Latest: 4.13.2 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/junit/junit/maven-metadata.xml
+  Note: Core JVM and Android instrumentation tests; latest release under these JUnit 4 coordinates.
+androidx.work:work-testing | Project/installed: 2.12.0 | Latest: 2.12.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/work/work-testing/maven-metadata.xml
+  Note: Android instrumentation tests.
+JUnit framework alternative: 6.1.3 under org.junit.jupiter:junit-jupiter.
+  Internet source: https://repo.maven.apache.org/maven2/org/junit/jupiter/junit-jupiter/maven-metadata.xml
+  This would require a test framework migration; it is not a later version of junit:junit.
+The :core dependency is a local project module and has no third-party upstream version.
+
+DIRECT FRONTEND LIBRARIES AND BUILD DEPENDENCIES
+================================================
+@codemirror/commands | Project/installed: 6.11.1 | Latest: 6.11.1 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fcommands/latest
+  Note: dependencies; manifest declares 6.11.1; lockfile resolves 6.11.1.
+@codemirror/search | Project/installed: 6.7.2 | Latest: 6.7.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fsearch/latest
+  Note: dependencies; manifest declares 6.7.2; lockfile resolves 6.7.2.
+@codemirror/state | Project/installed: 6.7.6 | Latest: 6.7.6 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fstate/latest
+  Note: dependencies; manifest declares 6.7.6; lockfile resolves 6.7.6.
+@codemirror/view | Project/installed: 6.43.14 | Latest: 6.43.15 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fview/latest
+  Note: dependencies; manifest declares 6.43.14; lockfile resolves 6.43.14.
+esbuild | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/esbuild/latest
+  Note: devDependencies; manifest declares 0.28.2; lockfile resolves 0.28.2.
+esbuild-svelte | Project/installed: 0.9.5 | Latest: 0.9.5 | CURRENT
+  Internet source: https://registry.npmjs.org/esbuild-svelte/latest
+  Note: devDependencies; manifest declares ^0.9.5; lockfile resolves 0.9.5.
+svelte | Project/installed: 5.57.2 | Latest: 5.57.2 | CURRENT
+  Internet source: https://registry.npmjs.org/svelte/latest
+  Note: devDependencies; manifest declares ^5.57.2; lockfile resolves 5.57.2.
+
+PYTHON SERVER LIBRARIES: EVERY LOCKED DEPENDENCY
+================================================
+Declared in server/requirements.lock. Local build venv and deployed server versions were checked.
+blinker | Project/installed: 1.9.0 | Latest: 1.9.0 | CURRENT
+  Internet source: https://pypi.org/pypi/blinker/json
+  Note: Local build venv: 1.9.0; deployed: 1.9.0.
+click | Project/installed: 8.5.0 | Latest: 8.5.0 | CURRENT
+  Internet source: https://pypi.org/pypi/click/json
+  Note: Local build venv: 8.5.0; deployed: 8.5.0.
+Flask | Project/installed: 3.1.3 | Latest: 3.1.3 | CURRENT
+  Internet source: https://pypi.org/pypi/Flask/json
+  Note: Local build venv: 3.1.3; deployed: 3.1.3.
+flask-sock | Project/installed: 0.7.0 | Latest: 0.7.0 | CURRENT
+  Internet source: https://pypi.org/pypi/flask-sock/json
+  Note: Local build venv: 0.7.0; deployed: 0.7.0.
+gunicorn | Project/installed: 26.2.0 | Latest: 26.2.0 | CURRENT
+  Internet source: https://pypi.org/pypi/gunicorn/json
+  Note: Local build venv: 26.2.0; deployed: 26.2.0.
+h11 | Project/installed: 0.16.0 | Latest: 0.16.0 | CURRENT
+  Internet source: https://pypi.org/pypi/h11/json
+  Note: Local build venv: 0.16.0; deployed: 0.16.0.
+itsdangerous | Project/installed: 2.2.0 | Latest: 2.2.0 | CURRENT
+  Internet source: https://pypi.org/pypi/itsdangerous/json
+  Note: Local build venv: 2.2.0; deployed: 2.2.0.
+Jinja2 | Project/installed: 3.1.6 | Latest: 3.1.6 | CURRENT
+  Internet source: https://pypi.org/pypi/Jinja2/json
+  Note: Local build venv: 3.1.6; deployed: 3.1.6.
+MarkupSafe | Project/installed: 3.0.4 | Latest: 3.0.4 | CURRENT
+  Internet source: https://pypi.org/pypi/MarkupSafe/json
+  Note: Local build venv: 3.0.4; deployed: 3.0.4.
+simple-websocket | Project/installed: 1.1.0 | Latest: 1.1.0 | CURRENT
+  Internet source: https://pypi.org/pypi/simple-websocket/json
+  Note: Local build venv: 1.1.0; deployed: 1.1.0.
+Werkzeug | Project/installed: 3.1.9 | Latest: 3.1.9 | CURRENT
+  Internet source: https://pypi.org/pypi/Werkzeug/json
+  Note: Local build venv: 3.1.9; deployed: 3.1.9.
+wsproto | Project/installed: 1.3.2 | Latest: 1.3.2 | CURRENT
+  Internet source: https://pypi.org/pypi/wsproto/json
+  Note: Local build venv: 1.3.2; deployed: 1.3.2.
+The Python CLI declares dependencies = []: no third-party runtime dependencies.
+The Vim plugin has no external runtime library, Python, or server dependency.
+
+PACKAGE MANAGERS AND OPTIONAL TEST TOOLS
+========================================
+npm | Project/installed: 11.19.1 | Latest: 12.2.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://registry.npmjs.org/npm/latest
+  Note: Installed globally; no project version pin.
+pip | Project/installed: 25.1.1 | Latest: 26.2.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://pypi.org/pypi/pip/json
+  Note: Local server build venv and deployed server venv both use this pip version; pip is not an application runtime dependency.
+pip | Project/installed: 25.2 | Latest: 26.2.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://pypi.org/pypi/pip/json
+  Note: Default local Python 3.14 installation; separate from server build venv.
+setuptools CLI build backend | Project/installed: requires >=68; not installed in inspected build venv | Latest: 84.0.0 | MINIMUM REQUIREMENT; NO EXACT PIN
+  Internet source: https://pypi.org/pypi/setuptools/json
+  Note: cli/pyproject.toml uses setuptools.build_meta. An isolated pip build may install a newer matching version. Zipapp packaging uses Python standard library instead.
+Playwright (optional Python browser tests) | Project/installed: not installed in inspected default Python or server build venv | Latest: 1.64.0 | OPTIONAL / NOT INSTALLED IN INSPECTED ENVS
+  Internet source: https://pypi.org/pypi/playwright/json
+  Note: Browser smoke tests import playwright; it is documented but not locked in requirements.lock.
+Google Chrome | Project/installed: 155.0.8059.84 | Latest: 155.0.8059.84 | CURRENT
+  Internet source: https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json
+  Note: Installed browser used by channel="chrome" smoke-test scripts; no project browser version pin.
+Frontend browser compilation target | Project/installed: chrome110 | Latest: Chrome 155.0.8059.84 stable | COMPATIBILITY TARGET
+  Internet source: https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json
+  Note: An intentional output compatibility target in build.mjs, not the installed Chrome version.
+Playwright WebKit is also used by the keyboard smoke test. No independently
+installed WebKit revision was established; its browser builds are tied to the
+selected Playwright release rather than a separately pinned Safari version.
+
+DEPLOYED SERVER AND DEVELOPMENT / DEPLOYMENT UTILITIES
+======================================================
+Debian (local and deployed server) | Project/installed: 13.7 / trixie | Latest: 13.7 / trixie | CURRENT STABLE
+  Internet source: https://www.debian.org/releases/
+  Note: Observed /etc/debian_version on both machines.
+Apache HTTP Server (deployed) | Project/installed: 2.4.69 (Debian) | Latest: 2.4.69 | CURRENT
+  Internet source: https://httpd.apache.org/download.cgi
+  Note: Observed apache2 -v on the deployment host.
+SQLite loaded by Python server/build venv | Project/installed: 3.46.1 | Latest: 3.54.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://sqlite.org/changes.html
+  Note: Observed sqlite3.sqlite_version on both local server-venv and deployed server. SQLite is supplied by the interpreter/OS rather than requirements.lock.
+OpenSSL (local CLI and local/deployed Python) | Project/installed: 3.5.7 | Latest: 4.0.3 overall; 3.5.9 in latest LTS series | NEWER UPSTREAM AVAILABLE
+  Internet source: https://www.openssl-library.org/source/
+  Note: Observed openssl version and ssl.OPENSSL_VERSION. Debian package support/backports must be assessed separately from upstream numbers.
+systemd (local and deployed) | Project/installed: 257.13 (257.13-1~deb13u1) | Latest: 262.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://api.github.com/repos/systemd/systemd/releases/latest
+  Note: Runs the deployed Gunicorn service and backup timer; OS-managed, not pinned by this repository.
+Git (local) | Project/installed: 2.47.3 | Latest: 2.56.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://api.github.com/repos/git/git/tags?per_page=20
+  Note: Source-control tool; no project pin.
+OpenSSH / ssh / scp (local) | Project/installed: 10.0p2 (Debian-7+deb13u4) | Latest: 10.6p1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://www.openssh.org/releasenotes.html
+  Note: Used by deployment scripts; no project pin.
+rsync (local) | Project/installed: 3.5.0 | Latest: 3.5.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://download.samba.org/pub/rsync/NEWS
+  Note: Used by deployment scripts; no project pin.
+Android SQLite and Android Runtime (ART) versions depend on the installed device
+OS. No connected device was available to measure those; they are not supplied
+as separately pinned dependencies in this repository.
+Browser HTML/CSS and SQLite SQL have no single package version pinned by the
+project; their implementation versions are represented by Chrome and SQLite above.
+
+COMPLETE FRONTEND LOCKFILE INVENTORY
+====================================
+60 entries from server/frontend/package-lock.json, including transitive
+dependencies and optional esbuild binaries for other OS/CPU targets. A lockfile
+entry for another platform does not mean that binary is installed on this machine.
+@codemirror/commands | Project/installed: 6.11.1 | Latest: 6.11.1 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fcommands/latest
+  Note: runtime; direct requirement 6.11.1; lock path: node_modules/@codemirror/commands
+@codemirror/language | Project/installed: 6.13.1 | Latest: 6.13.1 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Flanguage/latest
+  Note: runtime; transitive; lock path: node_modules/@codemirror/language
+@codemirror/search | Project/installed: 6.7.2 | Latest: 6.7.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fsearch/latest
+  Note: runtime; direct requirement 6.7.2; lock path: node_modules/@codemirror/search
+@codemirror/state | Project/installed: 6.7.6 | Latest: 6.7.6 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fstate/latest
+  Note: runtime; direct requirement 6.7.6; lock path: node_modules/@codemirror/state
+@codemirror/streamparser | Project/installed: 6.0.0 | Latest: 6.0.0 | CURRENT
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fstreamparser/latest
+  Note: runtime; transitive; lock path: node_modules/@codemirror/streamparser
+@codemirror/view | Project/installed: 6.43.14 | Latest: 6.43.15 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://registry.npmjs.org/%40codemirror%2Fview/latest
+  Note: runtime; direct requirement 6.43.14; lock path: node_modules/@codemirror/view
+@esbuild/aix-ppc64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Faix-ppc64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/aix-ppc64
+@esbuild/android-arm | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fandroid-arm/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/android-arm
+@esbuild/android-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fandroid-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/android-arm64
+@esbuild/android-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fandroid-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/android-x64
+@esbuild/darwin-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fdarwin-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/darwin-arm64
+@esbuild/darwin-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fdarwin-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/darwin-x64
+@esbuild/freebsd-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Ffreebsd-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/freebsd-arm64
+@esbuild/freebsd-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Ffreebsd-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/freebsd-x64
+@esbuild/linux-arm | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-arm/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-arm
+@esbuild/linux-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-arm64
+@esbuild/linux-ia32 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-ia32/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-ia32
+@esbuild/linux-loong64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-loong64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-loong64
+@esbuild/linux-mips64el | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-mips64el/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-mips64el
+@esbuild/linux-ppc64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-ppc64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-ppc64
+@esbuild/linux-riscv64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-riscv64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-riscv64
+@esbuild/linux-s390x | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-s390x/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-s390x
+@esbuild/linux-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Flinux-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/linux-x64
+@esbuild/netbsd-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fnetbsd-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/netbsd-arm64
+@esbuild/netbsd-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fnetbsd-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/netbsd-x64
+@esbuild/openbsd-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fopenbsd-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/openbsd-arm64
+@esbuild/openbsd-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fopenbsd-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/openbsd-x64
+@esbuild/openharmony-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fopenharmony-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/openharmony-arm64
+@esbuild/sunos-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fsunos-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/sunos-x64
+@esbuild/win32-arm64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fwin32-arm64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/win32-arm64
+@esbuild/win32-ia32 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fwin32-ia32/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/win32-ia32
+@esbuild/win32-x64 | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40esbuild%2Fwin32-x64/latest
+  Note: development/build; optional/platform-specific; transitive; lock path: node_modules/@esbuild/win32-x64
+@jridgewell/gen-mapping | Project/installed: 0.3.13 | Latest: 0.3.13 | CURRENT
+  Internet source: https://registry.npmjs.org/%40jridgewell%2Fgen-mapping/latest
+  Note: development/build; transitive; lock path: node_modules/@jridgewell/gen-mapping
+@jridgewell/remapping | Project/installed: 2.3.5 | Latest: 2.3.5 | CURRENT
+  Internet source: https://registry.npmjs.org/%40jridgewell%2Fremapping/latest
+  Note: development/build; transitive; lock path: node_modules/@jridgewell/remapping
+@jridgewell/resolve-uri | Project/installed: 3.1.2 | Latest: 3.1.2 | CURRENT
+  Internet source: https://registry.npmjs.org/%40jridgewell%2Fresolve-uri/latest
+  Note: development/build; transitive; lock path: node_modules/@jridgewell/resolve-uri
+@jridgewell/sourcemap-codec | Project/installed: 1.6.0 | Latest: 1.6.0 | CURRENT
+  Internet source: https://registry.npmjs.org/%40jridgewell%2Fsourcemap-codec/latest
+  Note: development/build; transitive; lock path: node_modules/@jridgewell/sourcemap-codec
+@jridgewell/trace-mapping | Project/installed: 0.3.31 | Latest: 0.3.31 | CURRENT
+  Internet source: https://registry.npmjs.org/%40jridgewell%2Ftrace-mapping/latest
+  Note: development/build; transitive; lock path: node_modules/@jridgewell/trace-mapping
+@lezer/common | Project/installed: 1.5.3 | Latest: 1.5.3 | CURRENT
+  Internet source: https://registry.npmjs.org/%40lezer%2Fcommon/latest
+  Note: runtime; transitive; lock path: node_modules/@lezer/common
+@lezer/highlight | Project/installed: 1.2.5 | Latest: 1.2.5 | CURRENT
+  Internet source: https://registry.npmjs.org/%40lezer%2Fhighlight/latest
+  Note: runtime; transitive; lock path: node_modules/@lezer/highlight
+@lezer/lr | Project/installed: 1.4.11 | Latest: 1.4.11 | CURRENT
+  Internet source: https://registry.npmjs.org/%40lezer%2Flr/latest
+  Note: runtime; transitive; lock path: node_modules/@lezer/lr
+@marijn/find-cluster-break | Project/installed: 1.0.4 | Latest: 1.0.4 | CURRENT
+  Internet source: https://registry.npmjs.org/%40marijn%2Ffind-cluster-break/latest
+  Note: runtime; transitive; lock path: node_modules/@marijn/find-cluster-break
+@sveltejs/acorn-typescript | Project/installed: 1.0.13 | Latest: 1.0.13 | CURRENT
+  Internet source: https://registry.npmjs.org/%40sveltejs%2Facorn-typescript/latest
+  Note: development/build; transitive; lock path: node_modules/@sveltejs/acorn-typescript
+@types/estree | Project/installed: 1.0.9 | Latest: 1.0.9 | CURRENT
+  Internet source: https://registry.npmjs.org/%40types%2Festree/latest
+  Note: development/build; transitive; lock path: node_modules/@types/estree
+acorn | Project/installed: 8.19.0 | Latest: 8.19.0 | CURRENT
+  Internet source: https://registry.npmjs.org/acorn/latest
+  Note: development/build; transitive; lock path: node_modules/acorn
+aria-query | Project/installed: 5.3.1 | Latest: 5.3.2 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://registry.npmjs.org/aria-query/latest
+  Note: development/build; transitive; lock path: node_modules/aria-query
+axobject-query | Project/installed: 4.1.0 | Latest: 4.1.0 | CURRENT
+  Internet source: https://registry.npmjs.org/axobject-query/latest
+  Note: development/build; transitive; lock path: node_modules/axobject-query
+clsx | Project/installed: 2.1.1 | Latest: 2.1.1 | CURRENT
+  Internet source: https://registry.npmjs.org/clsx/latest
+  Note: development/build; transitive; lock path: node_modules/clsx
+crelt | Project/installed: 1.0.7 | Latest: 1.0.7 | CURRENT
+  Internet source: https://registry.npmjs.org/crelt/latest
+  Note: runtime; transitive; lock path: node_modules/crelt
+devalue | Project/installed: 5.9.4 | Latest: 6.0.3 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://registry.npmjs.org/devalue/latest
+  Note: development/build; transitive; lock path: node_modules/devalue
+esbuild | Project/installed: 0.28.2 | Latest: 0.28.2 | CURRENT
+  Internet source: https://registry.npmjs.org/esbuild/latest
+  Note: development/build; direct requirement 0.28.2; lock path: node_modules/esbuild
+esbuild-svelte | Project/installed: 0.9.5 | Latest: 0.9.5 | CURRENT
+  Internet source: https://registry.npmjs.org/esbuild-svelte/latest
+  Note: development/build; direct requirement ^0.9.5; lock path: node_modules/esbuild-svelte
+esm-env | Project/installed: 1.2.2 | Latest: 1.2.2 | CURRENT
+  Internet source: https://registry.npmjs.org/esm-env/latest
+  Note: development/build; transitive; lock path: node_modules/esm-env
+esrap | Project/installed: 2.4.0 | Latest: 2.4.0 | CURRENT
+  Internet source: https://registry.npmjs.org/esrap/latest
+  Note: development/build; transitive; lock path: node_modules/esrap
+is-reference | Project/installed: 3.0.3 | Latest: 3.0.3 | CURRENT
+  Internet source: https://registry.npmjs.org/is-reference/latest
+  Note: development/build; transitive; lock path: node_modules/is-reference
+locate-character | Project/installed: 3.0.0 | Latest: 3.0.0 | CURRENT
+  Internet source: https://registry.npmjs.org/locate-character/latest
+  Note: development/build; transitive; lock path: node_modules/locate-character
+magic-string | Project/installed: 0.30.21 | Latest: 1.4.3 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://registry.npmjs.org/magic-string/latest
+  Note: development/build; transitive; lock path: node_modules/magic-string
+style-mod | Project/installed: 4.1.4 | Latest: 4.1.4 | CURRENT
+  Internet source: https://registry.npmjs.org/style-mod/latest
+  Note: runtime; transitive; lock path: node_modules/style-mod
+svelte | Project/installed: 5.57.2 | Latest: 5.57.2 | CURRENT
+  Internet source: https://registry.npmjs.org/svelte/latest
+  Note: development/build; direct requirement ^5.57.2; lock path: node_modules/svelte
+w3c-keyname | Project/installed: 2.2.8 | Latest: 2.2.8 | CURRENT
+  Internet source: https://registry.npmjs.org/w3c-keyname/latest
+  Note: runtime; transitive; lock path: node_modules/w3c-keyname
+zimmerframe | Project/installed: 1.1.5 | Latest: 1.1.5 | CURRENT
+  Internet source: https://registry.npmjs.org/zimmerframe/latest
+  Note: development/build; transitive; lock path: node_modules/zimmerframe
+
+COMPLETE RESOLVED APP AND CORE MAVEN INVENTORY
+==============================================
+Includes compile/runtime, debug/release and test configurations, including BOM
+and metadata modules. Versions are Gradle's resolved selections, not guesses from
+cached files. Module comparisons retain the existing Maven group and artifact.
+Entries: 61 unique group/artifact/version selections.
+androidx.annotation:annotation | Project/installed: 1.10.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.annotation:annotation | Project/installed: 1.8.1 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.annotation:annotation-experimental | Project/installed: 1.4.1 | Latest: 1.6.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-experimental/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.annotation:annotation-jvm | Project/installed: 1.10.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-jvm/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.annotation:annotation-jvm | Project/installed: 1.8.1 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation-jvm/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.arch.core:core-common | Project/installed: 2.2.0 | Latest: 2.2.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/arch/core/core-common/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.arch.core:core-runtime | Project/installed: 2.1.0 | Latest: 2.2.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/arch/core/core-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.arch.core:core-runtime | Project/installed: 2.2.0 | Latest: 2.2.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/arch/core/core-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.collection:collection | Project/installed: 1.0.0 | Latest: 1.7.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/collection/collection/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.collection:collection | Project/installed: 1.4.2 | Latest: 1.7.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/collection/collection/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.collection:collection-jvm | Project/installed: 1.4.2 | Latest: 1.7.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/collection/collection-jvm/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.concurrent:concurrent-futures | Project/installed: 1.1.0 | Latest: 1.3.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.concurrent:concurrent-futures | Project/installed: 1.2.0 | Latest: 1.3.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.concurrent:concurrent-futures-ktx | Project/installed: 1.1.0 | Latest: 1.3.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures-ktx/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.concurrent:concurrent-futures-ktx | Project/installed: 1.2.0 | Latest: 1.3.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/concurrent/concurrent-futures-ktx/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.core:core | Project/installed: 1.13.0 | Latest: 1.19.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/core/core/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.core:core-ktx | Project/installed: 1.13.0 | Latest: 1.19.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/core/core-ktx/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.customview:customview | Project/installed: 1.0.0 | Latest: 1.2.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/customview/customview/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.customview:customview-poolingcontainer | Project/installed: 1.0.0 | Latest: 1.1.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/customview/customview-poolingcontainer/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.interpolator:interpolator | Project/installed: 1.0.0 | Latest: 1.0.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/interpolator/interpolator/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.lifecycle:lifecycle-common | Project/installed: 2.6.2 | Latest: 2.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.lifecycle:lifecycle-livedata | Project/installed: 2.6.2 | Latest: 2.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.lifecycle:lifecycle-livedata-core | Project/installed: 2.6.2 | Latest: 2.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-livedata-core/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.lifecycle:lifecycle-runtime | Project/installed: 2.6.2 | Latest: 2.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.lifecycle:lifecycle-service | Project/installed: 2.6.2 | Latest: 2.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-service/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.profileinstaller:profileinstaller | Project/installed: 1.3.1 | Latest: 1.4.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/profileinstaller/profileinstaller/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.recyclerview:recyclerview | Project/installed: 1.4.0 | Latest: 1.4.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/recyclerview/recyclerview/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.room:room-common | Project/installed: 2.7.0 | Latest: 2.8.5 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/room/room-common/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.room:room-common-jvm | Project/installed: 2.7.0 | Latest: 2.8.5 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/room/room-common-jvm/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.room:room-runtime | Project/installed: 2.7.0 | Latest: 2.8.5 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/room/room-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.room:room-runtime-android | Project/installed: 2.7.0 | Latest: 2.8.5 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/room/room-runtime-android/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.sqlite:sqlite | Project/installed: 2.5.0 | Latest: 2.7.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.sqlite:sqlite-android | Project/installed: 2.5.0 | Latest: 2.7.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite-android/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.sqlite:sqlite-framework | Project/installed: 2.5.0 | Latest: 2.7.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite-framework/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.sqlite:sqlite-framework-android | Project/installed: 2.5.0 | Latest: 2.7.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/sqlite/sqlite-framework-android/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.startup:startup-runtime | Project/installed: 1.1.1 | Latest: 1.2.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/startup/startup-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.startup:startup-runtime | Project/installed: 1.2.0 | Latest: 1.2.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/startup/startup-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.test:core | Project/installed: 1.7.0 | Latest: 1.7.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/test/core/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.test:monitor | Project/installed: 1.8.0 | Latest: 1.8.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/test/monitor/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.test:runner | Project/installed: 1.7.0 | Latest: 1.7.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/test/runner/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.test.services:storage | Project/installed: 1.6.0 | Latest: 1.6.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/test/services/storage/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.tracing:tracing | Project/installed: 1.1.0 | Latest: 2.0.4 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/tracing/tracing/maven-metadata.xml
+  Note: Resolved contexts: tests.
+androidx.tracing:tracing | Project/installed: 1.2.0 | Latest: 2.0.4 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/tracing/tracing/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.tracing:tracing-ktx | Project/installed: 1.2.0 | Latest: 2.0.4 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/tracing/tracing-ktx/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.versionedparcelable:versionedparcelable | Project/installed: 1.1.1 | Latest: 1.2.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/versionedparcelable/versionedparcelable/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.work:work-runtime | Project/installed: 2.12.0 | Latest: 2.12.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/work/work-runtime/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+androidx.work:work-testing | Project/installed: 2.12.0 | Latest: 2.12.0 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/work/work-testing/maven-metadata.xml
+  Note: Resolved contexts: tests.
+com.google.guava:listenablefuture | Project/installed: 1.0 | Latest: 9999.0-empty-to-avoid-conflict-with-guava | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/guava/listenablefuture/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+com.squareup.okhttp3:okhttp | Project/installed: 5.5.0 | Latest: 5.5.0 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+com.squareup.okhttp3:okhttp-android | Project/installed: 5.5.0 | Latest: 5.5.0 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp-android/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+com.squareup.okio:okio | Project/installed: 3.18.1 | Latest: 3.18.2 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/okio/okio/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+com.squareup.okio:okio-jvm | Project/installed: 3.18.1 | Latest: 3.18.2 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/okio/okio-jvm/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+junit:junit | Project/installed: 4.13.2 | Latest: 4.13.2 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/junit/junit/maven-metadata.xml
+  Note: Resolved contexts: tests, core.
+org.hamcrest:hamcrest-core | Project/installed: 1.3 | Latest: 3.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/hamcrest/hamcrest-core/maven-metadata.xml
+  Note: Resolved contexts: tests, core.
+org.jetbrains:annotations | Project/installed: 23.0.0 | Latest: 26.1.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/annotations/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+org.jetbrains.kotlin:kotlin-stdlib | Project/installed: 2.2.21 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+org.jetbrains.kotlinx:kotlinx-coroutines-android | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-android/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+org.jetbrains.kotlinx:kotlinx-coroutines-bom | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-bom/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+org.jetbrains.kotlinx:kotlinx-coroutines-core | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+org.jspecify:jspecify | Project/installed: 1.0.0 | Latest: 1.0.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jspecify/jspecify/maven-metadata.xml
+  Note: Resolved contexts: tests, app.
+
+COMPLETE RESOLVED ANDROID BUILD-PLUGIN MAVEN INVENTORY
+======================================================
+113 module selections in the root buildscript/plugin classpath.
+These are dependencies of AGP and its built-in tooling. Many are intentionally
+older than the standalone upstream versions. They are selected by AGP 9.4.1,
+not independently pinned by this project; forcing replacements may break AGP.
+Runtime tooling loaded separately (AAPT2, D8/R8, Lint) is also covered above.
+androidx.databinding:databinding-common | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/databinding/databinding-common/maven-metadata.xml
+androidx.databinding:databinding-compiler-common | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/androidx/databinding/databinding-compiler-common/maven-metadata.xml
+com.android.application:com.android.application.gradle.plugin | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/application/com.android.application.gradle.plugin/maven-metadata.xml
+com.android.databinding:baseLibrary | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/databinding/baseLibrary/maven-metadata.xml
+com.android.tools.analytics-library:crash | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/analytics-library/crash/maven-metadata.xml
+com.android.tools.analytics-library:protos | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/analytics-library/protos/maven-metadata.xml
+com.android.tools.analytics-library:shared | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/analytics-library/shared/maven-metadata.xml
+com.android.tools.analytics-library:tracker | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/analytics-library/tracker/maven-metadata.xml
+com.android.tools.build.jetifier:jetifier-core | Project/installed: 1.0.0-beta10 | Latest: 0.0.1 | DIFFERENT / NEWER NUMERIC VERSION
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/jetifier/jetifier-core/maven-metadata.xml
+com.android.tools.build.jetifier:jetifier-processor | Project/installed: 1.0.0-beta10 | Latest: 0.0.1 | DIFFERENT / NEWER NUMERIC VERSION
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/jetifier/jetifier-processor/maven-metadata.xml
+com.android.tools.build:aapt2-proto | Project/installed: 9.4.1-15978811 | Latest: 9.4.1-15978811 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2-proto/maven-metadata.xml
+com.android.tools.build:aaptcompiler | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/aaptcompiler/maven-metadata.xml
+com.android.tools.build:apksig | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/apksig/maven-metadata.xml
+com.android.tools.build:apkzlib | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/apkzlib/maven-metadata.xml
+com.android.tools.build:builder-model | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/builder-model/maven-metadata.xml
+com.android.tools.build:builder-test-api | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/builder-test-api/maven-metadata.xml
+com.android.tools.build:builder | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/maven-metadata.xml
+com.android.tools.build:bundletool | Project/installed: 1.18.3 | Latest: 1.18.3 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/bundletool/maven-metadata.xml
+com.android.tools.build:gradle-api | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle-api/maven-metadata.xml
+com.android.tools.build:gradle-common-api | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle-common-api/maven-metadata.xml
+com.android.tools.build:gradle-settings-api | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle-settings-api/maven-metadata.xml
+com.android.tools.build:gradle | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/maven-metadata.xml
+com.android.tools.build:manifest-merger | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/build/manifest-merger/maven-metadata.xml
+com.android.tools.ddms:ddmlib | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/ddms/ddmlib/maven-metadata.xml
+com.android.tools.layoutlib:layoutlib-api | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/layoutlib/layoutlib-api/maven-metadata.xml
+com.android.tools.lint:lint-model | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/lint/lint-model/maven-metadata.xml
+com.android.tools.lint:lint-typedef-remover | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/lint/lint-typedef-remover/maven-metadata.xml
+com.android.tools.utp:gradle-work-action-api | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/utp/gradle-work-action-api/maven-metadata.xml
+com.android.tools:annotations | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/annotations/maven-metadata.xml
+com.android.tools:common | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/common/maven-metadata.xml
+com.android.tools:dvlib | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/dvlib/maven-metadata.xml
+com.android.tools:repository | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/repository/maven-metadata.xml
+com.android.tools:sdk-common | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/sdk-common/maven-metadata.xml
+com.android.tools:sdklib | Project/installed: 32.4.1 | Latest: 32.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/tools/sdklib/maven-metadata.xml
+com.android:signflinger | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/signflinger/maven-metadata.xml
+com.android:zipflinger | Project/installed: 9.4.1 | Latest: 9.4.1 | CURRENT
+  Internet source: https://dl.google.com/dl/android/maven2/com/android/zipflinger/maven-metadata.xml
+com.google.auto.value:auto-value-annotations | Project/installed: 1.6.2 | Latest: 1.11.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/auto/value/auto-value-annotations/maven-metadata.xml
+com.google.code.findbugs:jsr305 | Project/installed: 3.0.2 | Latest: 3.0.2 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/maven-metadata.xml
+com.google.code.gson:gson | Project/installed: 2.11.0 | Latest: 2.14.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/code/gson/gson/maven-metadata.xml
+com.google.crypto.tink:tink | Project/installed: 1.7.0 | Latest: 1.24.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/crypto/tink/tink/maven-metadata.xml
+com.google.dagger:dagger | Project/installed: 2.28.3 | Latest: 2.60.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/dagger/dagger/maven-metadata.xml
+com.google.errorprone:error_prone_annotations | Project/installed: 2.36.0 | Latest: 2.50.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/errorprone/error_prone_annotations/maven-metadata.xml
+com.google.flatbuffers:flatbuffers-java | Project/installed: 1.12.0 | Latest: 25.2.10 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/flatbuffers/flatbuffers-java/maven-metadata.xml
+com.google.guava:failureaccess | Project/installed: 1.0.2 | Latest: 1.0.3 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/maven-metadata.xml
+com.google.guava:guava | Project/installed: 33.4.0-jre | Latest: 33.7.2-android | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/guava/guava/maven-metadata.xml
+com.google.guava:listenablefuture | Project/installed: 9999.0-empty-to-avoid-conflict-with-guava | Latest: 9999.0-empty-to-avoid-conflict-with-guava | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/google/guava/listenablefuture/maven-metadata.xml
+com.google.j2objc:j2objc-annotations | Project/installed: 3.0.0 | Latest: 3.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/j2objc/j2objc-annotations/maven-metadata.xml
+com.google.jimfs:jimfs | Project/installed: 1.1 | Latest: 1.3.2 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/jimfs/jimfs/maven-metadata.xml
+com.google.protobuf:protobuf-java-util | Project/installed: 3.25.5 | Latest: 4.36.2 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-java-util/maven-metadata.xml
+com.google.protobuf:protobuf-java | Project/installed: 3.25.5 | Latest: 4.36.2 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-java/maven-metadata.xml
+com.googlecode.juniversalchardet:juniversalchardet | Project/installed: 1.0.3 | Latest: 1.0.3 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/googlecode/juniversalchardet/juniversalchardet/maven-metadata.xml
+com.squareup:javapoet | Project/installed: 1.13.0 | Latest: 1.13.0 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/javapoet/maven-metadata.xml
+com.squareup:javawriter | Project/installed: 2.5.0 | Latest: 2.5.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/squareup/javawriter/maven-metadata.xml
+com.sun.istack:istack-commons-runtime | Project/installed: 3.0.8 | Latest: 4.2.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/sun/istack/istack-commons-runtime/maven-metadata.xml
+com.sun.xml.fastinfoset:FastInfoset | Project/installed: 1.2.16 | Latest: 2.1.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/com/sun/xml/fastinfoset/FastInfoset/maven-metadata.xml
+commons-codec:commons-codec | Project/installed: 1.17.1 | Latest: 1.23.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/commons-codec/commons-codec/maven-metadata.xml
+commons-io:commons-io | Project/installed: 2.16.1 | Latest: 2.22.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/commons-io/commons-io/maven-metadata.xml
+commons-logging:commons-logging | Project/installed: 1.2 | Latest: 1.4.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/commons-logging/commons-logging/maven-metadata.xml
+jakarta.activation:jakarta.activation-api | Project/installed: 1.2.1 | Latest: 2.1.4 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/jakarta/activation/jakarta.activation-api/maven-metadata.xml
+jakarta.xml.bind:jakarta.xml.bind-api | Project/installed: 2.3.2 | Latest: 4.0.5 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api/maven-metadata.xml
+javax.inject:javax.inject | Project/installed: 1 | Latest: 1 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/javax/inject/javax.inject/maven-metadata.xml
+net.java.dev.jna:jna-platform | Project/installed: 5.6.0 | Latest: 5.19.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/net/java/dev/jna/jna-platform/maven-metadata.xml
+net.java.dev.jna:jna | Project/installed: 5.6.0 | Latest: 5.19.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/net/java/dev/jna/jna/maven-metadata.xml
+net.sf.jopt-simple:jopt-simple | Project/installed: 4.9 | Latest: 5.0.4 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/net/sf/jopt-simple/jopt-simple/maven-metadata.xml
+net.sf.kxml:kxml2 | Project/installed: 2.3.0 | Latest: 2.2.2 | DIFFERENT / NEWER NUMERIC VERSION
+  Internet source: https://repo.maven.apache.org/maven2/net/sf/kxml/kxml2/maven-metadata.xml
+org.apache.commons:commons-compress | Project/installed: 1.27.1 | Latest: 1.28.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/commons/commons-compress/maven-metadata.xml
+org.apache.commons:commons-lang3 | Project/installed: 3.16.0 | Latest: 3.21.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/commons/commons-lang3/maven-metadata.xml
+org.apache.httpcomponents:httpclient | Project/installed: 4.5.14 | Latest: 4.5.14 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/httpclient/maven-metadata.xml
+org.apache.httpcomponents:httpcore | Project/installed: 4.4.16 | Latest: 4.4.16 | CURRENT
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/httpcore/maven-metadata.xml
+org.apache.httpcomponents:httpmime | Project/installed: 4.5.6 | Latest: 4.5.14 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/apache/httpcomponents/httpmime/maven-metadata.xml
+org.bitbucket.b_c:jose4j | Project/installed: 0.9.5 | Latest: 0.9.7 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/bitbucket/b_c/jose4j/maven-metadata.xml
+org.bouncycastle:bcpkix-jdk18on | Project/installed: 1.80.2 | Latest: 1.86 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/bouncycastle/bcpkix-jdk18on/maven-metadata.xml
+org.bouncycastle:bcprov-jdk18on | Project/installed: 1.80.2 | Latest: 1.86 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk18on/maven-metadata.xml
+org.bouncycastle:bcutil-jdk18on | Project/installed: 1.80.2 | Latest: 1.86 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/bouncycastle/bcutil-jdk18on/maven-metadata.xml
+org.checkerframework:checker-qual | Project/installed: 3.43.0 | Latest: 4.3.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/checkerframework/checker-qual/maven-metadata.xml
+org.glassfish.jaxb:jaxb-runtime | Project/installed: 2.3.2 | Latest: 4.0.9 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/jaxb-runtime/maven-metadata.xml
+org.glassfish.jaxb:txw2 | Project/installed: 2.3.2 | Latest: 4.0.9 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/glassfish/jaxb/txw2/maven-metadata.xml
+org.jdom:jdom2 | Project/installed: 2.0.6 | Latest: 2.0.6.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jdom/jdom2/maven-metadata.xml
+org.jetbrains.kotlin:abi-tools-api | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/abi-tools-api/maven-metadata.xml
+org.jetbrains.kotlin:fus-statistics-gradle-plugin | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/fus-statistics-gradle-plugin/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-build-statistics | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-statistics/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-build-tools-api | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-build-tools-api/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-compiler-runner | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-compiler-runner/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-daemon-client | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-daemon-client/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugin-annotations | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-annotations/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugin-api | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugin-idea-proto | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-idea-proto/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugin-idea | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-idea/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugin-model | Project/installed: 2.2.10 | Latest: 2.2.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-model/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugin | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-gradle-plugins-bom | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugins-bom/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-klib-commonizer-api | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-klib-commonizer-api/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-native-utils | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-native-utils/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-reflect | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-reflect/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-stdlib-jdk7 | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk7/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-stdlib-jdk8 | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib-jdk8/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-stdlib | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-tooling-core | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-tooling-core/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-util-io | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-util-io/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-util-klib-metadata | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-util-klib-metadata/maven-metadata.xml
+org.jetbrains.kotlin:kotlin-util-klib | Project/installed: 2.2.10 | Latest: 2.4.21 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-util-klib/maven-metadata.xml
+org.jetbrains.kotlinx:kotlinx-coroutines-bom | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-bom/maven-metadata.xml
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/maven-metadata.xml
+org.jetbrains.kotlinx:kotlinx-coroutines-core | Project/installed: 1.9.0 | Latest: 1.11.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core/maven-metadata.xml
+org.jetbrains:annotations | Project/installed: 23.0.0 | Latest: 26.1.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jetbrains/annotations/maven-metadata.xml
+org.jvnet.staxex:stax-ex | Project/installed: 1.8.1 | Latest: 2.1.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/jvnet/staxex/stax-ex/maven-metadata.xml
+org.ow2.asm:asm-analysis | Project/installed: 9.9 | Latest: 9.11.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/ow2/asm/asm-analysis/maven-metadata.xml
+org.ow2.asm:asm-commons | Project/installed: 9.9 | Latest: 9.11.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/ow2/asm/asm-commons/maven-metadata.xml
+org.ow2.asm:asm-tree | Project/installed: 9.9 | Latest: 9.11.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/ow2/asm/asm-tree/maven-metadata.xml
+org.ow2.asm:asm-util | Project/installed: 9.9 | Latest: 9.11.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/ow2/asm/asm-util/maven-metadata.xml
+org.ow2.asm:asm | Project/installed: 9.9 | Latest: 9.11.1 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/ow2/asm/asm/maven-metadata.xml
+org.slf4j:slf4j-api | Project/installed: 1.7.30 | Latest: 2.0.20 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/maven-metadata.xml
+org.tensorflow:tensorflow-lite-metadata | Project/installed: 0.2.0 | Latest: 0.5.0 | NEWER UPSTREAM AVAILABLE
+  Internet source: https://repo.maven.apache.org/maven2/org/tensorflow/tensorflow-lite-metadata/maven-metadata.xml
+
+VALIDATION AND LIMITATIONS
+==========================
+The preceding upgrade was validated with a clean Gradle 9.8.2 / AGP 9.4.1 build:
+  - 53 JVM tests passed, zero failures/errors/skips.
+  - Debug APK, unsigned release APK and instrumentation APK built successfully.
+  - Android Lint: zero errors/fatal errors; 23 warnings.
+  - APK signature verification and isolated packaging with Build Tools 37.0.0 passed.
+  - Core bytecode major version 61 confirms retained Java 17 bytecode compatibility.
+No unresolved version blocker was found for the upgraded Android toolchain.
+On-device tests were not run because no device/emulator is connected.
+This report does not certify compatibility of every newer transitive version.
+Optional tools absent from the inspected environments may exist in other user
+environments that were not part of this inventory.
+The report records the current working tree; version upgrades are not inferred
+to have been committed, deployed, or installed on an Android device.
+All package metadata lookups completed successfully; 240 unique packages were
+checked in the main registry pass, with additional R8/Lint/SDK/tool checks.
+Sources are included beside every compared entry so this snapshot can be refreshed.

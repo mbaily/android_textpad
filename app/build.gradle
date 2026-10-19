@@ -1,33 +1,39 @@
 plugins { id 'com.android.application' }
 
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
 android {
-    namespace 'org.hopto.git23069.textpad'
-    compileSdk 36
-    buildToolsVersion '36.0.0'
+    namespace = 'org.hopto.git23069.textpad'
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
+    buildToolsVersion = '37.0.0'
     defaultConfig {
-        applicationId 'org.hopto.git23069.textpad'
-        minSdk 36
-        targetSdk 36
-        versionCode 32
-        versionName '0.1.31'
-        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        applicationId = 'org.hopto.git23069.textpad'
+        minSdk = 36
+        targetSdk = 36
+        versionCode = 32
+        versionName = '0.1.31'
+        testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
     }
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     buildTypes {
-        release { minifyEnabled false }
+        release { minifyEnabled = false }
     }
-    lint { abortOnError true }
+    lint { abortOnError = true }
 }
 dependencies {
     implementation project(':core')
     implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'androidx.work:work-runtime:2.12.0'
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    androidTestImplementation 'androidx.test:runner:1.6.2'
-    androidTestImplementation 'androidx.test:core:1.6.1'
+    implementation 'com.squareup.okhttp3:okhttp:5.5.0'
+    androidTestImplementation 'androidx.test:runner:1.7.0'
+    androidTestImplementation 'androidx.test:core:1.7.0'
     androidTestImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.work:work-testing:2.12.0'
 }
