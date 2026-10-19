@@ -21,6 +21,32 @@ CA = "/etc/ssl/nucbox3/nucbox3-ca/nucbox3.crt"
 URL = "https://git23069.hopto.org/android_textpad/"
 
 
+def prune_releases(directory, *, protected=(), backup_prefix="", keep=3):
+    """Keep recent releases and activation/rollback targets; never touch app data."""
+    if keep < 2:
+        raise ValueError("Keep at least two releases for rollback")
+    if directory.is_symlink():
+        raise RuntimeError(f"Refusing symlinked release directory: {directory}")
+    pattern = re.compile(r"[0-9]{8}T[0-9]{12}Z(?:-[0-9a-f]{12})?")
+    releases = sorted((p for p in directory.iterdir()
+                       if pattern.fullmatch(p.name) and p.is_dir() and not p.is_symlink()),
+                      reverse=True)
+    retained = {p.resolve() for p in releases[:keep]} | {Path(p).resolve() for p in protected if p is not None}
+    removed = []
+    backups = directory.parent / "config-backups"
+    if backups.is_symlink():
+        raise RuntimeError("Refusing symlinked configuration backup directory")
+    for release in releases:
+        if release.resolve() in retained:
+            continue
+        shutil.rmtree(release)
+        config = backups / (backup_prefix + release.name)
+        if config.is_dir() and not config.is_symlink():
+            shutil.rmtree(config)
+        removed.append(release.name)
+    return removed
+
+
 def run(*args):
     return subprocess.run(args, check=True, capture_output=True).stdout
 
@@ -106,6 +132,9 @@ def main():
     releases.mkdir(mode=0o755, exist_ok=True)
     release = releases / release_id
     shutil.copytree(site, release)
+    # Both public URLs serve identical bytes without allocating two APK copies.
+    (release / "textpad-latest.apk").unlink()
+    os.link(release / "downloads" / filename, release / "textpad-latest.apk")
     for path in [release, *release.rglob("*")]:
         path.chmod(0o755 if path.is_dir() else 0o644)
     backups = BASE / "config-backups"
@@ -144,9 +173,11 @@ def main():
         run("apache2ctl", "configtest")
         run("systemctl", "reload", "apache2")
         raise
+    # Cleanup follows successful activation, outside the rollback transaction.
+    removed = prune_releases(releases, protected=[release, BASE / old_target if old_target else None])
     print(json.dumps({"url": URL, "apk": URL + "textpad-latest.apk", "version": metadata["version"],
                       "sha256": metadata["sha256"], "deployment": str(current), "release": str(release),
-                      "configuration_backup": str(backup)}, indent=2))
+                      "configuration_backup": str(backup), "pruned_releases": removed}, indent=2))
 
 
 if __name__ == "__main__":

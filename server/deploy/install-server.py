@@ -38,7 +38,7 @@ def helpers(stage):
     spec = spec_from_file_location("download_installer", stage / "install-downloads.py")
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.atomic_write, module.include_in_vhost
+    return module.atomic_write, module.include_in_vhost, module.prune_releases
 
 
 def link(target):
@@ -53,7 +53,7 @@ def link(target):
 
 
 def main(stage):
-    atomic_write, include_in_vhost = helpers(stage)
+    atomic_write, include_in_vhost, prune_releases = helpers(stage)
     run("apache2ctl", "configtest")
     current = BASE / "server"
     if current.exists() and not current.is_symlink():
@@ -211,10 +211,12 @@ def main(stage):
         run("apache2ctl", "configtest")
         run("systemctl", "reload", "apache2")
         raise
+    removed = prune_releases(releases, protected=[release, BASE / old_target if old_target else None],
+                             backup_prefix="server-")
     print(json.dumps({"editor":PUBLIC+"/editor/", "sync_endpoint":PUBLIC,
                       "service":"android-textpad.service", "database":str(database),
                       "credential_file":str(CONFIG/"api-token"),"release":str(release),
-                      "database_backup":str(snapshot)}, indent=2))
+                      "database_backup":str(snapshot), "pruned_releases":removed}, indent=2))
 
 
 if __name__ == "__main__":

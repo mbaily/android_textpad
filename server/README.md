@@ -76,6 +76,26 @@ Set `TEXTPAD_BUILD_PYTHON` for another Python 3.13 environment. The script insta
 
 The server include is `/etc/apache2/android-textpad-server.conf` inside the existing HTTPS virtual host `/etc/apache2/sites-available/view_git.conf`. Existing download includes remain in place. Other sites and services retain their configuration.
 
+After successful activation and all health checks, each installer keeps the three
+newest releases of its own component. The active and immediately preceding
+release are always protected, including when rolling forward from an older
+release. Configuration snapshots belonging to removed releases expire with
+them. Failed activation restores the previous release and does not prune
+history. Cleanup errors are reported after activation and do not undo a healthy
+deployment.
+
+Each retained server release needs its own Python environment for reliable
+rollback. The deployment packages only the server, compiled browser assets and
+pinned Python requirements; build tools and wheels stay outside `/opt`.
+The APK installer stores the stable and versioned download URLs as hard links
+to the same bytes. Existing older releases are reclaimed on the next successful
+deployment of the corresponding component. The two installers share a lock,
+so release cleanup cannot race another Textpad deployment.
+
+Retention never removes `/opt/android_textpad/data`, its database backups, or
+credentials in `/etc/android-textpad`. Those backups still need their separate
+backup and retention policy.
+
 Generated `editor.js`, npm packages, virtual environments, databases, wheel packages, and APKs are ignored by Git. Source lives in `textpad_server/`, `frontend/`, and `deploy/`; frontend third-party notices are published alongside the bundle.
 
 ## Database backups and recovery
