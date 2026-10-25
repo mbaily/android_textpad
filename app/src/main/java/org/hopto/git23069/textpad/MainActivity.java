@@ -378,10 +378,9 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         boolean rebuild = filesTab == null || tabNames.size() != app.tabs.size() || app.tabs.stream().anyMatch(t -> !tabNames.containsKey(t.id));
         if (rebuild) {
             tabBar.removeAllViews(); tabNames.clear(); tabViews.clear();
-            filesTab = new Button(this); filesTab.setId(R.id.files_tab); filesTab.setText("Files"); filesTab.setTextSize(13); filesTab.setAllCaps(false);
-            filesTab.setContentDescription("Browse shared files"); filesTab.setOnClickListener(v -> showFiles());
-            filesTab.setMinWidth(dp(66)); filesTab.setMinimumWidth(dp(66)); filesTab.setPadding(dp(12), 0, dp(12), 0);
-            tabBar.addView(filesTab, new LinearLayout.LayoutParams(-2, dp(44)));
+            filesTab = iconButton(Icon.OPEN, MUTED, "Browse shared files", v -> showFiles()); filesTab.setId(R.id.files_tab);
+            filesTab.setTooltipText("Files");
+            tabBar.addView(filesTab, new LinearLayout.LayoutParams(dp(44), dp(44)));
             for (EditorTab tab : app.tabs) {
                 LinearLayout view = row(); view.setGravity(Gravity.CENTER_VERTICAL);
                 TextView name = label("", 13, TEXT); name.setSingleLine(true); name.setMaxWidth(dp(170));
@@ -399,7 +398,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             tabNames.get(tab.id).setTextColor(!app.filesVisible && tab.id == app.selectedTab ? ACCENT : MUTED);
             tabViews.get(tab.id).setBackground(rounded(!app.filesVisible && tab.id == app.selectedTab ? 0xff263026 : BG, 8));
         }
-        filesTab.setTextColor(app.filesVisible ? ACCENT : MUTED); filesTab.setBackground(rounded(app.filesVisible ? 0xff263026 : BG, 8));
+        filesTab.setSelected(app.filesVisible);
+        filesTab.setBackground(iconDrawable(Icon.OPEN, app.filesVisible ? ACCENT : MUTED, app.filesVisible ? 0xff263026 : BG));
         if (app.tabs.isEmpty()) {
             if (tabBar.getChildCount() == 1) tabBar.addView(label(app.opening ? "Opening file…" : "No open documents", 12, MUTED));
         }
@@ -1213,12 +1213,15 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44)); lp.setMargins(dp(2), 0, dp(2), 0); button.setLayoutParams(lp); return button;
     }
     private Drawable iconDrawable(Icon icon, int color) {
+        return iconDrawable(icon, color, SURFACE);
+    }
+    private Drawable iconDrawable(Icon icon, int color, int backgroundColor) {
         return new Drawable() {
             private final Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             {
-                bgPaint.setColor(SURFACE);
+                bgPaint.setColor(backgroundColor);
                 strokePaint.setColor(color); strokePaint.setStyle(Paint.Style.STROKE);
                 strokePaint.setStrokeWidth(dp(2)); strokePaint.setStrokeCap(Paint.Cap.ROUND); strokePaint.setStrokeJoin(Paint.Join.ROUND);
                 fillPaint.setColor(color); fillPaint.setStyle(Paint.Style.FILL);

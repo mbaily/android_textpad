@@ -2995,7 +2995,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
       </button>
       <div id="tabs" class="tabs" role="tablist" aria-label="Open files">
-        <button id="files-tab" class="files-tab" class:active={filesView} role="tab" aria-selected={String(filesView)} aria-controls="folder-browser" onclick={showFiles}>Files</button>
+        <button id="files-tab" class="files-tab" class:active={filesView} role="tab" aria-label="Files" title="Files" aria-selected={String(filesView)} aria-controls="folder-browser" onclick={showFiles}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+        </button>
         {#if documents.size === 0}
           <span class="tabs-placeholder">A little space to write.</span>
         {:else}
