@@ -2,7 +2,7 @@
 
 A Python 3.11+ terminal client for Linux, Windows, and macOS. Sync selected files in a normal filesystem directory, edit them with your preferred editor, and run a foreground file monitor when useful. The client has no runtime dependencies beyond Python's standard library.
 
-[Download textpad-sync.pyz](https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz) · [SHA-256](https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz.sha256) · [Online guide](https://git23069.hopto.org/android_textpad/editor/static/textpad-sync-README.txt)
+[Download textpad-sync.pyz](https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-sync.pyz) · [SHA-256](https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-sync.pyz.sha256) · [Online guide](https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-sync-README.txt)
 
 ## Run or install
 
@@ -27,7 +27,7 @@ Windows equivalents are `.venv-cli\Scripts\python -m pip install .\cli` and `.ve
 ## Set up a directory
 
 ```sh
-textpad-sync init ~/Documents/Textpad --server https://git23069.hopto.org/android_textpad
+textpad-sync init ~/Documents/Textpad --server https://git23069.hopto.org:9443/android_textpad
 cd ~/Documents/Textpad
 textpad-sync remote
 ```

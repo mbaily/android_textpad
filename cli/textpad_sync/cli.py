@@ -18,7 +18,7 @@ from .storage import Workspace
 from .sync import Engine
 from .watch import Watcher
 
-DEFAULT_SERVER = 'https://git23069.hopto.org/android_textpad'
+DEFAULT_SERVER = 'https://git23069.hopto.org:9443/android_textpad'
 
 
 def seconds(value):

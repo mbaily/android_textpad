@@ -1,15 +1,15 @@
 # Textpad server
 
-The Debian server hosts the Android sync API, a desktop browser editor, and APK downloads on the existing Apache HTTPS site.
+The Debian server hosts the Android sync API, a desktop browser editor, and APK downloads behind Caddy on HTTPS port 9443. The backend serves plain HTTP on localhost only.
 
 | Component | Address |
 | --- | --- |
-| Desktop editor | https://git23069.hopto.org/android_textpad/editor/ |
-| Android sync endpoint | `https://git23069.hopto.org/android_textpad` |
-| APK download page | https://git23069.hopto.org/android_textpad/ |
-| Latest APK | https://git23069.hopto.org/android_textpad/textpad-latest.apk |
-| Python CLI | https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz |
-| Vim 9 plugin | https://git23069.hopto.org/android_textpad/editor/static/textpad-tasks-vim.zip |
+| Desktop editor | https://git23069.hopto.org:9443/android_textpad/editor/ |
+| Android sync endpoint | `https://git23069.hopto.org:9443/android_textpad` |
+| APK download page | https://git23069.hopto.org:9443/android_textpad/ |
+| Latest APK | https://git23069.hopto.org:9443/android_textpad/textpad-latest.apk |
+| Python CLI | https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-sync.pyz |
+| Vim 9 plugin | https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-tasks-vim.zip |
 
 The [Python CLI](../cli/README.md) works with tracked files in a normal local directory, independently of the browser and Android editors. Its foreground monitor observes saved files, defers suspicious truncations, and preserves local recovery snapshots. Server saves opt into an atomic revision precondition so a newer concurrent save is rejected. Deploying the server also tests and packages the dependency-free CLI archive, checksum, and usage guide.
 
@@ -52,7 +52,7 @@ UTF-8, UTF-16 LE/BE, ASCII, BOMs, and existing LF/CRLF/CR or mixed terminators a
 | `/opt/android_textpad/data/textpad.sqlite3` | Current documents, exact bytes, revisions, and upload receipts |
 | `/opt/android_textpad/data/backups/` | Consistent SQLite backups, retained until manually removed |
 
-`android-textpad.service` runs Gunicorn as the dedicated `textpad` account, listening on `127.0.0.1:8768` with two worker processes and 16 threads per worker. WebSocket connections each occupy a thread, suitable for this private deployment. Apache proxies only the Textpad API/editor paths through the existing TLS listener. Apache also upgrades the two authenticated events paths to WebSockets. No new public port is opened. The existing certificate and private root CA are reused; clients must trust that CA and retain hostname verification. Port 8443 belongs to another application.
+`android-textpad.service` runs Gunicorn as the dedicated `textpad` account, listening on `127.0.0.1:8768` with two worker processes and 16 threads per worker. WebSocket connections each occupy a thread, suitable for this private deployment. Caddy strips `/android_textpad` and proxies editor/API requests, including both authenticated WebSocket paths, over plain HTTP. It serves the APK download site directly from `/opt/android_textpad/deployment`. Existing Apache API routes remain compatible with configured Android/CLI clients; old editor links redirect to Caddy. No new public port is opened. The existing certificate and private root CA are reused; clients must trust that CA and retain hostname verification. Port 8443 belongs to another application.
 
 Browser sessions use Secure/HttpOnly/SameSite cookies scoped to the editor, CSRF protection, a 12-hour lifetime, login throttling, and a content security policy. Android endpoints always require a bearer token, independently of browser cookies. A separate browser credential can be enabled by adding `TEXTPAD_BROWSER_PASSWORD_FILE=/etc/android-textpad/browser-password` to `server.env` and creating that file with at least 24 characters and the same ownership/mode as `api-token`. Restart the service after credential changes; existing browser sessions become invalid when their credential or signing key changes.
 
@@ -72,9 +72,11 @@ The build requires Node/npm, Python 3.13 with venv support, SSH/scp/rsync, and t
 ./scripts/deploy-server.sh
 ```
 
-Set `TEXTPAD_BUILD_PYTHON` for another Python 3.13 environment. The script installs the locked frontend packages, builds the editor bundle, runs backend tests, downloads the pinned Python wheels, and stages the result over SSH. The installer preserves credentials and data, takes an online database backup, checks startup as the service user, atomically switches the application release, checks Apache syntax, and verifies the public login page using the existing CA. It restores the preceding application/configuration if activation fails. Deployments share a host-local lock with APK publication.
+Set `TEXTPAD_BUILD_PYTHON` for another Python 3.13 environment. The script installs the locked frontend packages, builds the editor bundle, runs backend tests, downloads the pinned Python wheels, and stages the result over SSH. The installer preserves credentials and data, takes an online database backup, checks startup as the service user, atomically switches the application release, checks Caddy and Apache syntax, and verifies the public login page using the existing CA. It restores the preceding application/configuration if activation fails. Deployments share a host-local lock with APK publication.
 
-The server include is `/etc/apache2/android-textpad-server.conf` inside the existing HTTPS virtual host `/etc/apache2/sites-available/view_git.conf`. Existing download includes remain in place. Other sites and services retain their configuration.
+The canonical routes are maintained from `server/caddy/textpad.caddy` inside `/etc/caddy/Caddyfile`. The installer replaces only its marked Textpad block before the existing fallback, validates Caddy and reloads it, and restores the prior Caddy configuration and public URL on activation failure. The compatibility include is `/etc/apache2/android-textpad-server.conf`; existing download includes remain in place. Other sites and services retain their configuration.
+
+Browser storage is separate at the new port-9443 origin. Saved server documents and credentials are retained. Existing Android/CLI endpoints on port 443 continue to work; new client configurations should use `https://git23069.hopto.org:9443/android_textpad`.
 
 After successful activation and all health checks, each installer keeps the three
 newest releases of its own component. The active and immediately preceding

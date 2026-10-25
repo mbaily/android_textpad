@@ -6,13 +6,13 @@ A native, dark-by-default text editor for **Android 16 / API 36 and later**. The
 
 ## Download
 
-[Download page](https://git23069.hopto.org/android_textpad/) · [Latest APK](https://git23069.hopto.org/android_textpad/textpad-latest.apk) · [Desktop editor](https://git23069.hopto.org/android_textpad/editor/)
+[Download page](https://git23069.hopto.org:9443/android_textpad/) · [Latest APK](https://git23069.hopto.org:9443/android_textpad/textpad-latest.apk) · [Desktop editor](https://git23069.hopto.org:9443/android_textpad/editor/)
 
-[Python CLI client](cli/README.md) · [Download CLI](https://git23069.hopto.org/android_textpad/editor/static/textpad-sync.pyz)
+[Python CLI client](cli/README.md) · [Download CLI](https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-sync.pyz)
 
 The Python 3.11+ CLI syncs explicitly selected local files on Linux, Windows, and macOS, with SQLite mappings and recovery snapshots. Edit with any text editor and use `textpad-sync sync` or foreground `textpad-sync watch`. Watch uses WebSocket notifications for live remote changes, with periodic reconciliation as a fallback. Both commands merge compatible concurrent edits using a three-way merge and hold overlapping conflicts or suspicious blank/truncated saves for explicit resolution. `textpad-sync errands` searches local/server files with the shared errands hashtags; it defaults to line matching with completed/cancelled tasks hidden. `errands --files` switches to file matching, and `errands tags` views or edits the shared hashtag list. See the [setup, commands, and recovery guide](cli/README.md).
 
-The [Vim 9 plugin](vim/README.md) provides an assignable toggle for the same uncompleted-tasks view. It displays open tasks with their headings/context and lets you edit visible lines; `:write` saves the complete source file, including hidden text. [Download the Vim plugin](https://git23069.hopto.org/android_textpad/editor/static/textpad-tasks-vim.zip).
+The [Vim 9 plugin](vim/README.md) provides an assignable toggle for the same uncompleted-tasks view. It displays open tasks with their headings/context and lets you edit visible lines; `:write` saves the complete source file, including hidden text. [Download the Vim plugin](https://git23069.hopto.org:9443/android_textpad/editor/static/textpad-tasks-vim.zip).
 
 The site uses the server's existing HTTPS certificate and is served from `/opt/android_textpad/deployment/`. Publish an updated APK with `./scripts/deploy-downloads.sh` after building it. See [server deployment instructions](server/README.md).
 
@@ -58,7 +58,7 @@ Backups live in the app-private `files/backups/` directory, remain until manuall
 
 ## Sync client
 
-**More → Sync → Actions** contains settings, opt-in file linking, server browsing, manual sync, and a list of opted-in local files. Use endpoint `https://git23069.hopto.org/android_textpad` and the server API token. Version 0.1.2 and later also migrate a saved `https://git23069.hopto.org:8443` address automatically, preserving the token and file links. That old port serves a different application and returns HTTP 404 for sync requests. In older versions, correct the address under **Server settings** before enabling sync. Custom endpoints are preserved. The token is encrypted with an Android Keystore key. App configuration trusts user-installed CA certificates for `git23069.hopto.org` while retaining normal TLS hostname verification.
+**More → Sync → Actions** contains settings, opt-in file linking, server browsing, manual sync, and a list of opted-in local files. Use endpoint `https://git23069.hopto.org:9443/android_textpad` and the server API token. Version 0.1.2 and later also migrate a saved `https://git23069.hopto.org:8443` address automatically, preserving the token and file links. That old port serves a different application and returns HTTP 404 for sync requests. In older versions, correct the address under **Server settings** before enabling sync. Custom endpoints are preserved. The token is encrypted with an Android Keystore key. App configuration trusts user-installed CA certificates for `git23069.hopto.org` while retaining normal TLS hostname verification.
 
 Only saved local files that are individually opted in participate. Links survive process restarts independently of tabs. Same-name candidates are ranked by bounded content similarity and require confirmation; thereafter a stable document ID links copies across different paths. First linking lets you choose the local or server version. Server browsing downloads to a local file through Save As before opening it for editing.
 

@@ -27,7 +27,8 @@ LEGACY_DATA = Path("/var/lib/android-textpad")
 UNIT_DIRECTORY = Path("/etc/systemd/system")
 APACHE_INCLUDE = Path("/etc/apache2/android-textpad-server.conf")
 HTTPS_VHOST = Path("/etc/apache2/sites-available/view_git.conf")
-PUBLIC = "https://git23069.hopto.org/android_textpad"
+CADDY_CONFIG = Path("/etc/caddy/Caddyfile")
+PUBLIC = "https://git23069.hopto.org:9443/android_textpad"
 
 
 def run(*args, **kwargs):
@@ -39,6 +40,35 @@ def helpers(stage):
     module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.atomic_write, module.include_in_vhost, module.prune_releases
+
+
+def caddy_routes(original, fragment):
+    text = original.decode()
+    start, end = "\t# BEGIN android_textpad\n", "\t# END android_textpad\n"
+    block = start + "".join("\t" + line + "\n" if line else "\n" for line in fragment.decode().splitlines()) + end
+    if start in text or end in text:
+        if text.count(start) != 1 or text.count(end) != 1:
+            raise RuntimeError("Ambiguous Textpad Caddy route markers")
+        before, rest = text.split(start, 1)
+        _, after = rest.split(end, 1)
+        return (before + block + after).encode()
+    marker = "\t# Only explicitly configured app paths are published.\n"
+    if text.count(marker) != 1:
+        raise RuntimeError("Expected one Caddy app-route insertion point")
+    return text.replace(marker, block + "\n" + marker, 1).encode()
+
+
+def public_environment(contents):
+    lines = contents.decode().splitlines()
+    setting = "TEXTPAD_PUBLIC_URL=" + PUBLIC
+    matches = [index for index, line in enumerate(lines) if line.startswith("TEXTPAD_PUBLIC_URL=")]
+    if len(matches) > 1:
+        raise RuntimeError("Duplicate TEXTPAD_PUBLIC_URL settings")
+    if matches:
+        lines[matches[0]] = setting
+    else:
+        lines.append(setting)
+    return ("\n".join(lines) + "\n").encode()
 
 
 def link(target):
@@ -54,6 +84,7 @@ def link(target):
 
 def main(stage):
     atomic_write, include_in_vhost, prune_releases = helpers(stage)
+    use_caddy = (stage / "textpad.caddy").is_file()
     run("apache2ctl", "configtest")
     current = BASE / "server"
     if current.exists() and not current.is_symlink():
@@ -161,6 +192,8 @@ def main(stage):
     os.chown(snapshot, account.pw_uid, group.gr_gid)
     units = ["android-textpad.service", "android-textpad-backup.service", "android-textpad-backup.timer"]
     paths = [APACHE_INCLUDE, HTTPS_VHOST, *[UNIT_DIRECTORY / name for name in units]]
+    if use_caddy:
+        paths.extend([CADDY_CONFIG, environment_path])
     originals = {path: path.read_bytes() if path.exists() else None for path in paths}
     config_backup = BASE / "config-backups" / ("server-" + stamp)
     config_backup.mkdir(mode=0o700)
@@ -169,6 +202,11 @@ def main(stage):
             atomic_write(config_backup / path.name, contents, 0o600)
     atomic_write(config_backup / "previous-server.json", json.dumps({"target":old_target}).encode(), 0o600)
     try:
+        if use_caddy:
+            atomic_write(CADDY_CONFIG, caddy_routes(originals[CADDY_CONFIG], (stage / "textpad.caddy").read_bytes()))
+            atomic_write(environment_path, public_environment(originals[environment_path]), 0o640)
+            os.chown(environment_path, 0, group.gr_gid)
+            run("/usr/bin/caddy", "validate", "--config", str(CADDY_CONFIG), "--adapter", "caddyfile")
         for name in units:
             atomic_write(UNIT_DIRECTORY / name, (stage / name).read_bytes())
         link("server-releases/" + stamp)
@@ -187,8 +225,10 @@ def main(stage):
         atomic_write(HTTPS_VHOST, include_in_vhost(originals[HTTPS_VHOST], APACHE_INCLUDE))
         run("apache2ctl", "configtest")
         run("systemctl", "reload", "apache2")
+        if use_caddy:
+            run("systemctl", "reload", "caddy")
         page = run("curl", "--silent", "--show-error", "--fail", "--max-time", "15",
-                   "--cacert", "/etc/ssl/nucbox3/nucbox3-ca/nucbox3.crt", "--resolve", "git23069.hopto.org:443:127.0.0.1",
+                   "--cacert", "/etc/ssl/nucbox3/nucbox3-ca/nucbox3.crt", "--resolve", "git23069.hopto.org:9443:127.0.0.1",
                    PUBLIC + "/editor/login")
         if b"Sign in" not in page:
             raise RuntimeError("The HTTPS editor did not return its sign-in page")
@@ -199,7 +239,9 @@ def main(stage):
             if contents is None:
                 path.unlink(missing_ok=True)
             else:
-                atomic_write(path, contents)
+                atomic_write(path, contents, 0o640 if path == environment_path else 0o644)
+                if path == environment_path:
+                    os.chown(path, 0, group.gr_gid)
         if old_target is None:
             subprocess.run(["systemctl", "stop", "android-textpad.service"], capture_output=True)
             current.unlink(missing_ok=True)
@@ -210,6 +252,9 @@ def main(stage):
             run("systemctl", "restart", "android-textpad.service")
         run("apache2ctl", "configtest")
         run("systemctl", "reload", "apache2")
+        if use_caddy:
+            run("/usr/bin/caddy", "validate", "--config", str(CADDY_CONFIG), "--adapter", "caddyfile")
+            run("systemctl", "reload", "caddy")
         raise
     removed = prune_releases(releases, protected=[release, BASE / old_target if old_target else None],
                              backup_prefix="server-")

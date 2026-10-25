@@ -1,4 +1,6 @@
 """Create shared commit signals before Gunicorn forks its workers."""
+# TLS terminates at Caddy; direct launches use the same localhost HTTP listener.
+bind = "127.0.0.1:8768"
 preload_app = True
 
 

@@ -25,6 +25,7 @@ cleanup() { ssh -o BatchMode=yes "$textpad_host" "rm -rf -- '$textpad_stage'" ||
 trap cleanup EXIT
 scp -q -o BatchMode=yes server/deploy/install-server.py server/deploy/install-downloads.py server/apache/server.conf \
     server/deploy/android-textpad.service server/deploy/android-textpad-backup.service server/deploy/android-textpad-backup.timer \
+    server/caddy/textpad.caddy \
     "$textpad_host:$textpad_stage/"
 rsync -a --exclude=__pycache__/ --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r -e 'ssh -o BatchMode=yes' \
     server/textpad_server "$textpad_host:$textpad_stage/app/"

@@ -1,0 +1,26 @@
+redir /android_textpad /android_textpad/?{query} 308
+
+handle_path /android_textpad/* {
+	@textpad_backend path /api/* /editor /editor/*
+	handle @textpad_backend {
+		reverse_proxy 127.0.0.1:8768 {
+			header_up X-Forwarded-Prefix /android_textpad
+		}
+	}
+
+	handle {
+		root * /opt/android_textpad/deployment
+		header {
+			Cache-Control "no-cache"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "no-referrer"
+			Content-Security-Policy "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		}
+		@textpad_apk path *.apk
+		header @textpad_apk {
+			Content-Type application/vnd.android.package-archive
+			Content-Disposition attachment
+		}
+		file_server
+	}
+}

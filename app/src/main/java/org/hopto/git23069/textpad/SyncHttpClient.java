@@ -19,7 +19,7 @@ import java.util.zip.GZIPInputStream;
 import javax.net.ssl.HttpsURLConnection;
 
 final class SyncHttpClient implements RemoteApi {
-    static final String DEFAULT_ENDPOINT = "https://git23069.hopto.org/android_textpad";
+    static final String DEFAULT_ENDPOINT = "https://git23069.hopto.org:9443/android_textpad";
     private final String endpoint, token, clientId;
     SyncHttpClient(String endpoint, String token) { this(endpoint, token, null); }
     SyncHttpClient(String endpoint, String token, String clientId) {
