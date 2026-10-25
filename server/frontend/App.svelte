@@ -157,6 +157,9 @@
   let canRedo = $state(false);
   let readOnly = $state(false);
   let lineInputEl = $state(null);
+  const lineComposerStateKey = `textpad.editor.lineComposerCollapsed:${prefix}`;
+  let lineComposerCollapsed = $state(false);
+  try { lineComposerCollapsed = localStorage.getItem(lineComposerStateKey) === "true"; } catch {}
   let pendingSyncCount = $state(0);
 
   let view = null;
@@ -2366,6 +2369,16 @@
     if (view && !readOnly) view.focus();
   }
 
+  function toggleLineComposer(event) {
+    lineComposerCollapsed = !lineComposerCollapsed;
+    try { localStorage.setItem(lineComposerStateKey, String(lineComposerCollapsed)); } catch {}
+    if (lineComposerCollapsed) {
+      lineInputEl?.blur();
+      event.currentTarget.focus();
+    }
+    view?.requestMeasure();
+  }
+
   function adjustNewLineIndent(increase) {
     if (!readOnly || !activeDoc || !view || activeDoc.tasksOnly) return;
     activeDoc.lineIndent = adjustIndent(activeDoc.lineIndent,
@@ -2381,7 +2394,7 @@
 
   function addLine() {
     const doc = activeDoc;
-    if (!readOnly || !doc || !view || doc.tasksOnly || !doc.lineDraft) return;
+    if (!readOnly || !doc || !view || doc.tasksOnly || lineComposerCollapsed || !doc.lineDraft) return;
     let insertion;
     try {
       insertion = insertionBelow(view.state.doc.toString(), view.state.selection.main.head, doc.lineIndent, doc.lineDraft);
@@ -3318,19 +3331,25 @@
 
     {#if readOnly && activeDoc && !filesView}
       <form id="line-composer" class="line-composer" onsubmit={(event) => { event.preventDefault(); addLine(); }}>
-        <div id="line-input-status" class="line-input-status">
-          {#if activeDoc.tasksOnly}Switch to the full view to add lines
-          {:else}Add below line {cursorLine} · Indent: {activeDoc.lineIndent.length} {activeDoc.lineIndent.includes("\t") ? "characters (tabs)" : "spaces"}{/if}
-        </div>
-        <div class="line-input-controls">
-          <button id="line-indent-less" type="button" aria-label="Decrease new line indentation" title="Decrease new line indentation" disabled={activeDoc.tasksOnly || !activeDoc.lineIndent} onclick={() => adjustNewLineIndent(false)}>←</button>
-          <button id="line-indent-more" type="button" aria-label="Increase new line indentation" title="Increase new line indentation" disabled={activeDoc.tasksOnly} onclick={() => adjustNewLineIndent(true)}>→</button>
-          <input id="line-input" type="text" aria-label="New line text" aria-describedby="line-input-status" placeholder="Add one line…" autocomplete="off" disabled={activeDoc.tasksOnly}
-            value={activeDoc.lineDraft} bind:this={lineInputEl} oninput={(event) => { activeDoc.lineDraft = event.currentTarget.value; }}
-            onbeforeinput={(event) => rejectMultiline(event, event.data)}
-            onpaste={(event) => rejectMultiline(event, event.clipboardData?.getData("text/plain"))}
-            ondrop={(event) => rejectMultiline(event, event.dataTransfer?.getData("text/plain"))}>
-          <button id="line-add" type="submit" class="primary" aria-label="Add line below cursor" disabled={activeDoc.tasksOnly || !activeDoc.lineDraft}>Add</button>
+        <button id="line-composer-toggle" class="line-composer-toggle" type="button" aria-expanded={String(!lineComposerCollapsed)} aria-controls="line-composer-body" onclick={toggleLineComposer}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          Add one line
+        </button>
+        <div id="line-composer-body" hidden={lineComposerCollapsed}>
+          <div id="line-input-status" class="line-input-status">
+            {#if activeDoc.tasksOnly}Switch to the full view to add lines
+            {:else}Add below line {cursorLine} · Indent: {activeDoc.lineIndent.length} {activeDoc.lineIndent.includes("\t") ? "characters (tabs)" : "spaces"}{/if}
+          </div>
+          <div class="line-input-controls">
+            <button id="line-indent-less" type="button" aria-label="Decrease new line indentation" title="Decrease new line indentation" disabled={activeDoc.tasksOnly || !activeDoc.lineIndent} onclick={() => adjustNewLineIndent(false)}>←</button>
+            <button id="line-indent-more" type="button" aria-label="Increase new line indentation" title="Increase new line indentation" disabled={activeDoc.tasksOnly} onclick={() => adjustNewLineIndent(true)}>→</button>
+            <input id="line-input" type="text" aria-label="New line text" aria-describedby="line-input-status" placeholder="Add one line…" autocomplete="off" disabled={activeDoc.tasksOnly}
+              value={activeDoc.lineDraft} bind:this={lineInputEl} oninput={(event) => { activeDoc.lineDraft = event.currentTarget.value; }}
+              onbeforeinput={(event) => rejectMultiline(event, event.data)}
+              onpaste={(event) => rejectMultiline(event, event.clipboardData?.getData("text/plain"))}
+              ondrop={(event) => rejectMultiline(event, event.dataTransfer?.getData("text/plain"))}>
+            <button id="line-add" type="submit" class="primary" aria-label="Add line below cursor" disabled={activeDoc.tasksOnly || !activeDoc.lineDraft}>Add</button>
+          </div>
         </div>
       </form>
     {/if}

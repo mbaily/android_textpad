@@ -58,6 +58,23 @@ def main(browser_name="chromium"):
         new_line.fill("new 😀")
         page.locator("#line-indent-more").click()
         expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 4 spaces")
+        disclosure = page.locator("#line-composer-toggle")
+        expect(disclosure).to_have_attribute("aria-expanded", "true")
+        expanded_height = page.locator("#editor-host").bounding_box()["height"]
+        disclosure.click()
+        expect(disclosure).to_have_attribute("aria-expanded", "false")
+        expect(new_line).to_be_hidden()
+        expect(page.locator("#line-input-status")).to_be_hidden()
+        assert page.locator("#editor-host").bounding_box()["height"] > expanded_height
+        expect(lines).to_have_text(original.replace("\r\n", "\n").split("\n"))
+        page.locator("#toggle-readonly").click()
+        page.locator("#toggle-readonly").click()
+        expect(disclosure).to_have_attribute("aria-expanded", "false")
+        disclosure.focus()
+        page.keyboard.press("Enter")
+        expect(disclosure).to_have_attribute("aria-expanded", "true")
+        expect(new_line).to_have_value("new 😀")
+        expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 4 spaces")
         assert page.locator(".cm-cursor-primary").evaluate("el => getComputedStyle(el).display") != "none"
         assert page.locator(".cm-cursorLayer").evaluate("el => getComputedStyle(el).opacity") == "1"
         page.locator("#line-add").click()
@@ -93,7 +110,11 @@ def main(browser_name="chromium"):
         new_line.fill("draft")
         page.locator("#line-indent-more").click()
         draft_status = page.locator("#line-input-status").text_content()
+        disclosure.click()
         page.locator(".file-item").filter(has_text="empty-composer.txt").click()
+        expect(disclosure).to_have_attribute("aria-expanded", "false")
+        expect(new_line).to_be_hidden()
+        disclosure.click()
         expect(new_line).to_have_value("")
         new_line.fill("first")
         new_line.press("Enter")
@@ -122,6 +143,8 @@ def main(browser_name="chromium"):
         new_line.fill("tabbed")
         new_line.press("Enter")
         expect(lines).to_have_text(["root", "\tfirst", "\t\ttabbed", "\t\tnested", ""])
+        if page.locator("#sidebar-toggle").get_attribute("aria-expanded") == "true":
+            page.locator("#sidebar-toggle").click()
         page.set_viewport_size({"width": 390, "height": 844})
         expect(new_line).to_be_visible()
         assert page.locator("#line-composer").evaluate("el => el.scrollWidth <= el.clientWidth")
@@ -148,7 +171,23 @@ def main(browser_name="chromium"):
             return cursor.top >= editor.top && cursor.bottom <= editor.bottom;
         }""")
         set_visual_viewport(page, 350, 220, "scroll")
+        disclosure.click()
+        expect(new_line).to_be_hidden()
+        expect(disclosure).to_be_focused()
+        disclosure.press("Space")
+        expect(new_line).to_be_visible()
         set_visual_viewport(page, 844, 0)
+        # The preference survives a fresh page independently of live tab drafts.
+        disclosure.click()
+        reopened = context.new_page()
+        reopened.goto(base + "/editor/")
+        if reopened.locator("#sidebar-toggle").get_attribute("aria-expanded") == "false":
+            reopened.locator("#sidebar-toggle").click()
+        reopened.locator(".file-item").filter(has_text="composer.txt").filter(has_not_text="empty-").filter(has_not_text="tabs-").click()
+        reopened.locator("#toggle-readonly").click()
+        expect(reopened.locator("#line-composer-toggle")).to_have_attribute("aria-expanded", "false")
+        expect(reopened.locator("#line-input")).to_be_hidden()
+        reopened.close()
         assert not errors, errors
         browser.close()
     print(f"{browser_name} read-only line composer checks passed")

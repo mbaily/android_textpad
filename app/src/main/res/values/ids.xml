@@ -2,6 +2,8 @@
     <item name="editor" type="id" />
     <item name="line_input" type="id" />
     <item name="line_input_status" type="id" />
+    <item name="line_composer_toggle" type="id" />
+    <item name="line_composer_body" type="id" />
     <item name="files_tab" type="id" />
     <item name="library_browser" type="id" />
     <item name="library_entries" type="id" />

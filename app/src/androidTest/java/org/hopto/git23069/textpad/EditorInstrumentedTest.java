@@ -372,7 +372,14 @@ public class EditorInstrumentedTest {
                 android.widget.EditText input = activity.findViewById(R.id.line_input);
                 input.setText("draft");
                 button(activity.getWindow().getDecorView(), "Increase new line indentation").performClick();
+                input.requestFocus();
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+                assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                assertFalse(input.hasFocus());
+                assertEquals("draft", app.currentTab().lineDraft);
+                assertEquals("  ", app.currentTab().lineIndent);
                 app.duplicate(); assertEquals("", input.getText().toString());
+                assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
                 app.selectedTab = app.tabs.get(0).id; app.refresh();
                 assertEquals("draft", input.getText().toString());
                 assertEquals("  ", app.currentTab().lineIndent);
@@ -380,6 +387,16 @@ public class EditorInstrumentedTest {
             scenario.recreate();
             scenario.onActivity(activity -> {
                 android.widget.EditText input = activity.findViewById(R.id.line_input);
+                assertEquals("draft", input.getText().toString());
+                assertEquals("  ", app.currentTab().lineIndent);
+                assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                assertEquals("Expand Add one line", activity.findViewById(R.id.line_composer_toggle).getContentDescription());
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                assertEquals("Collapse Add one line", activity.findViewById(R.id.line_composer_toggle).getContentDescription());
                 assertEquals("draft", input.getText().toString());
                 assertEquals("  ", app.currentTab().lineIndent);
                 button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();

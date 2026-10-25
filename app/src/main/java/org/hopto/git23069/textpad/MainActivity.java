@@ -68,11 +68,11 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private TextView location, status, findTitle, findResult;
     private CodeEditor editor;
     private EditText find, replacement;
-    private LinearLayout lineComposer;
+    private LinearLayout lineComposer, lineComposerBody;
     private EditText lineInput;
     private TextView lineInputStatus;
-    private Button lineLessButton, lineMoreButton, lineAddButton;
-    private boolean updatingLineInput;
+    private Button lineComposerToggle, lineLessButton, lineMoreButton, lineAddButton;
+    private boolean updatingLineInput, lineComposerCollapsed;
     private CheckBox matchCase;
     private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, taskFilterButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private HashtagUi activeHashtagUi;
@@ -104,6 +104,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         app = (TextpadApplication) getApplication();
+        lineComposerCollapsed = app.settings.prefs.getBoolean("lineComposerCollapsed", false);
         if (state != null) app.readOnlyMode = state.getBoolean("readOnlyMode", app.readOnlyMode);
         if (state != null) app.filesVisible = state.getBoolean("filesVisible", app.filesVisible);
         buildUi();
@@ -363,8 +364,15 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private void buildLineComposer() {
         lineComposer = column(); lineComposer.setPadding(dp(12), dp(6), dp(12), dp(6));
         lineComposer.setBackgroundColor(SURFACE);
+        lineComposerToggle = new Button(this); lineComposerToggle.setId(R.id.line_composer_toggle);
+        lineComposerToggle.setAllCaps(false); lineComposerToggle.setTextSize(13); lineComposerToggle.setTextColor(ACCENT);
+        lineComposerToggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); lineComposerToggle.setPadding(0, 0, 0, 0);
+        lineComposerToggle.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        lineComposerToggle.setOnClickListener(v -> toggleLineComposer());
+        lineComposer.addView(lineComposerToggle, new LinearLayout.LayoutParams(-1, dp(44)));
+        lineComposerBody = column(); lineComposerBody.setId(R.id.line_composer_body);
         lineInputStatus = label("", 11, MUTED); lineInputStatus.setId(R.id.line_input_status);
-        lineComposer.addView(lineInputStatus);
+        lineComposerBody.addView(lineInputStatus);
         LinearLayout controls = row(); controls.setGravity(Gravity.CENTER_VERTICAL);
         lineLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease new line indentation", v -> adjustLineIndent(false));
         lineMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase new line indentation", v -> adjustLineIndent(true));
@@ -402,19 +410,35 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         lineAddButton = new Button(this); lineAddButton.setText("Add"); lineAddButton.setAllCaps(false);
         lineAddButton.setContentDescription("Add line below cursor"); lineAddButton.setMinWidth(0); lineAddButton.setMinimumWidth(0);
         lineAddButton.setOnClickListener(v -> addLine()); controls.addView(lineAddButton);
-        lineComposer.addView(controls); lineComposer.setVisibility(View.GONE); root.addView(lineComposer);
+        lineComposerBody.addView(controls); lineComposer.addView(lineComposerBody);
+        lineComposer.setVisibility(View.GONE); root.addView(lineComposer);
+    }
+
+    private void toggleLineComposer() {
+        lineComposerCollapsed = !lineComposerCollapsed;
+        app.settings.bool("lineComposerCollapsed", lineComposerCollapsed);
+        if (lineComposerCollapsed && lineInput.hasFocus()) {
+            editor.requestFocus();
+            var keyboard = getSystemService(android.view.inputmethod.InputMethodManager.class);
+            if (keyboard != null) keyboard.hideSoftInputFromWindow(lineInput.getWindowToken(), 0);
+        }
+        updateLineComposer();
     }
 
     private boolean canAddLine() {
         EditorDocument doc = app.current();
         return app.readOnlyMode && doc != null && doc.writable && !doc.replacing && !app.filesVisible
-                && shownTab != null && !shownTab.tasksOnly;
+                && shownTab != null && !shownTab.tasksOnly && !lineComposerCollapsed;
     }
 
     private void updateLineComposer() {
         boolean visible = app.readOnlyMode && shownTab != null && !app.filesVisible;
         lineComposer.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (!visible) return;
+        lineComposerToggle.setText((lineComposerCollapsed ? "▸" : "▾") + " Add one line");
+        lineComposerToggle.setContentDescription(lineComposerCollapsed ? "Expand Add one line" : "Collapse Add one line");
+        lineComposerToggle.setStateDescription(lineComposerCollapsed ? "Collapsed" : "Expanded");
+        lineComposerBody.setVisibility(lineComposerCollapsed ? View.GONE : View.VISIBLE);
         int offset = Math.max(0, editor.getSelectionEnd());
         int line = editor.buffer.lineAt(Math.min(offset, editor.length()));
         String sourceIndent = LineInsertion.indentation(editor.getText(), offset);
