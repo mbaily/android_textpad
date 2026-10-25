@@ -164,6 +164,8 @@ npm run build --prefix server/frontend
 PYTHONPATH=server python3 server/tests/browser_smoke.py
 PYTHONPATH=server python3 server/tests/browser_line_insertion_smoke.py
 PYTHONPATH=server python3 server/tests/browser_line_insertion_smoke.py --browser webkit
+PYTHONPATH=server python3 server/tests/browser_composer_scroll_smoke.py
+PYTHONPATH=server python3 server/tests/browser_composer_scroll_smoke.py --browser webkit
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
 PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py

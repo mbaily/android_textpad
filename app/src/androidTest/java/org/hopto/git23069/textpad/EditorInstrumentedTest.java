@@ -720,6 +720,91 @@ public class EditorInstrumentedTest {
         }
     }
 
+    private boolean cursorHasRowMargin(CodeEditor editor) {
+        android.text.Layout layout = editor.getLayout();
+        if (layout == null || editor.isLayoutRequested()) return false;
+        int line = layout.getLineForOffset(editor.getSelectionEnd());
+        int top = layout.getLineTop(line) - editor.getScrollY();
+        int bottom = layout.getLineBottom(line) - editor.getScrollY();
+        int height = editor.getHeight() - editor.getTotalPaddingTop() - editor.getTotalPaddingBottom();
+        int margin = layout.getLineBottom(line) - layout.getLineTop(line);
+        return top >= margin && bottom <= height - margin;
+    }
+
+    @Test public void composerResizingRevealsTheCursorWithMinimalScrollingAndRowMargin() throws Exception {
+        String original = ("A wrapped line " + "with more text ".repeat(40) + "\n").repeat(100);
+        Uri uri = seed("composer-scroll.txt", original.getBytes(StandardCharsets.UTF_8));
+        AtomicReference<CodeEditor> shownEditor = new AtomicReference<>();
+        int[] before = new int[3];
+        int cursor = original.length() / 2 + 200;
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor); shownEditor.set(editor);
+                editor.setSelection(cursor);
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                CodeEditor editor = shownEditor.get();
+                View handle = activity.findViewById(R.id.line_composer_toggle);
+                handle.setFocusableInTouchMode(true); handle.requestFocus();
+                android.text.Layout layout = editor.getLayout();
+                int row = layout.getLineForOffset(cursor);
+                int rowHeight = layout.getLineBottom(row) - layout.getLineTop(row);
+                int height = editor.getHeight() - editor.getTotalPaddingTop() - editor.getTotalPaddingBottom();
+                // The cursor starts just inside the collapsed viewport's lower margin.
+                editor.scrollTo(0, layout.getLineBottom(row) + rowHeight - height);
+                before[0] = editor.getScrollY(); before[1] = height;
+                handle.performClick();
+            });
+            waitFor(() -> cursorHasRowMargin(shownEditor.get()));
+            scenario.onActivity(activity -> {
+                CodeEditor editor = shownEditor.get();
+                int height = editor.getHeight() - editor.getTotalPaddingTop() - editor.getTotalPaddingBottom();
+                assertEquals("Expansion scrolls by exactly the lost viewport height", before[0] + before[1] - height, editor.getScrollY());
+                assertEquals(cursor, editor.getSelectionEnd());
+                before[0] = editor.getScrollY();
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                CodeEditor editor = shownEditor.get();
+                assertEquals("Collapse leaves an already visible row in place", before[0], editor.getScrollY());
+                // Also check a row at the top edge, in the middle of a wrapped logical line.
+                int row = editor.getLayout().getLineForOffset(cursor);
+                editor.scrollTo(0, editor.getLayout().getLineTop(row));
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+            });
+            waitFor(() -> cursorHasRowMargin(shownEditor.get()));
+            scenario.onActivity(activity -> {
+                CodeEditor editor = shownEditor.get();
+                int row = editor.getLayout().getLineForOffset(cursor);
+                assertEquals(editor.getLayout().getLineTop(row) * 2 - editor.getLayout().getLineBottom(row), editor.getScrollY());
+                before[0] = editor.getScrollY();
+                // Simulate keyboard insets while the separate draft input owns focus.
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                input.setText("keep this draft"); input.setSelection(4); input.requestFocus();
+                View root = editor.getRootView().findViewById(android.R.id.content);
+                View content = ((ViewGroup) root).getChildAt(0);
+                before[2] = content.getPaddingBottom();
+                content.setPadding(content.getPaddingLeft(), content.getPaddingTop(), content.getPaddingRight(), before[2] + 120);
+            });
+            waitFor(() -> cursorHasRowMargin(shownEditor.get()));
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                CodeEditor editor = shownEditor.get();
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                assertEquals("A resize leaves a safely visible row in place", before[0], editor.getScrollY());
+                assertEquals(cursor, editor.getSelectionEnd());
+                assertTrue(input.hasFocus()); assertEquals(4, input.getSelectionEnd());
+                assertEquals("keep this draft", input.getText().toString());
+                assertFalse(app.current().buffer.dirty());
+            });
+        }
+    }
+
     @Test public void readOnlyCursorCanBeRepositionedByTouch() throws Exception {
         Uri uri = seed("line-cursor.txt", "first\n  second\nthird".getBytes(StandardCharsets.UTF_8));
         try (var scenario = launch(uri)) {

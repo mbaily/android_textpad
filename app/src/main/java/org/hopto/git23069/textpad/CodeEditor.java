@@ -155,6 +155,22 @@ final class CodeEditor extends EditText {
         }
     }
 
+    void scrollCursorIntoViewWithMargin() {
+        Layout layout = getLayout();
+        int offset = getSelectionEnd();
+        int visibleHeight = getHeight() - getTotalPaddingTop() - getTotalPaddingBottom();
+        if (layout == null || offset < 0 || visibleHeight <= 0) return;
+        int line = layout.getLineForOffset(Math.min(offset, length()));
+        int top = layout.getLineTop(line), bottom = layout.getLineBottom(line);
+        // Keep one visual row of context, reduced when the keyboard leaves little room.
+        int margin = Math.min(bottom - top, Math.max(0, (visibleHeight - (bottom - top)) / 2));
+        int target = getScrollY();
+        if (top - margin < target) target = top - margin;
+        else if (bottom + margin > target + visibleHeight) target = bottom + margin - visibleHeight;
+        target = Math.max(0, Math.min(target, Math.max(0, layout.getHeight() - visibleHeight)));
+        if (target != getScrollY()) scrollTo(getScrollX(), target);
+    }
+
     @Override protected void onDraw(Canvas canvas) {
         Layout layout = getLayout();
         if (layout != null) {

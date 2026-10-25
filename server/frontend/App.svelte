@@ -2380,8 +2380,41 @@
         doc.state = doc.state.update({ effects: effect }).state;
       }
     }
-    if (readOnly) syncEditorMetrics(true);
+    if (readOnly) {
+      syncEditorMetrics(true);
+      revealComposerCursor();
+    }
     if (view && !readOnly) view.focus();
+  }
+
+  async function revealComposerCursor() {
+    const editorView = view, doc = activeDoc;
+    // Svelte must apply the panel visibility before CodeMirror measures and scrolls.
+    await tick();
+    if (!editorView || view !== editorView || !doc || activeDoc !== doc || filesView || !readOnly) return;
+    editorView.requestMeasure({
+      key: revealComposerCursor,
+      read(v) {
+        if (view !== v || activeDoc !== doc || filesView || !readOnly) return null;
+        const scroller = v.scrollDOM, height = scroller.clientHeight;
+        if (height <= 0) return null;
+        const selection = v.state.selection.main;
+        const cursor = v.coordsAtPos(selection.head, selection.assoc || 1);
+        if (!cursor) return null;
+        const bounds = scroller.getBoundingClientRect();
+        const margin = Math.min(v.defaultLineHeight, Math.max(0, (height - (cursor.bottom - cursor.top)) / 2));
+        const top = cursor.top - bounds.top + scroller.scrollTop;
+        const bottom = cursor.bottom - bounds.top + scroller.scrollTop;
+        let target = scroller.scrollTop;
+        if (top - margin < target) target = top - margin;
+        else if (bottom + margin > target + height) target = bottom + margin - height;
+        return Math.max(0, target);
+      },
+      write(top, v) {
+        // Avoid the mobile scrollIntoView fallback, which reveals a whole logical line.
+        if (top !== null && top !== v.scrollDOM.scrollTop) v.scrollDOM.scrollTop = top;
+      },
+    });
   }
 
   function toggleLineComposer(event) {
@@ -2392,7 +2425,7 @@
       event.currentTarget.focus();
     }
     if (!lineComposerCollapsed) syncEditorMetrics(true);
-    view?.requestMeasure();
+    revealComposerCursor();
   }
 
   function adjustNewLineIndent(increase) {
@@ -2915,7 +2948,9 @@
       const height = viewport?.height ?? window.innerHeight;
       rootStyle.setProperty("--editor-viewport-height", `${height}px`);
       rootStyle.setProperty("--editor-viewport-top", `${viewport?.offsetTop ?? 0}px`);
-      if (height < viewportHeight && view.hasFocus) {
+      if (height !== viewportHeight && readOnly) {
+        revealComposerCursor();
+      } else if (height < viewportHeight && view.hasFocus) {
         view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head) });
       }
       viewportHeight = height;

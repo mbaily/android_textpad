@@ -196,6 +196,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
         android.widget.FrameLayout body = new android.widget.FrameLayout(this);
         editor = new CodeEditor(this); body.addView(editor, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        editor.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            // Panel toggles and IME insets both resize the editor. Use the new text layout.
+            if (app.readOnlyMode && shownTab != null && !app.filesVisible
+                    && (bottom - top != oldBottom - oldTop || right - left != oldRight - oldLeft))
+                editor.scrollCursorIntoViewWithMargin();
+        });
         empty = column(); empty.setId(R.id.recent_files); empty.setPadding(dp(20), dp(16), dp(20), 0);
         LinearLayout recentHeader = row(); recentHeader.setGravity(Gravity.CENTER_VERTICAL);
         TextView recentTitle = label("Recent files", 22, TEXT);
