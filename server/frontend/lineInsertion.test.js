@@ -29,16 +29,42 @@ test("preserves tabs and bounds decreases at zero", () => {
 test("inserts after the whole line without replacing existing text", () => {
   const text = "root\n  first\n    nested\nlast";
   const insertion = insertionBelow(text, text.indexOf("first") + 2, "  ", "new 😀");
-  const result = text.slice(0, insertion.from) + insertion.insert + text.slice(insertion.from);
+  const result = text.slice(0, insertion.from) + insertion.insert + text.slice(insertion.to);
   assert.equal(result, "root\n  first\n  new 😀\n    nested\nlast");
   assert.equal(insertion.cursor, result.indexOf("new 😀") + "new 😀".length);
 });
 
 test("handles empty documents and both final newline cases", () => {
-  assert.deepEqual(insertionBelow("", 0, "", "hello"), { from: 0, insert: "hello", cursor: 5 });
-  assert.deepEqual(insertionBelow("first", 2, "  ", "last"), { from: 5, insert: "\n  last", cursor: 12 });
-  assert.deepEqual(insertionBelow("first\n", 2, "", "last"), { from: 5, insert: "\nlast", cursor: 10 });
-  assert.deepEqual(insertionBelow("first\n", 6, "", "last"), { from: 6, insert: "\nlast", cursor: 11 });
+  assert.deepEqual(insertionBelow("", 0, "", "hello"), { from: 0, to: 0, insert: "hello", cursor: 5 });
+  assert.deepEqual(insertionBelow("first", 2, "  ", "last"), { from: 5, to: 5, insert: "\n  last", cursor: 12 });
+  assert.deepEqual(insertionBelow("first\n", 2, "", "last"), { from: 5, to: 5, insert: "\nlast", cursor: 10 });
+  assert.deepEqual(insertionBelow("first\n", 6, "", "last"), { from: 6, to: 6, insert: "last", cursor: 10 });
+});
+
+test("fills only the current blank line without adding a separator", () => {
+  for (const [text, offset, indent, expected] of [
+    ["first\n\nlast", 6, "  ", "first\n  added\nlast"],
+    ["first\n \t \nlast", 7, "  ", "first\n  added\nlast"],
+    [" \t ", 1, "", "added"],
+    ["first\n", 6, "", "first\nadded"],
+    ["first\n\n\nlast", 6, "", "first\nadded\n\nlast"],
+    ["\nfirst", 0, "", "added\nfirst"],
+  ]) {
+    const insertion = insertionBelow(text, offset, indent, "added");
+    const result = text.slice(0, insertion.from) + insertion.insert + text.slice(insertion.to);
+    assert.equal(result, expected);
+    assert.equal(result.split("\n").length, text.split("\n").length);
+    assert.equal(insertion.cursor, expected.indexOf("added") + 5);
+  }
+});
+
+test("replaces only blank whitespace with the requested indentation", () => {
+  assert.deepEqual(insertionBelow("first\n \t \nlast", 7, "    ", "filled 😀"),
+    { from: 6, to: 9, insert: "    filled 😀", cursor: 19 });
+});
+
+test("nonblank whitespace characters remain protected", () => {
+  assert.deepEqual(insertionBelow(" \u00a0", 1, "", "added"), { from: 2, to: 2, insert: "\nadded", cursor: 8 });
 });
 
 test("rejects multiline input", () => {

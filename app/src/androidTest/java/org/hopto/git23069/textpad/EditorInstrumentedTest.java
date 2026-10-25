@@ -420,6 +420,53 @@ public class EditorInstrumentedTest {
         }
     }
 
+    @Test public void readOnlyComposerFillsBlankLinesAndPreservesTerminatorsAndUndo() throws Exception {
+        String original = "Before\r\n  \r\nAfter\r\n";
+        Uri uri = seed("blank-line-composer.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                View decor = activity.getWindow().getDecorView();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(editor.getText().toString().indexOf("  ") + 1);
+                button(decor, "Toggle read-only mode").performClick();
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                android.widget.TextView hint = activity.findViewById(R.id.line_input_status);
+                assertEquals("Fill line 2 · Indent: 2 spaces", hint.getText().toString());
+                View add = button(decor, "Fill blank line"); assertNotNull(add);
+                input.setText("filled"); add.performClick();
+                String filled = "Before\n  filled\nAfter\n";
+                assertEquals(filled, editor.getText().toString());
+                assertEquals(4, app.current().buffer.lineCount());
+                assertEquals(filled.indexOf("filled") + 6, editor.getSelectionEnd());
+                assertEquals("Add below line 2 · Indent: 2 spaces", hint.getText().toString());
+                input.setText("following"); add.performClick();
+                assertEquals("Before\n  filled\n  following\nAfter\n", editor.getText().toString());
+                button(decor, "Toggle read-only mode").performClick();
+                button(decor, "Undo").performClick(); assertEquals(filled, editor.getText().toString());
+                button(decor, "Undo").performClick();
+                assertEquals(original.replace("\r\n", "\n"), editor.getText().toString());
+                assertFalse(app.current().buffer.dirty());
+                button(decor, "Redo").performClick();
+                editor.setSelection(editor.length());
+                button(decor, "Toggle read-only mode").performClick();
+                assertEquals("Fill line 4 · Indent: 0 spaces", hint.getText().toString());
+                input.setText("last"); button(decor, "Fill blank line").performClick();
+                assertEquals("Before\n  filled\nAfter\nlast", editor.getText().toString());
+                assertEquals(4, app.current().buffer.lineCount());
+                try {
+                    assertArrayEquals("Before\r\n  filled\r\nAfter\r\nlast".getBytes(StandardCharsets.UTF_8), app.current().buffer.snapshot().bytes());
+                } catch (Exception e) { throw new AssertionError(e); }
+                button(decor, "Toggle read-only mode").performClick();
+                button(decor, "Undo").performClick(); assertEquals(filled, editor.getText().toString());
+                button(decor, "Undo").performClick();
+                assertFalse(app.current().buffer.dirty());
+                try { assertArrayEquals(original.getBytes(StandardCharsets.UTF_8), app.current().buffer.snapshot().bytes()); }
+                catch (Exception e) { throw new AssertionError(e); }
+            });
+        }
+    }
+
     @Test public void readOnlyComposerAddsBelowTheCursorWithInferredIndentAndSharedUndo() throws Exception {
         String original = "Heading\r\n  first\r\n    nested\n  second";
         Uri uri = seed("line-composer.txt", original.getBytes(StandardCharsets.UTF_8));

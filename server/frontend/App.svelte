@@ -151,6 +151,7 @@
   let hashtagSearching = $state(false);
 
   let cursorLine = $state(1);
+  let cursorLineBlank = $state(true);
   let cursorCol = $state(1);
   let lineCount = $state(1);
   let canUndo = $state(false);
@@ -870,6 +871,7 @@
     canUndo = undoDepth(view.state) > 0;
     canRedo = redoDepth(view.state) > 0;
     const sourceIndent = indentation(line.text, 0);
+    cursorLineBlank = sourceIndent.length === line.length;
     if (activeDoc.lineAnchor !== line.number || activeDoc.lineSourceIndent !== sourceIndent) {
       activeDoc.lineAnchor = line.number;
       activeDoc.lineSourceIndent = sourceIndent;
@@ -2400,11 +2402,12 @@
     try {
       insertion = insertionBelow(view.state.doc.toString(), view.state.selection.main.head, doc.lineIndent, doc.lineDraft);
     } catch (error) { notice(error.message, true); return; }
-    if (view.state.doc.length + insertion.insert.length > 10 * 1024 * 1024) {
+    if (view.state.doc.length - (insertion.to - insertion.from) + insertion.insert.length > 10 * 1024 * 1024) {
       notice("The document is too large", true); return;
     }
+    doc.lineAnchor = -1;
     view.dispatch({
-      changes: { from: insertion.from, insert: insertion.insert },
+      changes: { from: insertion.from, to: insertion.to, insert: insertion.insert },
       selection: EditorSelection.cursor(insertion.cursor),
       annotations: [newLineInsertion.of(true), isolateHistory.of("full")],
       scrollIntoView: true,
@@ -3376,7 +3379,7 @@
         <div id="line-composer-body" hidden={lineComposerCollapsed}>
           <div id="line-input-status" class="line-input-status">
             {#if activeDoc.tasksOnly}Switch to the full view to add lines
-            {:else}Add below line {cursorLine} · Indent: {activeDoc.lineIndent.length} {activeDoc.lineIndent.includes("\t") ? "characters (tabs)" : "spaces"}{/if}
+            {:else}{cursorLineBlank ? "Fill line" : "Add below line"} {cursorLine} · Indent: {activeDoc.lineIndent.length} {activeDoc.lineIndent.includes("\t") ? "characters (tabs)" : "spaces"}{/if}
           </div>
           <div class="line-input-controls">
             <button id="line-indent-less" type="button" aria-label="Decrease new line indentation" title="Decrease new line indentation" disabled={activeDoc.tasksOnly || !activeDoc.lineIndent} onclick={() => adjustNewLineIndent(false)}>←</button>
@@ -3386,7 +3389,7 @@
               onbeforeinput={(event) => rejectMultiline(event, event.data)}
               onpaste={(event) => rejectMultiline(event, event.clipboardData?.getData("text/plain"))}
               ondrop={(event) => rejectMultiline(event, event.dataTransfer?.getData("text/plain"))}>
-            <button id="line-add" type="submit" class="primary" aria-label="Add line below cursor" disabled={activeDoc.tasksOnly || !activeDoc.lineDraft}>Add</button>
+            <button id="line-add" type="submit" class="primary" aria-label={cursorLineBlank ? "Fill blank line" : "Add line below cursor"} disabled={activeDoc.tasksOnly || !activeDoc.lineDraft}>Add</button>
           </div>
         </div>
       </form>

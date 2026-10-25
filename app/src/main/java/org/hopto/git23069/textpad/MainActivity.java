@@ -467,6 +467,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         int offset = Math.max(0, editor.getSelectionEnd());
         int line = editor.buffer.lineAt(Math.min(offset, editor.length()));
         String sourceIndent = LineInsertion.indentation(editor.getText(), offset);
+        int lineEnd = line + 1 < editor.buffer.lineCount() ? editor.buffer.lineStart(line + 1) - 1 : editor.length();
+        boolean blank = sourceIndent.length() == lineEnd - editor.buffer.lineStart(line);
         if (shownTab.lineAnchor != line || !sourceIndent.equals(shownTab.lineSourceIndent)) {
             shownTab.lineAnchor = line; shownTab.lineSourceIndent = sourceIndent; shownTab.lineIndent = sourceIndent;
         }
@@ -477,9 +479,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         lineInput.setEnabled(enabled); lineMoreButton.setEnabled(enabled);
         lineLessButton.setEnabled(enabled && !shownTab.lineIndent.isEmpty());
         lineAddButton.setEnabled(enabled && !shownTab.lineDraft.isEmpty());
+        lineAddButton.setContentDescription(blank ? "Fill blank line" : "Add line below cursor");
         lineInputStatus.setText(!app.current().writable ? "Use Save As to add lines to this file" : shownTab.tasksOnly
                 ? "Switch to the full view to add lines" : app.current().replacing ? "Updating file…"
-                : "Add below line " + (line + 1) + " · Indent: " + shownTab.lineIndent.length()
+                : (blank ? "Fill line " : "Add below line ") + (line + 1) + " · Indent: " + shownTab.lineIndent.length()
                 + (shownTab.lineIndent.indexOf('\t') >= 0 ? " characters (tabs)" : " spaces"));
     }
 
@@ -495,11 +498,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         LineInsertion.Insertion insertion;
         try { insertion = LineInsertion.below(editor.getText(), editor.getSelectionEnd(), shownTab.lineIndent, shownTab.lineDraft); }
         catch (IllegalArgumentException e) { toast(e.getMessage()); return; }
-        if (editor.length() + insertion.text().length() > TextCodec.MAX_BYTES) { toast("The document is too large"); return; }
+        if (editor.length() - (insertion.end() - insertion.offset()) + insertion.text().length() > TextCodec.MAX_BYTES) { toast("The document is too large"); return; }
         EditorDocument doc = shownTab.document;
-        doc.buffer.edit(insertion.offset(), insertion.offset(), insertion.text());
+        doc.buffer.edit(insertion.offset(), insertion.end(), insertion.text());
         shownTab.selectionStart = shownTab.selectionEnd = insertion.cursor(); shownTab.lineDraft = "";
+        shownTab.lineAnchor = -1;
         refresh(false);
+        editor.setSelection(insertion.cursor());
         editor.bringPointIntoView(insertion.cursor()); saveViewState();
         lineInput.requestFocus();
     }

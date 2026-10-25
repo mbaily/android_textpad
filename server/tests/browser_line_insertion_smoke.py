@@ -17,7 +17,8 @@ def main(browser_name="chromium"):
         context = browser.new_context(viewport={"width": 1280, "height": 900}, has_touch=True)
         context.add_init_script("localStorage.setItem('textpad.editor.preferences', JSON.stringify({dividerDashes: 12}))")
         headers = {"Authorization": "Bearer " + TOKEN}
-        for doc_id, text in [("composer", original), ("empty-composer", ""), ("tabs-composer", "root\n\tfirst\n\t\tnested\n")]:
+        for doc_id, text in [("composer", original), ("empty-composer", ""), ("tabs-composer", "root\n\tfirst\n\t\tnested\n"),
+                             ("blank-lines", "Before\r\n  \r\nAfter\r\n")]:
             response = context.request.put(base + "/api/v1/documents/" + doc_id, headers=headers, data={
                 "name": doc_id + ".txt", "content_base64": base64.b64encode(text.encode()).decode(),
                 "base_revision": None, "request_id": "seed-" + doc_id,
@@ -161,6 +162,38 @@ def main(browser_name="chromium"):
         expect(page.locator("#save-status")).to_have_text("Saved")
         saved = context.request.get(base + "/api/v1/documents/composer", headers=headers).json()
         assert base64.b64decode(saved["content_base64"]) == "\r\n".join(expected).encode()
+
+        # Fill a blank line in place, keeping its terminator and neighboring
+        # lines, then do the same for the empty line at the end of the file.
+        page.locator(".file-item").filter(has_text="blank-lines.txt").click()
+        expect(lines).to_have_text(["Before", "  ", "After", ""])
+        editor.press("Control+Home"); editor.press("ArrowDown")
+        page.locator("#toggle-readonly").click()
+        expect(page.locator("#line-input-status")).to_have_text("Fill line 2 · Indent: 2 spaces")
+        expect(page.locator("#line-add")).to_have_attribute("aria-label", "Fill blank line")
+        new_line.fill("filled"); new_line.press("Enter")
+        expect(lines).to_have_text(["Before", "  filled", "After", ""])
+        expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 2 spaces")
+        expect(page.locator("#cursor-status")).to_contain_text("Ln 2, Col 9")
+        page.locator("#toggle-readonly").click()
+        page.locator("#undo").click()
+        expect(lines).to_have_text(["Before", "  ", "After", ""])
+        expect(page.locator("#save")).to_be_disabled()
+        page.locator("#redo").click()
+        editor.press("Control+End")
+        page.locator("#toggle-readonly").click()
+        expect(page.locator("#line-input-status")).to_have_text("Fill line 4 · Indent: 0 spaces")
+        new_line.fill("last"); new_line.press("Enter")
+        expect(lines).to_have_text(["Before", "  filled", "After", "last"])
+        page.locator("#toggle-readonly").click()
+        page.locator("#undo").click()
+        expect(lines).to_have_text(["Before", "  filled", "After", ""])
+        page.locator("#redo").click()
+        page.locator("#save").click()
+        expect(page.locator("#save-status")).to_have_text("Saved")
+        blank_saved = context.request.get(base + "/api/v1/documents/blank-lines", headers=headers).json()
+        assert base64.b64decode(blank_saved["content_base64"]) == b"Before\r\n  filled\r\nAfter\r\nlast"
+        page.get_by_role("tab", name="composer.txt", exact=True).click()
 
         # Drafts and indentation belong to their tab, and survive a clean remote refresh.
         page.locator("#toggle-readonly").click()

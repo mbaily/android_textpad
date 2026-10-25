@@ -55,8 +55,11 @@ export function adjustIndent(indent, unit, increase) {
 
 export function insertionBelow(text, offset, indent, input) {
   if (!/^[ \t]*$/.test(indent) || /[\r\n\u2028\u2029]/.test(input)) throw new Error("Enter a single line");
-  let end = text.indexOf("\n", Math.max(0, Math.min(offset, text.length)));
+  const start = lineStart(text, offset);
+  let end = text.indexOf("\n", start);
   if (end < 0) end = text.length;
-  const insert = (text.length ? "\n" : "") + indent + input;
-  return { from: end, insert, cursor: end + insert.length };
+  const blank = /^[ \t]*$/.test(text.slice(start, end));
+  const from = blank ? start : end;
+  const insert = (blank ? "" : "\n") + indent + input;
+  return { from, to: end, insert, cursor: from + insert.length };
 }

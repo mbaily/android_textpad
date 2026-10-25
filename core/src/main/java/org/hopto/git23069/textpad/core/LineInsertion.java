@@ -1,10 +1,10 @@
 package org.hopto.git23069.textpad.core;
 
-/** Plans insertions without replacing any existing text. Offsets use normalized LF text. */
+/** Plans one-line additions, reusing the current blank line. Offsets use normalized LF text. */
 public final class LineInsertion {
     private LineInsertion() { }
 
-    public record Insertion(int offset, String text) {
+    public record Insertion(int offset, int end, String text) {
         public int cursor() { return offset + text.length(); }
     }
 
@@ -67,8 +67,13 @@ public final class LineInsertion {
         if (!indent.matches("[ \\t]*") || input.indexOf('\n') >= 0 || input.indexOf('\r') >= 0
                 || input.indexOf('\u2028') >= 0 || input.indexOf('\u2029') >= 0)
             throw new IllegalArgumentException("Enter a single line");
-        int end = Math.max(0, Math.min(offset, text.length()));
-        while (end < text.length() && text.charAt(end) != '\n') end++;
-        return new Insertion(end, (text.length() == 0 ? "" : "\n") + indent + input);
+        int start = lineStart(text, offset), end = start;
+        boolean blank = true;
+        while (end < text.length() && text.charAt(end) != '\n') {
+            char c = text.charAt(end++);
+            if (c != ' ' && c != '\t') blank = false;
+        }
+        return blank ? new Insertion(start, end, indent + input)
+                : new Insertion(end, end, "\n" + indent + input);
     }
 }

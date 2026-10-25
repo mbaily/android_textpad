@@ -35,7 +35,7 @@ public class LineInsertionTest {
         String source = "root\r\n  first\r\n    nested\nlast";
         var doc = new DocumentBuffer(TextCodec.split(source, TextCodec.Encoding.UTF8, false));
         var insertion = LineInsertion.below(doc.text(), doc.text().indexOf("first") + 2, "  ", "new 😀");
-        doc.edit(insertion.offset(), insertion.offset(), insertion.text());
+        doc.edit(insertion.offset(), insertion.end(), insertion.text());
         assertEquals(source.replace("  first\r\n", "  first\r\n  new 😀\r\n"),
                 new String(doc.snapshot().bytes(), StandardCharsets.UTF_8));
         assertEquals(doc.text().indexOf("new 😀") + "new 😀".length(), insertion.cursor());
@@ -49,7 +49,45 @@ public class LineInsertionTest {
         assertEquals(5, last.offset()); assertEquals("\n  last", last.text());
         var terminated = LineInsertion.below("first\n", 2, "", "last");
         assertEquals(5, terminated.offset()); assertEquals("\nlast", terminated.text());
-        assertEquals("\nlast", LineInsertion.below("first\n", 6, "", "last").text());
+        assertEquals("last", LineInsertion.below("first\n", 6, "", "last").text());
+    }
+
+    @Test public void fillsOnlyTheCurrentBlankLineWithoutAddingASeparator() {
+        String[][] cases = {
+                {"first\n\nlast", "6", "  ", "first\n  added\nlast"},
+                {"first\n \t \nlast", "7", "  ", "first\n  added\nlast"},
+                {" \t ", "1", "", "added"},
+                {"first\n", "6", "", "first\nadded"},
+                {"first\n\n\nlast", "6", "", "first\nadded\n\nlast"},
+                {"\nfirst", "0", "", "added\nfirst"},
+        };
+        for (String[] item : cases) {
+            var doc = new DocumentBuffer(TextCodec.split(item[0], TextCodec.Encoding.UTF8, false));
+            int lines = doc.lineCount();
+            var insertion = LineInsertion.below(doc.text(), Integer.parseInt(item[1]), item[2], "added");
+            doc.edit(insertion.offset(), insertion.end(), insertion.text());
+            assertEquals(item[3], doc.text()); assertEquals(lines, doc.lineCount());
+            assertEquals(item[3].indexOf("added") + 5, insertion.cursor());
+        }
+    }
+
+    @Test public void fillingWhitespacePreservesExistingTerminatorsAndUndoRestoresExactBytes() throws Exception {
+        String source = "first\r\n \t \r\nlast\n";
+        var doc = new DocumentBuffer(TextCodec.split(source, TextCodec.Encoding.UTF8, false));
+        var insertion = LineInsertion.below(doc.text(), 7, "    ", "filled 😀");
+        assertEquals(6, insertion.offset()); assertEquals(9, insertion.end());
+        doc.edit(insertion.offset(), insertion.end(), insertion.text());
+        byte[] expected = source.replace(" \t \r\n", "    filled 😀\r\n").getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals(expected, doc.snapshot().bytes()); assertEquals(4, doc.lineCount());
+        doc.undo(); assertArrayEquals(source.getBytes(StandardCharsets.UTF_8), doc.snapshot().bytes());
+        assertFalse(doc.dirty()); doc.redo(); assertArrayEquals(expected, doc.snapshot().bytes());
+    }
+
+    @Test public void nonBlankWhitespaceCharactersRemainProtected() {
+        String source = " \u00a0";
+        var insertion = LineInsertion.below(source, 1, "", "added");
+        assertEquals(source.length(), insertion.offset()); assertEquals(source.length(), insertion.end());
+        assertEquals("\nadded", insertion.text());
     }
 
     @Test public void rejectsMultilineInputWithoutEditing() {
