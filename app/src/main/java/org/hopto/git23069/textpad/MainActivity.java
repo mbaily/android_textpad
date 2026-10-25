@@ -43,6 +43,7 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
+import org.hopto.git23069.textpad.core.LineInsertion;
 import org.hopto.git23069.textpad.core.TaskFilter;
 import org.hopto.git23069.textpad.core.TextCodec;
 import java.util.ArrayList;
@@ -67,6 +68,11 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private TextView location, status, findTitle, findResult;
     private CodeEditor editor;
     private EditText find, replacement;
+    private LinearLayout lineComposer;
+    private EditText lineInput;
+    private TextView lineInputStatus;
+    private Button lineLessButton, lineMoreButton, lineAddButton;
+    private boolean updatingLineInput;
     private CheckBox matchCase;
     private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, taskFilterButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private HashtagUi activeHashtagUi;
@@ -206,6 +212,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         libraryUi = new LibraryUi(this, app); body.addView(libraryUi.view, new android.widget.FrameLayout.LayoutParams(-1, -1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
+        buildLineComposer();
         root.addView(divider());
         HorizontalScrollView tools = new HorizontalScrollView(this); tools.setHorizontalScrollBarEnabled(false);
         editorTools = tools;
@@ -243,13 +250,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             public void beforeTextChanged(CharSequence s, int start, int count, int after) { this.start = start; this.count = count; }
             public void onTextChanged(CharSequence s, int start, int before, int count) { }
             public void afterTextChanged(Editable editable) {
-                if (changing || shownTab == null) return;
+                if (changing || shownTab == null || !isEditable(shownTab.document)) return;
                 DocumentBuffer currentBuf = editor.buffer;
                 if (currentBuf == null) return;
                 int addedCount = editable.length() - (currentBuf.length() - count);
                 if (addedCount < 0) return;
                 String replacement = editable.subSequence(start, start + addedCount).toString();
-                currentBuf.edit(start, start + count, replacement);
+                if (currentBuf.edit(start, start + count, replacement) == null) return;
                 if (shownTab.tasksOnly && shownTab.taskFilterResult != null && shownTab.taskFilterResult.visibleLines().length > 0) {
                     int v = Math.max(0, Math.min(currentBuf.lineAt(start), shownTab.taskFilterResult.visibleLines().length - 1));
                     int colStart = start - currentBuf.lineStart(v);
@@ -353,6 +360,101 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         return doc != null && doc.writable && !doc.replacing && !app.readOnlyMode;
     }
 
+    private void buildLineComposer() {
+        lineComposer = column(); lineComposer.setPadding(dp(12), dp(6), dp(12), dp(6));
+        lineComposer.setBackgroundColor(SURFACE);
+        lineInputStatus = label("", 11, MUTED); lineInputStatus.setId(R.id.line_input_status);
+        lineComposer.addView(lineInputStatus);
+        LinearLayout controls = row(); controls.setGravity(Gravity.CENTER_VERTICAL);
+        lineLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease new line indentation", v -> adjustLineIndent(false));
+        lineMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase new line indentation", v -> adjustLineIndent(true));
+        controls.addView(lineLessButton); controls.addView(lineMoreButton);
+        lineInput = field("Add one line…"); lineInput.setId(R.id.line_input);
+        lineInput.setContentDescription("New line text"); lineInput.setSingleLine(true);
+        lineInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        lineInput.setFilters(new android.text.InputFilter[]{(source, start, end, dest, dstart, dend) -> {
+            for (int i = start; i < end; i++) {
+                char c = source.charAt(i);
+                if (c == '\n' || c == '\r' || c == '\u2028' || c == '\u2029') {
+                    toast("Enter one line at a time"); return dest.subSequence(dstart, dend);
+                }
+            }
+            return null;
+        }});
+        lineInput.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            public void afterTextChanged(Editable text) {
+                if (!updatingLineInput && shownTab != null) {
+                    shownTab.lineDraft = text.toString(); updateLineComposer();
+                }
+            }
+        });
+        lineInput.setOnEditorActionListener((v, action, event) -> {
+            if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
+                if (event == null || event.getAction() == KeyEvent.ACTION_DOWN) addLine();
+                return true;
+            }
+            return false;
+        });
+        controls.addView(lineInput, new LinearLayout.LayoutParams(0, dp(48), 1));
+        lineAddButton = new Button(this); lineAddButton.setText("Add"); lineAddButton.setAllCaps(false);
+        lineAddButton.setContentDescription("Add line below cursor"); lineAddButton.setMinWidth(0); lineAddButton.setMinimumWidth(0);
+        lineAddButton.setOnClickListener(v -> addLine()); controls.addView(lineAddButton);
+        lineComposer.addView(controls); lineComposer.setVisibility(View.GONE); root.addView(lineComposer);
+    }
+
+    private boolean canAddLine() {
+        EditorDocument doc = app.current();
+        return app.readOnlyMode && doc != null && doc.writable && !doc.replacing && !app.filesVisible
+                && shownTab != null && !shownTab.tasksOnly;
+    }
+
+    private void updateLineComposer() {
+        boolean visible = app.readOnlyMode && shownTab != null && !app.filesVisible;
+        lineComposer.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (!visible) return;
+        int offset = Math.max(0, editor.getSelectionEnd());
+        int line = editor.buffer.lineAt(Math.min(offset, editor.length()));
+        String sourceIndent = LineInsertion.indentation(editor.getText(), offset);
+        if (shownTab.lineAnchor != line || !sourceIndent.equals(shownTab.lineSourceIndent)) {
+            shownTab.lineAnchor = line; shownTab.lineSourceIndent = sourceIndent; shownTab.lineIndent = sourceIndent;
+        }
+        if (!lineInput.getText().toString().equals(shownTab.lineDraft)) {
+            updatingLineInput = true; lineInput.setText(shownTab.lineDraft); lineInput.setSelection(lineInput.length()); updatingLineInput = false;
+        }
+        boolean enabled = canAddLine();
+        lineInput.setEnabled(enabled); lineMoreButton.setEnabled(enabled);
+        lineLessButton.setEnabled(enabled && !shownTab.lineIndent.isEmpty());
+        lineAddButton.setEnabled(enabled && !shownTab.lineDraft.isEmpty());
+        lineInputStatus.setText(!app.current().writable ? "Use Save As to add lines to this file" : shownTab.tasksOnly
+                ? "Switch to the full view to add lines" : app.current().replacing ? "Updating file…"
+                : "Add below line " + (line + 1) + " · Indent: " + shownTab.lineIndent.length()
+                + (shownTab.lineIndent.indexOf('\t') >= 0 ? " characters (tabs)" : " spaces"));
+    }
+
+    private void adjustLineIndent(boolean increase) {
+        if (!canAddLine()) return;
+        shownTab.lineIndent = LineInsertion.adjustIndent(shownTab.lineIndent,
+                LineInsertion.indentUnit(editor.getText(), editor.getSelectionEnd(), app.settings.indent()), increase);
+        updateLineComposer();
+    }
+
+    private void addLine() {
+        if (!canAddLine() || shownTab.lineDraft.isEmpty()) return;
+        LineInsertion.Insertion insertion;
+        try { insertion = LineInsertion.below(editor.getText(), editor.getSelectionEnd(), shownTab.lineIndent, shownTab.lineDraft); }
+        catch (IllegalArgumentException e) { toast(e.getMessage()); return; }
+        if (editor.length() + insertion.text().length() > TextCodec.MAX_BYTES) { toast("The document is too large"); return; }
+        EditorDocument doc = shownTab.document;
+        doc.buffer.edit(insertion.offset(), insertion.offset(), insertion.text());
+        shownTab.selectionStart = shownTab.selectionEnd = insertion.cursor(); shownTab.lineDraft = "";
+        refresh(false);
+        editor.bringPointIntoView(insertion.cursor()); saveViewState();
+        lineInput.requestFocus();
+    }
+
     private void toggleReadOnly() {
         app.readOnlyMode = !app.readOnlyMode;
         EditorDocument doc = app.current();
@@ -407,6 +509,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void updateStatus() {
         EditorDocument doc = app.current();
+        updateLineComposer();
         boolean editable = isEditable(doc);
         setButtonEnabled(undoButton, editable && doc.buffer.canUndo());
         setButtonEnabled(todoButton, editable);

@@ -160,8 +160,10 @@ PYTHONPATH=server ~/.cache/android-textpad/server-venv/bin/python -m unittest di
 npm ci --prefix server/frontend
 npm test --prefix server/frontend
 npm run build --prefix server/frontend
-# Requires Playwright and Chrome in the selected Python environment:
+# Requires Playwright, Chrome and Playwright WebKit in the selected Python environment:
 PYTHONPATH=server python3 server/tests/browser_smoke.py
+PYTHONPATH=server python3 server/tests/browser_line_insertion_smoke.py
+PYTHONPATH=server python3 server/tests/browser_line_insertion_smoke.py --browser webkit
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
 PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py

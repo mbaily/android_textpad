@@ -311,6 +311,115 @@ public class EditorInstrumentedTest {
             scenario.onActivity(activity -> {
                 assertFalse(app.current().writable); CodeEditor editor = activity.findViewById(R.id.editor);
                 assertNull(editor.getKeyListener()); editor.setSelection(0,4); assertEquals(4,editor.getSelectionEnd());
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                assertFalse(activity.findViewById(R.id.line_input).isEnabled());
+                assertFalse(button(activity.getWindow().getDecorView(), "Add line below cursor").isEnabled());
+            });
+        }
+    }
+
+    @Test public void readOnlyComposerAddsBelowTheCursorWithInferredIndentAndSharedUndo() throws Exception {
+        String original = "Heading\r\n  first\r\n    nested\n  second";
+        Uri uri = seed("line-composer.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(editor.getText().toString().indexOf("first") + 2);
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                assertTrue(editor.isCursorVisible()); assertNull(editor.getKeyListener());
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                input.setText("new 😀");
+                button(activity.getWindow().getDecorView(), "Increase new line indentation").performClick();
+                assertEquals("    ", app.currentTab().lineIndent);
+                button(activity.getWindow().getDecorView(), "Add line below cursor").performClick();
+                String expected = "Heading\n  first\n    new 😀\n    nested\n  second";
+                assertEquals(expected, editor.getText().toString());
+                assertEquals(expected, app.current().buffer.text());
+                assertEquals(expected.indexOf("new 😀") + "new 😀".length(), editor.getSelectionEnd());
+                assertEquals("", input.getText().toString());
+                editor.getText().replace(0, editor.length(), "blocked");
+                assertEquals(expected, editor.getText().toString());
+                input.setText("next");
+                input.getText().replace(0, input.length(), "bad\npaste");
+                assertEquals("next", input.getText().toString());
+                button(activity.getWindow().getDecorView(), "Decrease new line indentation").performClick();
+                assertEquals("  ", app.currentTab().lineIndent);
+                button(activity.getWindow().getDecorView(), "Add line below cursor").performClick();
+                assertEquals(expected.replace("    new 😀\n", "    new 😀\n  next\n"), editor.getText().toString());
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                button(activity.getWindow().getDecorView(), "Undo").performClick();
+                assertEquals(expected, editor.getText().toString());
+                button(activity.getWindow().getDecorView(), "Undo").performClick();
+                assertEquals(original.replace("\r\n", "\n"), editor.getText().toString());
+                assertFalse(app.current().buffer.dirty());
+                button(activity.getWindow().getDecorView(), "Redo").performClick();
+                try {
+                    assertEquals(original.replace("  first\r\n", "  first\r\n    new 😀\r\n"),
+                            new String(app.current().buffer.snapshot().bytes(), StandardCharsets.UTF_8));
+                } catch (Exception e) { throw new AssertionError(e); }
+            });
+        }
+    }
+
+    @Test public void readOnlyComposerKeepsDraftsAcrossTabsAndRecreationAndProtectsTaskViews() throws Exception {
+        try (var scenario = launch(null)) {
+            scenario.onActivity(activity -> {
+                app.newDocument();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.getText().append("[ ] first\n  [ ] nested"); editor.setSelection(0);
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                input.setText("draft");
+                button(activity.getWindow().getDecorView(), "Increase new line indentation").performClick();
+                app.duplicate(); assertEquals("", input.getText().toString());
+                app.selectedTab = app.tabs.get(0).id; app.refresh();
+                assertEquals("draft", input.getText().toString());
+                assertEquals("  ", app.currentTab().lineIndent);
+            });
+            scenario.recreate();
+            scenario.onActivity(activity -> {
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                assertEquals("draft", input.getText().toString());
+                assertEquals("  ", app.currentTab().lineIndent);
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                assertFalse(input.isEnabled());
+                assertFalse(button(activity.getWindow().getDecorView(), "Add line below cursor").isEnabled());
+                button(activity.getWindow().getDecorView(), "Filter uncompleted tasks").performClick();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(editor.length());
+                assertEquals("  ", app.currentTab().lineIndent);
+                button(activity.getWindow().getDecorView(), "Add line below cursor").performClick();
+                assertEquals("[ ] first\n  [ ] nested\n  draft", app.current().buffer.text());
+            });
+        }
+    }
+
+    @Test public void readOnlyCursorCanBeRepositionedByTouch() throws Exception {
+        Uri uri = seed("line-cursor.txt", "first\n  second\nthird".getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor); editor.setSelection(0);
+                button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            scenario.onActivity(activity -> {
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                android.text.Layout layout = editor.getLayout();
+                float x = editor.getTotalPaddingLeft() + layout.getPrimaryHorizontal(10) - editor.getScrollX();
+                int visualLine = layout.getLineForOffset(10);
+                float y = editor.getTotalPaddingTop() + (layout.getLineTop(visualLine) + layout.getLineBottom(visualLine)) / 2f - editor.getScrollY();
+                long now = android.os.SystemClock.uptimeMillis();
+                android.view.MotionEvent down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0);
+                android.view.MotionEvent up = android.view.MotionEvent.obtain(now, now + 30, android.view.MotionEvent.ACTION_UP, x, y, 0);
+                editor.dispatchTouchEvent(down); editor.dispatchTouchEvent(up); down.recycle(); up.recycle();
+                assertEquals(1, app.current().buffer.lineAt(editor.getSelectionEnd()));
+                assertEquals("  ", app.currentTab().lineIndent);
+                assertFalse(editor.getShowSoftInputOnFocus());
+                android.widget.EditText input = activity.findViewById(R.id.line_input); input.setText("added");
+                button(activity.getWindow().getDecorView(), "Add line below cursor").performClick();
+                assertEquals("first\n  second\n  added\nthird", app.current().buffer.text());
             });
         }
     }

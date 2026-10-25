@@ -29,6 +29,8 @@ final class CodeEditor extends EditText {
     Runnable onBlockedLineAction;
     private boolean lineNumbers = true;
     private boolean loadingDocumentText;
+    private boolean writable = true;
+    private final Paint positionPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private int gutterWidth;
     private Pattern searchPattern;
 
@@ -57,6 +59,8 @@ final class CodeEditor extends EditText {
         numbers.setTextAlign(Paint.Align.RIGHT); numbers.setTypeface(Typeface.MONOSPACE);
         matchPaint.setColor(0x668c7031); matchPaint.setStyle(Paint.Style.FILL);
         selectedMatchPaint.setColor(0xaa8c7031); selectedMatchPaint.setStyle(Paint.Style.FILL);
+        positionPaint.setColor(0xffa9d98b);
+        positionPaint.setStrokeWidth(dp(2));
         updateInputFilter();
     }
 
@@ -80,6 +84,7 @@ final class CodeEditor extends EditText {
 
     private void updateInputFilter() {
         setFilters(new InputFilter[]{(source, start, end, dest, dstart, dend) -> {
+            if (!writable && !loadingDocumentText) return dest.subSequence(dstart, dend);
             if (tasksOnly && !loadingDocumentText) {
                 boolean altersLines = false;
                 for (int i = start; i < end; i++) {
@@ -117,16 +122,24 @@ final class CodeEditor extends EditText {
     }
 
     void configure(EditorSettings settings, boolean writable) {
-        lineNumbers = settings.lineNumbers();
-        setTypeface(Typeface.create(settings.font(), Typeface.NORMAL));
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, settings.fontSize());
-        numbers.setTextSize(getTextSize() * .78f);
-        setHorizontallyScrolling(!settings.wrap());
-        setKeyListener(writable ? editingKeys : null);
-        setShowSoftInputOnFocus(writable);
-        if (!writable) setTextIsSelectable(true);
-        updateGutter();
-        requestLayout(); invalidate();
+        // TextView can reapply its text when changing editability/selectability.
+        loadingDocumentText = true;
+        try {
+            this.writable = writable;
+            lineNumbers = settings.lineNumbers();
+            setTypeface(Typeface.create(settings.font(), Typeface.NORMAL));
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, settings.fontSize());
+            numbers.setTextSize(getTextSize() * .78f);
+            setHorizontallyScrolling(!settings.wrap());
+            setKeyListener(writable ? editingKeys : null);
+            setShowSoftInputOnFocus(writable);
+            if (!writable) setTextIsSelectable(true);
+            setCursorVisible(true);
+            updateGutter();
+            requestLayout(); invalidate();
+        } finally {
+            loadingDocumentText = false;
+        }
     }
 
     void updateGutter() {
@@ -171,6 +184,14 @@ final class CodeEditor extends EditText {
             canvas.restore();
         }
         super.onDraw(canvas);
+        // TextView suppresses its caret when its KeyListener is null. Keep the
+        // insertion position visible even while the separate input has focus.
+        if (!writable && layout != null && getSelectionStart() >= 0 && getSelectionStart() == getSelectionEnd()) {
+            int offset = getSelectionStart(), line = layout.getLineForOffset(offset);
+            float x = layout.getPrimaryHorizontal(offset) + getTotalPaddingLeft();
+            canvas.drawLine(x, layout.getLineTop(line) + getTotalPaddingTop(),
+                    x, layout.getLineBottom(line) + getTotalPaddingTop(), positionPaint);
+        }
         if (!lineNumbers || layout == null || buffer == null) return;
         canvas.drawRect(getScrollX(), getScrollY(), getScrollX() + gutterWidth, getScrollY() + getHeight(), gutter);
         int first = layout.getLineForVertical(Math.max(0, getScrollY() - getTotalPaddingTop()));
@@ -188,7 +209,7 @@ final class CodeEditor extends EditText {
     @Override protected void onSelectionChanged(int start, int end) {
         super.onSelectionChanged(start, end);
         if (selectionChanged != null) selectionChanged.run();
-        if (searchPattern != null) invalidate();
+        if (searchPattern != null || !writable) invalidate();
     }
     @Override protected void onScrollChanged(int x, int y, int oldX, int oldY) {
         super.onScrollChanged(x, y, oldX, oldY);

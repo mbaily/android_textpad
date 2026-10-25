@@ -10,5 +10,7 @@ final class EditorTab {
     boolean tasksOnly;
     TaskFilter.FilterResult taskFilterResult;
     DocumentBuffer filteredBuffer;
+    String lineDraft = "", lineIndent = "", lineSourceIndent;
+    int lineAnchor = -1;
     EditorTab(long id, EditorDocument document) { this.id = id; this.document = document; }
 }

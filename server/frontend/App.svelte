@@ -1,12 +1,13 @@
 <script>
   import { onMount, tick } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { EditorState, Compartment, EditorSelection, ChangeSet, StateField } from "@codemirror/state";
+  import { EditorState, Compartment, EditorSelection, ChangeSet, StateField, Annotation } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, isolateHistory, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
   import { filterTasks, isClosedTask } from "./taskFilter.js";
   import { indexLibrary, libraryRows, folderEntries, folderPath, descendantIds } from "./libraryTree.js";
+  import { indentation, indentUnit, adjustIndent, insertionBelow } from "./lineInsertion.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -16,6 +17,7 @@
   const wrapCompartment = new Compartment();
   const guttersCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
+  const newLineInsertion = Annotation.define();
   const tasksFilterCompartment = new Compartment();
   const recentFilesKey = `textpad.editor.recentFiles:${prefix}`;
   const fonts = {
@@ -154,6 +156,7 @@
   let canUndo = $state(false);
   let canRedo = $state(false);
   let readOnly = $state(false);
+  let lineInputEl = $state(null);
   let pendingSyncCount = $state(0);
 
   let view = null;
@@ -862,6 +865,12 @@
     lineCount = view.state.doc.lines;
     canUndo = undoDepth(view.state) > 0;
     canRedo = redoDepth(view.state) > 0;
+    const sourceIndent = indentation(line.text, 0);
+    if (activeDoc.lineAnchor !== line.number || activeDoc.lineSourceIndent !== sourceIndent) {
+      activeDoc.lineAnchor = line.number;
+      activeDoc.lineSourceIndent = sourceIndent;
+      activeDoc.lineIndent = sourceIndent;
+    }
   }
 
   function openModal(config) {
@@ -994,8 +1003,9 @@
         history(),
         drawSelection(),
         readOnlyCompartment.of(
-          readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []
+          readOnlyExtensions()
         ),
+        EditorState.changeFilter.of(tr => !tr.startState.readOnly || tr.annotation(newLineInsertion) === true),
         tasksFilterCompartment.of(getTasksFilterExtension(doc)),
         rectangularSelection(),
         highlightActiveLineGutter(),
@@ -1088,6 +1098,10 @@
       scrollTop: 0,
       scrollLeft: 0,
       scrollSnapshot: null,
+      lineDraft: "",
+      lineIndent: "",
+      lineSourceIndent: null,
+      lineAnchor: -1,
     });
     const initialState = makeState(doc, metadata.text);
     doc.state = initialState;
@@ -1370,6 +1384,10 @@
     captureViewState(doc);
     const selection = doc.state.selection.main;
     const next = createDocModel(metadata);
+    next.lineDraft = doc.lineDraft;
+    next.lineIndent = doc.lineIndent;
+    next.lineSourceIndent = doc.lineSourceIndent;
+    next.lineAnchor = doc.lineAnchor;
     const bounds = diffBounds(before.toString(), metadata.text);
     const nextSelection = EditorSelection.range(
       mapDocPos(before, next.state.doc, bounds, selection.anchor),
@@ -2326,10 +2344,17 @@
     }
   }
 
+  function readOnlyExtensions() {
+    return readOnly ? [
+      EditorState.readOnly.of(true), EditorView.editable.of(false),
+      EditorView.contentAttributes.of({ tabindex: "0", "aria-readonly": "true", inputmode: "none" }),
+    ] : [];
+  }
+
   function toggleReadOnly() {
     readOnly = !readOnly;
     const effect = readOnlyCompartment.reconfigure(
-      readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []
+      readOnlyExtensions()
     );
     for (const doc of documents.values()) {
       if (active === doc.id && view) {
@@ -2339,6 +2364,39 @@
       }
     }
     if (view && !readOnly) view.focus();
+  }
+
+  function adjustNewLineIndent(increase) {
+    if (!readOnly || !activeDoc || !view || activeDoc.tasksOnly) return;
+    activeDoc.lineIndent = adjustIndent(activeDoc.lineIndent,
+      indentUnit(view.state.doc.toString(), view.state.selection.main.head), increase);
+  }
+
+  function rejectMultiline(event, text) {
+    if (/[\r\n\u2028\u2029]/.test(text || "")) {
+      event.preventDefault();
+      notice("Enter one line at a time");
+    }
+  }
+
+  function addLine() {
+    const doc = activeDoc;
+    if (!readOnly || !doc || !view || doc.tasksOnly || !doc.lineDraft) return;
+    let insertion;
+    try {
+      insertion = insertionBelow(view.state.doc.toString(), view.state.selection.main.head, doc.lineIndent, doc.lineDraft);
+    } catch (error) { notice(error.message, true); return; }
+    if (view.state.doc.length + insertion.insert.length > 10 * 1024 * 1024) {
+      notice("The document is too large", true); return;
+    }
+    view.dispatch({
+      changes: { from: insertion.from, insert: insertion.insert },
+      selection: EditorSelection.cursor(insertion.cursor),
+      annotations: [newLineInsertion.of(true), isolateHistory.of("full")],
+      scrollIntoView: true,
+    });
+    doc.lineDraft = "";
+    lineInputEl?.focus();
   }
 
   function toggleTasksFilter(targetDoc = activeDoc) {
@@ -3255,8 +3313,27 @@
           <p id="recent-files-empty" class="recent-files-empty" role="status">{libraryLoadError ? "Recent files could not be loaded. Use Refresh to retry." : fileListLoaded ? "No recent files yet." : "Loading recent files…"}</p>
         {/if}
       </section>
-      <div id="editor-host" class="editor-host" class:hidden={!activeDoc || filesView} aria-label="Document editor" bind:this={editorHost}></div>
+      <div id="editor-host" class="editor-host" class:read-only={readOnly} class:hidden={!activeDoc || filesView} aria-label="Document editor" bind:this={editorHost}></div>
     </div>
+
+    {#if readOnly && activeDoc && !filesView}
+      <form id="line-composer" class="line-composer" onsubmit={(event) => { event.preventDefault(); addLine(); }}>
+        <div id="line-input-status" class="line-input-status">
+          {#if activeDoc.tasksOnly}Switch to the full view to add lines
+          {:else}Add below line {cursorLine} · Indent: {activeDoc.lineIndent.length} {activeDoc.lineIndent.includes("\t") ? "characters (tabs)" : "spaces"}{/if}
+        </div>
+        <div class="line-input-controls">
+          <button id="line-indent-less" type="button" aria-label="Decrease new line indentation" title="Decrease new line indentation" disabled={activeDoc.tasksOnly || !activeDoc.lineIndent} onclick={() => adjustNewLineIndent(false)}>←</button>
+          <button id="line-indent-more" type="button" aria-label="Increase new line indentation" title="Increase new line indentation" disabled={activeDoc.tasksOnly} onclick={() => adjustNewLineIndent(true)}>→</button>
+          <input id="line-input" type="text" aria-label="New line text" aria-describedby="line-input-status" placeholder="Add one line…" autocomplete="off" disabled={activeDoc.tasksOnly}
+            value={activeDoc.lineDraft} bind:this={lineInputEl} oninput={(event) => { activeDoc.lineDraft = event.currentTarget.value; }}
+            onbeforeinput={(event) => rejectMultiline(event, event.data)}
+            onpaste={(event) => rejectMultiline(event, event.clipboardData?.getData("text/plain"))}
+            ondrop={(event) => rejectMultiline(event, event.dataTransfer?.getData("text/plain"))}>
+          <button id="line-add" type="submit" class="primary" aria-label="Add line below cursor" disabled={activeDoc.tasksOnly || !activeDoc.lineDraft}>Add</button>
+        </div>
+      </form>
+    {/if}
 
     <footer class="editor-status" class:hidden={filesView}>
       <span id="cursor-status">{cursorStatus}</span>
