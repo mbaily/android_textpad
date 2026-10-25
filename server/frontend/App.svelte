@@ -1,12 +1,12 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { EditorState, Compartment, EditorSelection, ChangeSet, StateField } from "@codemirror/state";
   import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, drawSelection, rectangularSelection, Decoration } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, isolateHistory, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
   import { filterTasks, isClosedTask } from "./taskFilter.js";
-  import { indexLibrary, libraryRows, folderPath, descendantIds } from "./libraryTree.js";
+  import { indexLibrary, libraryRows, folderEntries, folderPath, descendantIds } from "./libraryTree.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -73,6 +73,11 @@
   } catch {}
   let recentFileIds = $state(initialRecentFileIds);
   let fileFilter = $state("");
+  let initialFilesView = false;
+  try { initialFilesView = localStorage.getItem(`textpad.editor.view:${prefix}`) === "files"; } catch {}
+  let filesView = $state(initialFilesView);
+  let browserFilter = $state("");
+  let browserSelectedIds = $state([]);
   let active = $state(null);
   let sidebarCollapsed = $state(initialCollapsed);
   let preferences = $state(initialPrefs);
@@ -359,15 +364,19 @@
   }
 
   async function idbMoveFile(id, folderId) {
+    return idbMoveFiles([{ id, folder_id: folderId }]);
+  }
+
+  async function idbMoveFiles(movedFiles) {
     const db = await openOfflineDb();
     if (!db) return;
     await new Promise(resolve => {
       try {
         const tx = db.transaction(["files", "documents"], "readwrite");
-        for (const store of ["files", "documents"]) {
-          const request = tx.objectStore(store).get(id);
+        for (const file of movedFiles) for (const store of ["files", "documents"]) {
+          const request = tx.objectStore(store).get(file.id);
           request.onsuccess = () => {
-            if (request.result) tx.objectStore(store).put({ ...request.result, folder_id: folderId });
+            if (request.result) tx.objectStore(store).put({ ...request.result, folder_id: file.folder_id });
           };
         }
         tx.oncomplete = tx.onerror = () => resolve();
@@ -401,6 +410,10 @@
   }
 
   function selectFolder(id) {
+    if (selectedFolderId !== (id ?? null)) {
+      browserFilter = "";
+      browserSelectedIds = [];
+    }
     selectedFolderId = id ?? null;
     rememberLibraryState();
   }
@@ -419,6 +432,111 @@
     if (!expanded.delete(id)) expanded.add(id);
     expandedFolderIds = [...expanded];
     selectFolder(id);
+    if (filesView) closeSidebarOnMobile();
+  }
+
+  function showFiles() {
+    captureViewState();
+    filesView = true;
+    fullscreenRevision = false;
+    revealFolder(selectedFolderId);
+    closeSidebarOnMobile();
+  }
+
+  function browseFolder(id) {
+    selectFolder(id);
+    browserFilter = "";
+    browserSelectedIds = [];
+    revealFolder(id);
+    closeSidebarOnMobile();
+  }
+
+  function returnToEditor() {
+    if (active) activate(active);
+    else filesView = false;
+  }
+
+  function selectBrowserFile(id, checked) {
+    browserSelectedIds = checked ? [...new Set([...browserSelectedIds, id])] : browserSelectedIds.filter(item => item !== id);
+  }
+
+  async function moveSelectedFiles() {
+    const selection = selectedBrowserFiles.map(file => ({ ...file }));
+    if (!selection.length) return;
+    const pending = new Set((await idbGetAll("outbox")).map(item => item.id));
+    if (selection.some(file => file.unsaved || pending.has(file.id) || documents.get(file.id)?.saving || documents.get(file.id)?.pendingSync)) {
+      notice("Finish saving and syncing the selected files before moving them.", true);
+      return;
+    }
+    const result = await openModal({ type: "folderDestination", title: `Move ${selection.length} file${selection.length === 1 ? "" : "s"}`,
+      folderId: selectedFolderId, excluded: [],
+      actions: [{ label: "Cancel", value: false }, { label: "Move here", value: true, primary: true }] });
+    if (!result) return;
+    await mutateLibrary(async () => {
+      const pendingNow = new Set((await idbGetAll("outbox")).map(item => item.id));
+      if (selection.some(file => pendingNow.has(file.id) || documents.get(file.id)?.saving || documents.get(file.id)?.pendingSync))
+        throw new Error("Finish syncing the selected files before moving them.");
+      const resultFiles = await writeLibrary("/library/move", { method: "POST", body: JSON.stringify({
+        document_ids: selection.map(file => file.id), folder_id: result.folderId,
+      }) });
+      const moved = new Map(resultFiles.documents.map(file => [file.id, file]));
+      files = files.map(file => moved.has(file.id) ? { ...file, folder_id: moved.get(file.id).folder_id } : file);
+      for (const file of resultFiles.documents) {
+        const doc = documents.get(file.id);
+        if (doc) doc.folder_id = file.folder_id;
+      }
+      browserSelectedIds = [];
+      browserFilter = "";
+      selectFolder(result.folderId);
+      revealFolder(result.folderId);
+      await idbMoveFiles(resultFiles.documents);
+      notice(`Moved ${selection.length} file${selection.length === 1 ? "" : "s"} to ${folderLabel(result.folderId)}.`);
+    });
+  }
+
+  async function renameLibraryFile(file) {
+    let doc = documents.get(file.id);
+    if (doc?.saving || doc?.pendingSync || await idbGet("outbox", file.id)) {
+      notice("Finish syncing this file before renaming it.", true);
+      return;
+    }
+    const result = await openModal({ type: "renameFile", title: "Rename file", filename: doc?.name || file.name,
+      actions: [{ label: "Cancel", value: false }, { label: "Rename", value: true, primary: true }] });
+    if (!result) return;
+    const name = (result.filename || "").trim().normalize("NFC");
+    if (!name || [...name].length > 255 || name === "." || name === ".." || /[/\\\x00-\x1f\x7f]/.test(name)) {
+      notice("Choose a filename of 1–255 characters without slashes or control characters.", true);
+      return;
+    }
+    if (doc && !doc.revision) {
+      doc.name = name;
+      doc.dirty = isDocDirty(doc);
+      browserFilter = "";
+      return;
+    }
+    await mutateLibrary(async () => {
+      doc = documents.get(file.id);
+      if (doc?.saving || doc?.pendingSync || await idbGet("outbox", file.id))
+        throw new Error("Finish syncing this file before renaming it.");
+      const current = await api(`/documents/${file.id}`);
+      const renamed = await writeLibrary(`/documents/${file.id}/name`, { method: "PUT", body: JSON.stringify({
+        name, base_revision: current.revision, request_id: crypto.randomUUID(),
+      }) });
+      files = files.map(item => item.id === file.id ? { ...item, ...renamed } : item);
+      doc = documents.get(file.id);
+      if (doc) {
+        doc.name = renamed.name;
+        doc.savedName = renamed.name;
+        if (doc.revision === current.revision) {
+          doc.revision = renamed.revision;
+          doc.updated_at = renamed.updated_at;
+        } else doc.remoteChanged = true;
+        doc.dirty = isDocDirty(doc);
+      }
+      browserFilter = "";
+      await idbStoreDocument({ ...current, ...renamed });
+      notice(`Renamed to ${renamed.name}.`);
+    });
   }
 
   function folderLabel(id, compact = false) {
@@ -543,7 +661,8 @@
     selectFolder(folder.id);
     const action = await openModal({ type: "folderActions", title: folder.name, folder,
       actions: [{ label: "Close", value: null }] });
-    if (action === "file") await newFile(folder.id);
+    if (action === "browse") { showFiles(); browseFolder(folder.id); }
+    else if (action === "file") await newFile(folder.id);
     else if (action === "new") await nameFolder(null, folder.id);
     else if (action === "rename") await nameFolder(folder);
     else if (action === "move") await moveFolder(folder);
@@ -554,6 +673,7 @@
     const action = await openModal({ type: "fileActions", title: file.name, file,
       actions: [{ label: "Close", value: null }] });
     if (action === "open") await openFile(file.id);
+    else if (action === "rename") await renameLibraryFile(file);
     else if (action === "move") await moveFile(file);
   }
 
@@ -566,6 +686,11 @@
   });
   const library = $derived(indexLibrary(folders, sidebarFiles));
   const visibleLibrary = $derived(libraryRows(library, expandedFolderIds, fileFilter));
+  const browserPath = $derived(folderPath(library, selectedFolderId));
+  const browserEntries = $derived(folderEntries(library, selectedFolderId, browserFilter));
+  const browserFiles = $derived(browserEntries.filter(row => row.kind === "file").map(row => row.entry));
+  const selectableBrowserFiles = $derived(browserFiles.filter(file => !file.unsaved));
+  const selectedBrowserFiles = $derived(browserFiles.filter(file => browserSelectedIds.includes(file.id)));
   const recentFiles = $derived.by(() => {
     const available = new Map(files.map((file) => [file.id, file]));
     const ids = [...new Set([...recentFileIds, ...files.map((file) => file.id)])];
@@ -604,7 +729,9 @@
   );
 
   $effect(() => {
-    if (!activeDoc) {
+    try { localStorage.setItem(`textpad.editor.view:${prefix}`, filesView ? "files" : "editor"); } catch {}
+    if (filesView) document.title = "Files · Textpad";
+    else if (!activeDoc) {
       document.title = "Textpad · Synced files";
     } else {
       document.title = `${activeDoc.dirty ? "● " : ""}${activeDoc.name} · Textpad`;
@@ -1009,6 +1136,7 @@
   }
 
   function captureViewState(doc = viewDocument) {
+    if (filesView) return;
     if (!doc || !view || viewDocument !== doc) return;
     view.measure();
     doc.state = view.state;
@@ -1025,8 +1153,10 @@
     } catch {}
   }
 
-  function activate(id) {
+  function activate(id, showEditor = true) {
+    const wasBrowsing = filesView;
     captureViewState();
+    if (showEditor) filesView = false;
     active = id;
     const doc = id ? documents.get(id) ?? null : null;
     viewDocument = doc;
@@ -1034,12 +1164,12 @@
     if (doc && (doc.revision || doc.pendingSync)) rememberRecentFile(doc.id);
     if (doc && view) {
       view.setState(doc.state);
-      if (findOpen) syncSearchHighlight();
-      else view.focus();
-      if (doc.scrollSnapshot) {
+      if (!filesView && !wasBrowsing && findOpen) syncSearchHighlight();
+      else if (!filesView && !wasBrowsing) view.focus();
+      if (!filesView && !wasBrowsing && doc.scrollSnapshot) {
         view.dispatch({ effects: doc.scrollSnapshot });
         view.measure();
-      } else {
+      } else if (!filesView && !wasBrowsing) {
         view.scrollDOM.scrollTop = doc.scrollTop || 0;
         view.scrollDOM.scrollLeft = doc.scrollLeft || 0;
       }
@@ -1048,6 +1178,22 @@
       findResultText = "";
     }
     syncEditorMetrics();
+    if (wasBrowsing) tick().then(() => {
+      if (!filesView && active === id && view) {
+        view.requestMeasure();
+        if (doc) {
+          if (findOpen) syncSearchHighlight();
+          else view.focus();
+          if (doc.scrollSnapshot) {
+            view.dispatch({ effects: doc.scrollSnapshot });
+            view.measure();
+          } else {
+            view.scrollDOM.scrollTop = doc.scrollTop || 0;
+            view.scrollDOM.scrollLeft = doc.scrollLeft || 0;
+          }
+        }
+      }
+    });
     if (historyDocument && historyDocument !== id) closeHistory();
   }
 
@@ -1216,7 +1362,7 @@
       }
     }
     documents.delete(id);
-    if (active === id) activate(documents.keys().next().value || null);
+    if (active === id) activate(documents.keys().next().value || null, !filesView);
   }
 
   function applyCleanDocMetadata(doc, metadata) {
@@ -1236,7 +1382,7 @@
     next.scrollLeft = doc.scrollLeft;
     next.scrollSnapshot = mapScrollSnapshot(doc.scrollSnapshot, before, nextState.doc, bounds);
     documents.set(doc.id, next);
-    if (active === doc.id) activate(doc.id);
+    if (active === doc.id) activate(doc.id, false);
     return next;
   }
 
@@ -1434,7 +1580,7 @@
     doc.remoteChanged = false;
     doc.dirty = isDocDirty(doc, nextState.doc);
     doc.scrollSnapshot = mapScrollSnapshot(doc.scrollSnapshot, before, nextState.doc, bounds);
-    if (active === doc.id) activate(doc.id);
+    if (active === doc.id) activate(doc.id, false);
     notice("Merged newer server changes into your unsaved buffer.");
   }
 
@@ -2658,7 +2804,10 @@
         event.preventDefault();
         save().catch(failure);
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
-        if (activeDoc) {
+        if (filesView) {
+          event.preventDefault();
+          document.getElementById("browser-filter")?.focus();
+        } else if (activeDoc) {
           event.preventDefault();
           openFind(event.shiftKey);
         }
@@ -2846,15 +2995,16 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
       </button>
       <div id="tabs" class="tabs" role="tablist" aria-label="Open files">
+        <button id="files-tab" class="files-tab" class:active={filesView} role="tab" aria-selected={String(filesView)} aria-controls="folder-browser" onclick={showFiles}>Files</button>
         {#if documents.size === 0}
           <span class="tabs-placeholder">A little space to write.</span>
         {:else}
           {#each [...documents.values()] as doc (doc.id)}
-            <div class="tab" class:active={active === doc.id}>
+            <div class="tab" class:active={!filesView && active === doc.id}>
               <button
                 class="tab-main"
                 role="tab"
-                aria-selected={String(active === doc.id)}
+                aria-selected={String(!filesView && active === doc.id)}
                 title={doc.name}
                 onclick={() => activate(doc.id)}
               >
@@ -2872,6 +3022,7 @@
 
     <div
       class="toolbar"
+      class:hidden={filesView}
       role="toolbar"
       aria-label="Editor tools"
       tabindex="-1"
@@ -2966,7 +3117,7 @@
     </div>
 
     <div class="editor-body">
-      {#if findOpen && activeDoc}
+      {#if findOpen && activeDoc && !filesView}
         <dialog id="find-dialog" class="find-dialog cm-search" open aria-label={findAllFiles ? "Find in open files" : "Find in file"}>
           <div class="find-dialog-header">
             <h2 id="find-dialog-title">{findAllFiles ? "Find in open files" : "Find in file"}</h2>
@@ -3010,10 +3161,82 @@
           </div>
         </dialog>
       {/if}
-      <section id="welcome" class="recent-files-home" class:hidden={!!activeDoc} aria-labelledby="recent-files-title">
+      <section id="folder-browser" class="files-browser" class:hidden={!filesView} aria-labelledby="browser-title">
+        <div class="browser-heading">
+          <div><p class="eyebrow">LIBRARY</p><h1 id="browser-title">Files</h1></div>
+          <div class="browser-heading-actions">
+            <button id="browser-editor" onclick={returnToEditor}>Back to editor</button>
+            <button id="browser-new-folder" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => nameFolder()}>New folder</button>
+            <button id="browser-new-file" class="primary" onclick={() => newFile()}>New file</button>
+          </div>
+        </div>
+        <nav id="browser-breadcrumbs" class="browser-breadcrumbs" aria-label="Folder path">
+          <button aria-current={selectedFolderId == null ? "page" : undefined} onclick={() => browseFolder(null)}>Top level</button>
+          {#each browserPath as folder (folder.id)}
+            <span aria-hidden="true">/</span>
+            <button data-folder-id={folder.id} title={folder.name} aria-current={selectedFolderId === folder.id ? "page" : undefined} onclick={() => browseFolder(folder.id)}>{folder.name}</button>
+          {/each}
+        </nav>
+        <div class="browser-tools">
+          <button id="browser-up" aria-label="Up one folder" disabled={selectedFolderId == null} onclick={() => browseFolder(library.byId.get(selectedFolderId)?.parent_id ?? null)}>↑ Up</button>
+          <label class="sr-only" for="browser-filter">Search this folder</label>
+          <input id="browser-filter" type="search" placeholder="Search this folder…" bind:value={browserFilter} oninput={() => (browserSelectedIds = [])}>
+          <button id="browser-refresh" aria-label="Refresh folder" onclick={() => refreshFiles().catch(failure)}>Refresh</button>
+          {#if library.byId.has(selectedFolderId)}
+            <button id="browser-folder-actions" aria-label="Current folder actions" disabled={libraryBusy} onclick={() => folderActions(library.byId.get(selectedFolderId))}>Folder actions</button>
+          {/if}
+        </div>
+        {#if !apiOnline && fileListLoaded}<p class="browser-offline">Offline · Cached files are available. Connect to manage saved files and folders.</p>{/if}
+        <div class="browser-selection" aria-live="polite">
+          <span>{selectedBrowserFiles.length ? `${selectedBrowserFiles.length} file${selectedBrowserFiles.length === 1 ? "" : "s"} selected` : `${browserEntries.length} ${browserEntries.length === 1 ? "item" : "items"}`}</span>
+          {#if selectedBrowserFiles.length}
+            <button id="browser-move-selected" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => moveSelectedFiles().catch(failure)}>Move selected…</button>
+            <button id="browser-clear-selection" onclick={() => (browserSelectedIds = [])}>Clear selection</button>
+          {/if}
+        </div>
+        <div class="browser-table" role="table" aria-label="Folder contents">
+          <div class="browser-row browser-column-headings" role="row">
+            <div role="columnheader" class="browser-check">
+              <input id="browser-select-all" type="checkbox" aria-label="Select all files in this folder" disabled={!selectableBrowserFiles.length || libraryBusy}
+                checked={selectableBrowserFiles.length > 0 && selectableBrowserFiles.every(file => browserSelectedIds.includes(file.id))}
+                indeterminate={selectedBrowserFiles.length > 0 && selectedBrowserFiles.length < selectableBrowserFiles.length}
+                onchange={(event) => (browserSelectedIds = event.currentTarget.checked ? selectableBrowserFiles.map(file => file.id) : [])}>
+            </div>
+            <span role="columnheader">Name</span><span class="browser-size" role="columnheader">Size</span><span class="browser-updated" role="columnheader">Updated</span><span class="sr-only" role="columnheader">Actions</span>
+          </div>
+          {#each browserEntries as row (row.kind + row.entry.id)}
+            {@const entry = row.entry}
+            <div class="browser-row" class:selected={row.kind === "file" && browserSelectedIds.includes(entry.id)} role="row" data-kind={row.kind} data-entry-id={entry.id}>
+              <div class="browser-check" role="cell">
+                {#if row.kind === "file"}
+                  <input type="checkbox" aria-label={`Select ${entry.name}`} title={entry.unsaved ? "Save this file before selecting it" : `Select ${entry.name}`} disabled={libraryBusy || entry.unsaved}
+                    checked={browserSelectedIds.includes(entry.id)} onchange={(event) => selectBrowserFile(entry.id, event.currentTarget.checked)}>
+                {/if}
+              </div>
+              <div role="cell" class="browser-name-cell">
+                <button class="browser-entry" title={entry.name} onclick={() => row.kind === "folder" ? browseFolder(entry.id) : openFile(entry.id)}>
+                  {#if row.kind === "folder"}
+                    <svg class="browser-entry-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+                  {:else}
+                    <svg class="browser-entry-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>
+                  {/if}
+                  <span><span class="browser-entry-name">{entry.name}</span><span class="browser-entry-detail">{row.kind === "folder" ? `${(library.childFolders.get(entry.id)?.length || 0) + (library.childFiles.get(entry.id)?.length || 0)} items` : entry.unsaved ? "Unsaved file" : documents.get(entry.id)?.dirty ? "Unsaved changes in editor" : bytes(entry.size)}</span></span>
+                </button>
+              </div>
+              <span class="browser-size" role="cell">{row.kind === "folder" || entry.unsaved ? "—" : bytes(entry.size)}</span>
+              <span class="browser-updated" role="cell">{entry.unsaved ? "—" : date(entry.updated_at)}</span>
+              <div role="cell"><button class="entry-actions" aria-label={`Actions for ${row.kind} ${entry.name}`} disabled={libraryBusy} onclick={() => row.kind === "folder" ? folderActions(entry) : fileActions(entry)}><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button></div>
+            </div>
+          {/each}
+        </div>
+        {#if !browserEntries.length && (libraryLoadError || fileListLoaded || showLoadingHint)}
+          <p id="browser-empty" class="browser-empty" role="status">{libraryLoadError ? "This folder could not be loaded. Use Refresh to retry." : !fileListLoaded ? "Loading files and folders…" : browserFilter ? "No matching files or folders in this folder." : "This folder is empty. Create a file or folder to get started."}</p>
+        {/if}
+      </section>
+      <section id="welcome" class="recent-files-home" class:hidden={!!activeDoc || filesView} aria-labelledby="recent-files-title">
         <div class="recent-files-heading">
           <h2 id="recent-files-title">Recent files</h2>
-          <button id="welcome-new" class="primary" aria-label="New server file" onclick={() => newFile()}>New file</button>
+          <div class="welcome-actions"><button id="welcome-browse" onclick={showFiles}>Browse files</button><button id="welcome-new" class="primary" aria-label="New server file" onclick={() => newFile()}>New file</button></div>
         </div>
         {#if recentFiles.length > 0}
           <ul id="recent-file-list" class="recent-file-list" aria-label="Recent files">
@@ -3030,10 +3253,10 @@
           <p id="recent-files-empty" class="recent-files-empty" role="status">{libraryLoadError ? "Recent files could not be loaded. Use Refresh to retry." : fileListLoaded ? "No recent files yet." : "Loading recent files…"}</p>
         {/if}
       </section>
-      <div id="editor-host" class="editor-host" class:hidden={!activeDoc} aria-label="Document editor" bind:this={editorHost}></div>
+      <div id="editor-host" class="editor-host" class:hidden={!activeDoc || filesView} aria-label="Document editor" bind:this={editorHost}></div>
     </div>
 
-    <footer class="editor-status">
+    <footer class="editor-status" class:hidden={filesView}>
       <span id="cursor-status">{cursorStatus}</span>
       <div>
         <button id="encoding-status" class="text-button" disabled={!activeDoc} onclick={encodingSettings}>{encodingLabel}</button>
@@ -3043,7 +3266,7 @@
     </footer>
   </main>
 
-  <aside id="history-panel" class="history-panel" class:hidden={!historyDocument} aria-label="Revision history">
+  <aside id="history-panel" class="history-panel" class:hidden={!historyDocument || filesView} aria-label="Revision history">
     <div class="history-heading">
       <h2>History</h2>
       <div>
@@ -3113,7 +3336,7 @@
     </div>
   </aside>
 
-  <aside id="hashtags-panel" class="history-panel hashtags-panel" class:hidden={!hashtagsPanelOpen} aria-label="Hashtags and Tag groups">
+  <aside id="hashtags-panel" class="history-panel hashtags-panel" class:hidden={!hashtagsPanelOpen || filesView} aria-label="Hashtags and Tag groups">
     <div class="history-heading">
       <h2>Hashtags &amp; Tag groups</h2>
       <div>
@@ -3348,6 +3571,7 @@
         <p class="folder-dialog-location">In: {folderLabel(modalState.folderId, true)}</p>
       {:else if modalState?.type === "folderActions"}
         <div class="library-action-menu">
+          <button type="button" onclick={() => finishModal("browse")}>Browse folder</button>
           <button type="button" onclick={() => finishModal("file")}>New file</button>
           <button type="button" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => finishModal("new")}>New subfolder</button>
           <button type="button" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => finishModal("rename")}>Rename folder</button>
@@ -3358,6 +3582,7 @@
       {:else if modalState?.type === "fileActions"}
         <div class="library-action-menu">
           <button type="button" onclick={() => finishModal("open")}>Open file</button>
+          <button type="button" disabled={libraryBusy || ((!apiOnline || !folderSupport) && !modalState.file?.unsaved)} onclick={() => finishModal("rename")}>Rename file</button>
           <button type="button" disabled={libraryBusy || ((!apiOnline || !folderSupport) && !modalState.file?.unsaved)} onclick={() => finishModal("move")}>Move to folder…</button>
         </div>
       {:else if modalState?.type === "folderDestination"}

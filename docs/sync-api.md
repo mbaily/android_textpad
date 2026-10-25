@@ -91,9 +91,19 @@ The service creates daily consistent SQLite backups and retains them until manua
 
 The browser editor is at `/editor/` under the public endpoint. Its `/editor/api/` routes use a signed login session and CSRF validation for writes, independently of the Android bearer-token API. It lists current documents, returns decoded text and file-format metadata, accepts edited text with a base revision and request ID, previews history, restores old bytes through a new revision, and downloads saved file bytes. Browser edits and Android uploads share the same SQLite write transaction, revision sequence, and last-write-wins policy. Desktop saves preserve existing encodings, BOMs, and line terminators. Browser file names never address Android paths or arbitrary server files.
 
+The full-page Files view uses `POST /editor/api/library/move` with `document_ids`
+and a nullable `folder_id` to move several saved files in one transaction. Missing
+files or destinations reject the whole selection, with no content revisions.
+`PUT /editor/api/documents/{id}/name` accepts `name`, `base_revision`, and
+`request_id`; it preserves exact saved bytes and folder membership while recording
+the new filename in History. A concurrent content save returns HTTP 409 rather
+than restoring older bytes. Both operations also exist under the bearer-authenticated
+`/api/v1` prefix. The Files view keeps unsaved editor buffers intact during these
+operations.
+
 ## Change notifications
 
-`wss://git23069.hopto.org/android_textpad/api/v1/events` authenticates the WebSocket upgrade with the same bearer header as Android HTTPS requests. The browser uses `/editor/api/events` with its signed cookie and a mandatory matching Origin. Tokens are never passed in a URL.
+`wss://git23069.hopto.org:9443/android_textpad/api/v1/events` authenticates the WebSocket upgrade with the same bearer header as Android HTTPS requests. The browser uses `/editor/api/events` with its signed cookie and a mandatory matching Origin. Tokens are never passed in a URL.
 
 On connection the server sends `{"type":"ready","cursor":"42"}`; subsequent committed revisions, tag group changes, or folder/file-placement changes produce `{"type":"changed","cursor":"43"}`. The cursor is a monotonically increasing numeric string, combining the SQLite revision sequence high-water mark and persisted counters of tag group and library hierarchy changes across server processes. Clients treat it as a change hint and re-fetch current state. Notifications contain no document text, names, or credentials. Retrying an accepted request or saving an unchanged group creates no new notification.
 

@@ -375,24 +375,38 @@ class Store:
             self.on_commit()
 
     def move_document(self, document_id, folder_id):
-        identifier(document_id)
+        return self.move_documents([document_id], folder_id)[0]
+
+    def move_documents(self, document_ids, folder_id):
+        if not isinstance(document_ids, list) or not document_ids:
+            raise ValueError("Select at least one file to move.")
+        for document_id in document_ids:
+            identifier(document_id)
+        if len(set(document_ids)) != len(document_ids):
+            raise ValueError("Select each file only once.")
         if folder_id is not None:
             identifier(folder_id)
         with closing(self.connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                existing = db.execute("SELECT folder_id FROM documents WHERE id=?", (document_id,)).fetchone()
-                if existing is None:
-                    raise NotFound("Document not found.")
                 if folder_id is not None:
                     self._folder(db, folder_id)
-                changed = existing["folder_id"] != folder_id
-                if changed:
+                # Validate the whole selection before moving anything.
+                existing = []
+                for document_id in document_ids:
+                    row = db.execute("SELECT folder_id FROM documents WHERE id=? AND current_revision IS NOT NULL", (document_id,)).fetchone()
+                    if row is None:
+                        raise NotFound("A selected file no longer exists. Refresh the library and retry.")
+                    existing.append(row["folder_id"])
+                changed = any(parent != folder_id for parent in existing)
+                for document_id in document_ids:
                     db.execute("UPDATE documents SET folder_id=? WHERE id=?", (folder_id, document_id))
+                if changed:
                     self._library_changed(db, datetime.now(timezone.utc).isoformat(timespec="microseconds"))
                 columns = ",".join("r." + name for name in METADATA.split(","))
-                response = representation(db.execute(f"""SELECT {columns},d.folder_id FROM documents d
+                response = [representation(db.execute(f"""SELECT {columns},d.folder_id FROM documents d
                     JOIN revisions r ON d.current_revision=r.sequence WHERE d.id=?""", (document_id,)).fetchone())
+                    for document_id in document_ids]
                 db.commit()
             except BaseException:
                 db.rollback()
@@ -400,6 +414,15 @@ class Store:
         if changed and self.on_commit is not None:
             self.on_commit()
         return response
+
+    def rename_document(self, document_id, name, base_revision, request_id, client_id=None, source=None):
+        if base_revision is None:
+            raise ValueError("Provide the file's base_revision before renaming it.")
+        metadata, raw = self.get(document_id, base_revision)
+        # The conditional write rejects a concurrent content save rather than
+        # putting older saved bytes back. Existing receipts make retries safe.
+        return self.put(document_id, name, raw, base_revision, request_id, metadata["encoding"],
+                        client_id=client_id, source=source, require_base_revision=True)
 
     def _record_cursor(self, db, client_id, document_id, sequence):
         if client_id is None:

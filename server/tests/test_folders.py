@@ -12,7 +12,7 @@ import unittest
 
 from textpad_server import create_app
 from textpad_server.models import Folder
-from textpad_server.store import NotFound, RequestConflict, SCHEMA_VERSION, Store
+from textpad_server.store import NotFound, RequestConflict, RevisionConflict, SCHEMA_VERSION, Store
 
 
 class FolderStoreTests(unittest.TestCase):
@@ -24,6 +24,49 @@ class FolderStoreTests(unittest.TestCase):
 
     def file(self, document_id='doc', content=b'Original\r\n'):
         return self.store.put(document_id, 'notes.txt', content, None, 'first-' + document_id)
+
+    def test_group_moves_are_atomic_preserve_history_and_notify_once(self):
+        first, second = self.file('first'), self.file('second')
+        self.store.put_folder('home', 'Home')
+        events = []
+        self.store.on_commit = lambda: events.append(self.store.change_cursor())
+        before = self.store.change_cursor()
+        with self.assertRaises(NotFound):
+            self.store.move_documents(['first', 'missing', 'second'], 'home')
+        self.assertEqual(before, self.store.change_cursor())
+        self.assertEqual([None, None], [self.store.get_meta(doc)['folder_id'] for doc in ['first', 'second']])
+        moved = self.store.move_documents(['second', 'first'], 'home')
+        self.assertEqual(['second', 'first'], [item['id'] for item in moved])
+        self.assertEqual([second['revision'], first['revision']], [item['revision'] for item in moved])
+        self.assertEqual(['home', 'home'], [item['folder_id'] for item in moved])
+        self.assertEqual(1, len(events))
+        self.store.move_documents(['first', 'second'], 'home')
+        self.assertEqual(1, len(events))
+        for doc in ['first', 'second']:
+            self.assertEqual(b'Original\r\n', self.store.get(doc)[1])
+            self.assertEqual(1, len(self.store.revisions(doc)))
+        for invalid in [[], 'first', ['first', 'first'], ['first', '../bad']]:
+            with self.assertRaises(ValueError):
+                self.store.move_documents(invalid, None)
+
+    def test_conditional_rename_preserves_exact_bytes_folder_and_retry_receipt(self):
+        raw = b'\xff\xfe' + 'Original café 😀\r\n'.encode('utf-16-le')
+        first = self.file(content=raw)
+        self.store.put_folder('home', 'Home')
+        self.store.move_document('doc', 'home')
+        renamed = self.store.rename_document('doc', 'Renamed.txt', first['revision'], 'rename')
+        self.assertEqual('home', renamed['folder_id'])
+        self.assertEqual(raw, self.store.get('doc')[1])
+        self.assertEqual(first['sha256'], renamed['sha256'])
+        self.assertEqual(2, len(self.store.revisions('doc')))
+        newer = self.store.put('doc', 'Renamed.txt', b'Newer content\n', renamed['revision'], 'newer')
+        self.assertEqual(renamed, self.store.rename_document('doc', 'Renamed.txt', first['revision'], 'rename'))
+        with self.assertRaises(RevisionConflict):
+            self.store.rename_document('doc', 'Stale.txt', renamed['revision'], 'stale-rename')
+        self.assertEqual(newer['revision'], self.store.get_meta('doc')['revision'])
+        self.assertEqual(b'Newer content\n', self.store.get('doc')[1])
+        with self.assertRaises(ValueError):
+            self.store.rename_document('doc', 'Missing-base.txt', None, 'missing-base')
 
     def test_models_and_sibling_names_normalize_without_changing_folder_ids(self):
         folder = self.store.put_folder('home', ' Cafe\u0301 ')
@@ -275,11 +318,37 @@ class FolderApiTests(unittest.TestCase):
     def test_folder_endpoints_require_api_auth_and_browser_csrf(self):
         for method, path, data in [('get', '/folders', None), ('get', '/library/root', None),
                 ('put', '/folders/new', {'name': 'New'}), ('delete', '/folders/new', None),
-                ('put', '/documents/doc/folder', {'folder_id': None})]:
+                ('put', '/documents/doc/folder', {'folder_id': None}),
+                ('put', '/documents/doc/name', {'name': 'New.txt'}),
+                ('post', '/library/move', {'document_ids': ['doc'], 'folder_id': None})]:
             self.assertEqual(401, getattr(self.client, method)('/api/v1' + path, json=data).status_code)
         self.assertEqual(403, self.client.put('/editor/api/folders/new', json={'name': 'New'}).status_code)
         self.assertEqual(403, self.client.delete('/editor/api/folders/new').status_code)
         self.assertEqual(403, self.client.put('/editor/api/documents/doc/folder', json={'folder_id': None}).status_code)
+        self.assertEqual(403, self.client.put('/editor/api/documents/doc/name', json={'name': 'New.txt'}).status_code)
+        self.assertEqual(403, self.client.post('/editor/api/library/move', json={'document_ids': ['doc'], 'folder_id': None}).status_code)
+
+    def test_group_moves_and_conditional_renames_share_the_library(self):
+        self.client.put('/editor/api/folders/home', headers=self.csrf, json={'name': 'Home'})
+        originals = []
+        for doc in ['one', 'two']:
+            originals.append(self.client.put('/editor/api/documents/' + doc, headers=self.csrf,
+                json=dict(name=doc + '.txt', text='Original\n', base_revision=None, request_id='seed-' + doc)).json)
+        failed = self.client.post('/editor/api/library/move', headers=self.csrf, json={'document_ids': ['one', 'missing'], 'folder_id': 'home'})
+        self.assertEqual(404, failed.status_code)
+        self.assertIsNone(self.client.get('/editor/api/documents/one').json['folder_id'])
+        moved = self.client.post('/api/v1/library/move', headers=self.headers, json={'document_ids': ['one', 'two'], 'folder_id': 'home'})
+        self.assertEqual(200, moved.status_code)
+        self.assertEqual(['home', 'home'], [item['folder_id'] for item in moved.json['documents']])
+        renamed = self.client.put('/editor/api/documents/one/name', headers=self.csrf,
+            json=dict(name='Renamed.txt', base_revision=originals[0]['revision'], request_id='rename'))
+        self.assertEqual(200, renamed.status_code)
+        self.assertEqual('Renamed.txt', renamed.json['name'])
+        self.assertEqual('home', renamed.json['folder_id'])
+        self.assertEqual('Original\n', self.client.get('/editor/api/documents/one').json['text'])
+        stale = self.client.put('/api/v1/documents/one/name', headers=self.headers,
+            json=dict(name='Stale.txt', base_revision=originals[0]['revision'], request_id='stale'))
+        self.assertEqual(409, stale.status_code)
 
     def test_browser_and_android_share_folders_placement_and_conditional_metadata(self):
         home = self.client.put('/editor/api/folders/home', headers=self.csrf, json={'name': 'Home'})

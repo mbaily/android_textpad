@@ -554,6 +554,23 @@ def create_app(test_config=None):
             raise ValueError("Provide folder_id, or null for the top level.")
         return jsonify(store.move_document(document_id, payload["folder_id"]))
 
+    @app.post("/api/v1/library/move")
+    @app.post("/editor/api/library/move")
+    def move_documents():
+        payload = request.get_json()
+        if not isinstance(payload, dict) or "folder_id" not in payload:
+            raise ValueError("Provide document_ids and folder_id, or null for the top level.")
+        return jsonify(documents=store.move_documents(payload.get("document_ids"), payload["folder_id"]))
+
+    @app.put("/api/v1/documents/<document_id>/name")
+    @app.put("/editor/api/documents/<document_id>/name")
+    def rename_document(document_id):
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON filename, base_revision, and request_id.")
+        return jsonify(store.rename_document(document_id, payload.get("name"), payload.get("base_revision"),
+            payload.get("request_id"), client_id=client_cursor_id(payload), source="web" if request.path.startswith("/editor/") else "api"))
+
     @app.get("/api/v1/tag-groups")
     @app.get("/editor/api/tag-groups")
     def get_tag_groups():

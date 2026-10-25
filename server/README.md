@@ -33,6 +33,8 @@ The todo button adds `[ ]` to plain lines and cycles `[ ]` → `[X]` → `[C]` �
 
 When no file is open, the entry screen lists up to 30 recent files. Files opened or saved in this browser appear first, followed by other synced files in last-updated order. Opening history survives reloads on this device; cached files can be reopened offline. New unsaved documents are not added until saved.
 
+The **Files** tab opens a full-page folder browser with breadcrumbs, the sidebar tree, search within the current folder, file/folder action menus, and selection for moving several saved files atomically. Create, rename, and move files or folders, and delete empty folders. Opening a file or choosing **Back to editor** returns to editing with open tabs, unsaved buffers, undo history, and scroll position preserved. Renaming a saved file preserves its exact bytes and records the name change in History. Browsing works from the offline cache; saved-file management requires a connection.
+
 The sidebar and recent-file list load independently of offline uploads and hashtag settings. Reloads show cached files immediately while checking the server, and loading text appears only when the initial load exceeds 250 ms. A pending save that needs attention, or another tab holding the upload lock, does not hide the library. Saved offline edits remain visible and can be reopened while waiting to sync. Loading and connection failures have distinct messages; an empty-library message appears only after the library has loaded.
 
 Saving creates a server revision available to synced devices. WebSocket notifications refresh a clean open browser tab when another client saves; a dirty tab keeps its edits and reports the newer server version. The last save accepted by the server wins, and all displaced revisions remain in history. Closing a dirty tab offers Save/Discard/Cancel; leaving the page warns about unsaved edits. Open tabs and unsaved buffers live only in that browser session; no drafts are persisted.
@@ -164,6 +166,7 @@ PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
 PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py
 PYTHONPATH=server python3 server/tests/browser_folders_smoke.py
+PYTHONPATH=server python3 server/tests/browser_files_smoke.py
 PYTHONPATH=server python3 server/tests/browser_library_recovery_smoke.py
 PYTHONPATH=server python3 server/tests/browser_keyboard_smoke.py
 ```

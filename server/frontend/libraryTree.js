@@ -25,6 +25,14 @@ export function folderPath(index, folderId) {
   return path.reverse();
 }
 
+export function folderEntries(index, folderId, query = "") {
+  const q = query.trim().toLocaleLowerCase();
+  return [
+    ...(index.childFolders.get(folderId) || []).map(entry => ({ kind: "folder", entry })),
+    ...(index.childFiles.get(folderId) || []).map(entry => ({ kind: "file", entry })),
+  ].filter(row => !q || row.entry.name.toLocaleLowerCase().includes(q));
+}
+
 export function descendantIds(index, folderId) {
   const ids = new Set(), stack = [folderId];
   while (stack.length) {

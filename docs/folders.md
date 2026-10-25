@@ -70,6 +70,8 @@ Both `/api/v1` (bearer token) and `/editor/api` (session and CSRF on writes) pro
 | `PUT /folders/{id}` | Create/update `{"name": "Notes", "parent_id": "..."}`; null moves to top level |
 | `DELETE /folders/{id}` | Delete an empty folder; `{"deleted": true}` |
 | `PUT /documents/{id}/folder` | Move using `{"folder_id": "..."}` or `{"folder_id": null}` |
+| `POST /library/move` | Move `{"document_ids": ["..."], "folder_id": "..."}` atomically; null means top level |
+| `PUT /documents/{id}/name` | Rename using `{"name": "Notes.txt", "base_revision": "...", "request_id": "..."}` |
 
 An omitted `parent_id` defaults to the top level on creation and preserves the
 current parent on update. File moves require explicit `folder_id`, including null
@@ -82,13 +84,41 @@ paths use flat arrays; queries/path construction avoid language recursion and
 stored full-path length limits. This provides the models, persistence, server
 operations, and client transport used by the sidebar.
 
+Group moves validate the entire selection before writing, preserve file revisions,
+and emit one change notification. Missing files/folders reject the entire move.
+File renames make a normal history revision with the exact saved bytes and current
+folder. The required base revision rejects concurrent content saves with HTTP 409;
+request receipts allow an acknowledged rename to be retried without undoing newer
+edits. No schema change is needed for either operation.
+
+## Full-page Files view
+
+Choose the **Files** tab or **Browse files** on the recent-files screen to manage
+the library in the main workspace. The sidebar tree navigates folders; clickable
+breadcrumbs and **Up** navigate their parents. Contents show folders first, then
+files, alphabetically. Search filters names in the current folder. The view and
+current folder are remembered across reloads, and cached browsing works offline.
+
+Use **New file**, **New folder**, **Folder actions**, and each row's **⋯** menu to
+open, rename, move, or manage entries. Only empty folders can be deleted. File
+checkboxes and **Select all** support moving several saved files together. Files
+with pending saves must finish syncing before being moved or renamed. Unsaved new
+files can be renamed or moved individually. Saved-file rename and folder changes
+require a connection.
+
+Opening a file returns to its editor tab. **Back to editor** returns to the active
+tab or recent files. Browsing keeps the editor mounted, preserving open tabs,
+unsaved text, undo/redo, cursor, and scroll position. Moving or renaming saved files
+never saves an unsaved editor buffer. Live updates keep the browser current without
+switching views. File deletion is not offered.
+
 ## Browser sidebar
 
 The sidebar displays a collapsible tree, with folders before files and alphabetical
 ordering in each container. Selecting a folder sets the destination for the new
 file/folder buttons; **Top level** selects the virtual root. Folder **⋯** menus
 provide new file/subfolder, rename, move, and delete actions. File menus provide
-open and move actions. Unsaved new files also appear in their intended folder.
+open, rename, and move actions. Unsaved new files also appear in their intended folder.
 The move dialog browses immediate subfolders, with **Up one level**, **Top level**,
 and **Move here** controls. Folder moves exclude the source and its descendants.
 Deletion also checks local unsaved files before the server's nonempty check.
