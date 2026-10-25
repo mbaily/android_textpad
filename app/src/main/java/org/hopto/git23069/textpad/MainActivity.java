@@ -362,15 +362,15 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void buildLineComposer() {
-        lineComposer = column(); lineComposer.setPadding(dp(12), dp(6), dp(12), dp(6));
+        lineComposer = column();
         lineComposer.setBackgroundColor(SURFACE);
         lineComposerToggle = new Button(this); lineComposerToggle.setId(R.id.line_composer_toggle);
-        lineComposerToggle.setAllCaps(false); lineComposerToggle.setTextSize(13); lineComposerToggle.setTextColor(ACCENT);
-        lineComposerToggle.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); lineComposerToggle.setPadding(0, 0, 0, 0);
-        lineComposerToggle.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        lineComposerToggle.setText(""); lineComposerToggle.setMinHeight(0); lineComposerToggle.setMinimumHeight(0);
+        lineComposerToggle.setPadding(0, 0, 0, 0); lineComposerToggle.setBackground(lineComposerHandle());
         lineComposerToggle.setOnClickListener(v -> toggleLineComposer());
-        lineComposer.addView(lineComposerToggle, new LinearLayout.LayoutParams(-1, dp(44)));
+        lineComposer.addView(lineComposerToggle, new LinearLayout.LayoutParams(-1, dp(7)));
         lineComposerBody = column(); lineComposerBody.setId(R.id.line_composer_body);
+        lineComposerBody.setPadding(dp(12), dp(6), dp(12), dp(6));
         lineInputStatus = label("", 11, MUTED); lineInputStatus.setId(R.id.line_input_status);
         lineComposerBody.addView(lineInputStatus);
         LinearLayout controls = row(); controls.setGravity(Gravity.CENTER_VERTICAL);
@@ -414,6 +414,30 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         lineComposer.setVisibility(View.GONE); root.addView(lineComposer);
     }
 
+    private Drawable lineComposerHandle() {
+        return new Drawable() {
+            private final Paint background = new Paint(), stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+            private final Path chevron = new Path();
+            {
+                background.setColor(0xff263128); stroke.setColor(ACCENT);
+                stroke.setStyle(Paint.Style.STROKE); stroke.setStrokeWidth(dp(1));
+                stroke.setStrokeCap(Paint.Cap.ROUND); stroke.setStrokeJoin(Paint.Join.ROUND);
+            }
+            @Override public void draw(Canvas canvas) {
+                canvas.drawRect(getBounds(), background);
+                float x = getBounds().exactCenterX(), y = getBounds().exactCenterY();
+                float direction = lineComposerCollapsed ? 1 : -1, halfHeight = dp(3) / 2f;
+                chevron.reset(); chevron.moveTo(x - dp(4), y - direction * halfHeight);
+                chevron.lineTo(x, y + direction * halfHeight);
+                chevron.lineTo(x + dp(4), y - direction * halfHeight);
+                canvas.drawPath(chevron, stroke);
+            }
+            @Override public void setAlpha(int alpha) { background.setAlpha(alpha); stroke.setAlpha(alpha); invalidateSelf(); }
+            @Override public void setColorFilter(ColorFilter filter) { background.setColorFilter(filter); stroke.setColorFilter(filter); invalidateSelf(); }
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
+    }
+
     private void toggleLineComposer() {
         lineComposerCollapsed = !lineComposerCollapsed;
         app.settings.bool("lineComposerCollapsed", lineComposerCollapsed);
@@ -435,9 +459,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         boolean visible = app.readOnlyMode && shownTab != null && !app.filesVisible;
         lineComposer.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (!visible) return;
-        lineComposerToggle.setText((lineComposerCollapsed ? "▸" : "▾") + " Add one line");
         lineComposerToggle.setContentDescription(lineComposerCollapsed ? "Expand Add one line" : "Collapse Add one line");
+        lineComposerToggle.setTooltipText(lineComposerToggle.getContentDescription());
         lineComposerToggle.setStateDescription(lineComposerCollapsed ? "Collapsed" : "Expanded");
+        lineComposerToggle.invalidate();
         lineComposerBody.setVisibility(lineComposerCollapsed ? View.GONE : View.VISIBLE);
         int offset = Math.max(0, editor.getSelectionEnd());
         int line = editor.buffer.lineAt(Math.min(offset, editor.length()));

@@ -3331,9 +3331,8 @@
 
     {#if readOnly && activeDoc && !filesView}
       <form id="line-composer" class="line-composer" onsubmit={(event) => { event.preventDefault(); addLine(); }}>
-        <button id="line-composer-toggle" class="line-composer-toggle" type="button" aria-expanded={String(!lineComposerCollapsed)} aria-controls="line-composer-body" onclick={toggleLineComposer}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-          Add one line
+        <button id="line-composer-toggle" class="line-composer-toggle" type="button" aria-label="Add one line" title={lineComposerCollapsed ? "Expand Add one line" : "Collapse Add one line"} aria-expanded={String(!lineComposerCollapsed)} aria-controls="line-composer-body" onclick={toggleLineComposer}>
+          <svg viewBox="0 0 12 5" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="m2 4 4-3 4 3"/></svg>
         </button>
         <div id="line-composer-body" hidden={lineComposerCollapsed}>
           <div id="line-input-status" class="line-input-status">

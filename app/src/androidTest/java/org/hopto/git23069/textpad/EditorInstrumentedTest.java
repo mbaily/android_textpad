@@ -385,11 +385,16 @@ public class EditorInstrumentedTest {
                 assertEquals("  ", app.currentTab().lineIndent);
             });
             scenario.recreate();
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             scenario.onActivity(activity -> {
                 android.widget.EditText input = activity.findViewById(R.id.line_input);
                 assertEquals("draft", input.getText().toString());
                 assertEquals("  ", app.currentTab().lineIndent);
                 assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                View handle = activity.findViewById(R.id.line_composer_toggle);
+                int stripHeight = Math.round(7 * activity.getResources().getDisplayMetrics().density);
+                assertEquals(stripHeight, handle.getHeight());
+                assertEquals(stripHeight, ((View) handle.getParent()).getHeight());
                 assertEquals("Expand Add one line", activity.findViewById(R.id.line_composer_toggle).getContentDescription());
                 button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
                 button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
