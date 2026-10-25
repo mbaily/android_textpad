@@ -1,6 +1,7 @@
 """Read-only line composer checks against an isolated server (requires Playwright)."""
 import argparse
 import base64
+import re
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -13,7 +14,8 @@ def main(browser_name="chromium"):
     with fixture() as base, sync_playwright() as p:
         engine = getattr(p, browser_name)
         browser = engine.launch(**({"channel": "chrome", "args": ["--no-sandbox"]} if browser_name == "chromium" else {}))
-        context = browser.new_context(viewport={"width": 1280, "height": 900})
+        context = browser.new_context(viewport={"width": 1280, "height": 900}, has_touch=True)
+        context.add_init_script("localStorage.setItem('textpad.editor.preferences', JSON.stringify({dividerDashes: 12}))")
         headers = {"Authorization": "Bearer " + TOKEN}
         for doc_id, text in [("composer", original), ("empty-composer", ""), ("tabs-composer", "root\n\tfirst\n\t\tnested\n")]:
             response = context.request.put(base + "/api/v1/documents/" + doc_id, headers=headers, data={
@@ -55,6 +57,32 @@ def main(browser_name="chromium"):
         page.keyboard.press("ArrowDown")
 
         new_line = page.locator("#line-input")
+        snippets = [page.locator(selector) for selector in ("#insert-date", "#insert-time", "#insert-divider")]
+        for action in snippets:
+            expect(action).to_be_enabled()
+        # These tools edit the draft, including its selection, without touching
+        # the document or adding entries to its undo history.
+        page.locator("#insert-divider").click()
+        expect(new_line).to_have_value("------------")
+        expect(page.locator("#line-add")).to_be_enabled()
+        new_line.fill("before after")
+        new_line.evaluate("el => el.setSelectionRange(7, 12)")
+        date_value = page.evaluate("new Date().toLocaleDateString('en-CA')")
+        page.locator("#insert-date").click()
+        expect(new_line).to_have_value("before " + date_value)
+        expect(new_line).to_be_focused()
+        assert new_line.evaluate("el => el.selectionStart === el.value.length && el.selectionEnd === el.value.length")
+        new_line.evaluate("el => el.setSelectionRange(0, 6)")
+        page.locator("#insert-time").click()
+        expect(new_line).to_have_value(re.compile(r"^([1-9]|1[0-2]):[0-5][0-9] (AM|PM) " + re.escape(date_value) + r"$"))
+        new_line.evaluate("el => el.setSelectionRange(0, el.value.length)")
+        page.locator("#insert-divider").click()
+        expect(new_line).to_have_value("------------")
+        expect(new_line).to_be_focused()
+        expect(lines).to_have_text(original.replace("\r\n", "\n").split("\n"))
+        expect(page.locator("#save")).to_be_disabled()
+        expect(page.locator("#undo")).to_be_disabled()
+        expect(page.locator("#toggle-todo")).to_be_disabled()
         new_line.fill("new 😀")
         page.locator("#line-indent-more").click()
         expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 4 spaces")
@@ -65,6 +93,8 @@ def main(browser_name="chromium"):
         expanded_height = page.locator("#editor-host").bounding_box()["height"]
         disclosure.click()
         expect(disclosure).to_have_attribute("aria-expanded", "false")
+        for action in snippets:
+            expect(action).to_be_disabled()
         expect(new_line).to_be_hidden()
         expect(page.locator("#line-input-status")).to_be_hidden()
         assert page.locator("#line-composer").bounding_box()["height"] == 10
@@ -76,6 +106,8 @@ def main(browser_name="chromium"):
         disclosure.focus()
         page.keyboard.press("Enter")
         expect(disclosure).to_have_attribute("aria-expanded", "true")
+        for action in snippets:
+            expect(action).to_be_enabled()
         expect(new_line).to_have_value("new 😀")
         expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 4 spaces")
         assert page.locator(".cm-cursor-primary").evaluate("el => getComputedStyle(el).display") != "none"
@@ -136,6 +168,8 @@ def main(browser_name="chromium"):
         page.locator("#toggle-tasks-filter").click()
         expect(new_line).to_be_disabled()
         expect(page.locator("#line-add")).to_be_disabled()
+        for action in snippets:
+            expect(action).to_be_disabled()
         page.locator("#toggle-tasks-filter").click()
         expect(new_line).to_be_enabled()
         # Mouse positioning and tabs, including preserving a final newline.
@@ -161,12 +195,16 @@ def main(browser_name="chromium"):
             });
         }""")
         set_visual_viewport(page, 350, 170)
-        new_line.fill("mobile")
+        new_line.fill("mobile ")
+        mobile_date = page.evaluate("new Date().toLocaleDateString('en-CA')")
+        page.locator("#insert-date").scroll_into_view_if_needed()
+        page.locator("#insert-date").tap()
+        expect(new_line).to_have_value("mobile " + mobile_date)
         expect(new_line).to_be_focused()
         bounds = page.locator("#line-composer").bounding_box()
         assert bounds["y"] >= 170 and bounds["y"] + bounds["height"] <= 521, bounds
         new_line.press("Enter")
-        expect(lines).to_have_text(["root", "\tfirst", "\t\ttabbed", "\t\tmobile", "\t\tnested", ""])
+        expect(lines).to_have_text(["root", "\tfirst", "\t\ttabbed", "\t\tmobile " + mobile_date, "\t\tnested", ""])
         expect(new_line).to_be_focused()
         page.wait_for_function("""() => {
             const cursor = document.querySelector('.cm-cursor-primary').getBoundingClientRect();

@@ -446,7 +446,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             var keyboard = getSystemService(android.view.inputmethod.InputMethodManager.class);
             if (keyboard != null) keyboard.hideSoftInputFromWindow(lineInput.getWindowToken(), 0);
         }
-        updateLineComposer();
+        updateStatus();
     }
 
     private boolean canAddLine() {
@@ -567,9 +567,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         setButtonEnabled(moveUpButton, editable && (shownTab == null || !shownTab.tasksOnly));
         setButtonEnabled(moveDownButton, editable && (shownTab == null || !shownTab.tasksOnly));
         setButtonEnabled(redoButton, editable && doc.buffer.canRedo());
-        setButtonEnabled(timeButton, editable);
-        setButtonEnabled(dateButton, editable);
-        setButtonEnabled(dividerButton, editable);
+        boolean canInsertSnippet = editable || canAddLine();
+        setButtonEnabled(timeButton, canInsertSnippet);
+        setButtonEnabled(dateButton, canInsertSnippet);
+        setButtonEnabled(dividerButton, canInsertSnippet);
         setButtonEnabled(findAllButton, doc != null);
         setButtonEnabled(findButton, doc != null);
         setButtonEnabled(indentLessButton, editable);
@@ -845,6 +846,17 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void insertSnippet(String snippet) {
+        if (canAddLine()) {
+            int start = Math.max(0, Math.min(lineInput.getSelectionStart(), lineInput.getSelectionEnd()));
+            int end = Math.max(start, Math.max(lineInput.getSelectionStart(), lineInput.getSelectionEnd()));
+            if (lineInput.length() - (end - start) + snippet.length() > TextCodec.MAX_BYTES) {
+                toast("Insertion would exceed the editor size limit."); return;
+            }
+            lineInput.getText().replace(start, end, snippet);
+            lineInput.setSelection(start + snippet.length());
+            lineInput.requestFocus();
+            return;
+        }
         EditorDocument doc = app.current(); if (!isEditable(doc)) return;
         if (shownTab != null && shownTab.tasksOnly && snippet.contains("\n")) {
             toast("Lines cannot be added or deleted in this view"); return;

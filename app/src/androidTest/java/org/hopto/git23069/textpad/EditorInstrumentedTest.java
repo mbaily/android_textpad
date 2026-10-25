@@ -314,6 +314,62 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
                 assertFalse(activity.findViewById(R.id.line_input).isEnabled());
                 assertFalse(button(activity.getWindow().getDecorView(), "Add line below cursor").isEnabled());
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                    assertFalse(button(activity.getWindow().getDecorView(), action).isEnabled());
+            });
+        }
+    }
+
+    @Test public void readOnlyComposerReceivesDateTimeAndDividerWithoutEditingTheDocument() throws Exception {
+        String original = "[ ] first\n  note";
+        Uri uri = seed("line-tools.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                app.settings.prefs.edit().putInt("dividerDashes", 12).commit();
+                View decor = activity.getWindow().getDecorView();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(0, editor.length());
+                long documentState = app.current().buffer.state();
+                button(decor, "Toggle read-only mode").performClick();
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                    assertTrue(button(decor, action).isEnabled());
+                button(decor, "Insert dividing line").performClick();
+                assertEquals("------------", input.getText().toString());
+                assertTrue(button(decor, "Add line below cursor").isEnabled());
+                input.setText("before after"); input.setSelection(7, 12);
+                String date = java.time.LocalDate.now().toString();
+                button(decor, "Insert date").performClick();
+                assertEquals("before " + date, input.getText().toString());
+                assertEquals(input.length(), input.getSelectionEnd()); assertTrue(input.hasFocus());
+                input.setSelection(0, 6);
+                button(decor, "Insert time").performClick();
+                assertTrue(input.getText().toString().matches("([1-9]|1[0-2]):[0-5][0-9] (AM|PM) " + date));
+                input.setSelection(0, input.length());
+                button(decor, "Insert dividing line").performClick();
+                assertEquals("------------", input.getText().toString());
+                assertEquals(input.length(), input.getSelectionEnd()); assertTrue(input.hasFocus());
+                assertEquals(original, editor.getText().toString());
+                assertEquals(original, app.current().buffer.text());
+                assertEquals(documentState, app.current().buffer.state()); assertFalse(app.current().buffer.dirty());
+                assertFalse(button(decor, "Undo").isEnabled()); assertFalse(button(decor, "Toggle todo").isEnabled());
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                    assertFalse(button(decor, action).isEnabled());
+                activity.findViewById(R.id.line_composer_toggle).performClick();
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                    assertTrue(button(decor, action).isEnabled());
+                button(decor, "Filter uncompleted tasks").performClick();
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                    assertFalse(button(decor, action).isEnabled());
+                button(decor, "Filter uncompleted tasks").performClick();
+                assertEquals("------------", input.getText().toString());
+                assertFalse(app.current().buffer.dirty());
+                editor.setSelection(editor.length());
+                button(decor, "Add line below cursor").performClick();
+                assertEquals(original + "\n  ------------", app.current().buffer.text());
+                assertTrue(app.current().buffer.dirty());
             });
         }
     }

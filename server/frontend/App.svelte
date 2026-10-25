@@ -684,6 +684,7 @@
   }
 
   const activeDoc = $derived(active ? documents.get(active) ?? null : null);
+  const canComposeLine = $derived(Boolean(activeDoc && readOnly && !filesView && !activeDoc.tasksOnly && !lineComposerCollapsed));
   const sidebarFiles = $derived.by(() => {
     const entries = new Map(files.map(file => [file.id, file]));
     for (const doc of documents.values()) if (!doc.revision && !doc.pendingSync)
@@ -2466,6 +2467,17 @@
   }
 
   function insertSnippet(snippet) {
+    if (canComposeLine && lineInputEl) {
+      const start = lineInputEl.selectionStart ?? lineInputEl.value.length;
+      const end = lineInputEl.selectionEnd ?? start;
+      if (lineInputEl.value.length - (end - start) + snippet.length > 10 * 1024 * 1024) {
+        notice("Insertion would exceed the editor size limit.", true); return;
+      }
+      lineInputEl.focus();
+      lineInputEl.setRangeText(snippet, start, end, "end");
+      activeDoc.lineDraft = lineInputEl.value;
+      return;
+    }
     if (!activeDoc || !view || readOnly) return;
     if (activeDoc.tasksOnly && snippet.includes("\n")) {
       notice("Lines cannot be added or deleted in this view");
@@ -3102,7 +3114,9 @@
       onmousedown={(event) => {
         // Preserve focus without cancelling touch/pointer events: WebKit
         // suppresses the subsequent click if pointerdown is cancelled.
-        if (event.button === 0 && view?.hasFocus && event.target.closest("button")) {
+        const button = event.target.closest("button");
+        const usesLineInput = document.activeElement === lineInputEl && ["insert-date", "insert-time", "insert-divider"].includes(button?.id);
+        if (event.button === 0 && button && (view?.hasFocus || usesLineInput)) {
           event.preventDefault();
         }
       }}
@@ -3144,13 +3158,13 @@
       <button id="toggle-tasks-filter" class="icon-button" class:active={activeDoc?.tasksOnly} aria-pressed={String(Boolean(activeDoc?.tasksOnly))} title={activeDoc?.tasksOnly ? "Show all tasks (Ctrl+Alt+T)" : "Show uncompleted tasks only (Ctrl+Alt+T)"} aria-label="Show uncompleted tasks only" disabled={!activeDoc} onclick={() => toggleTasksFilter()}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="6" height="6" rx="1"/><line x1="12" y1="8" x2="21" y2="8"/><rect x="3" y="13" width="6" height="6" rx="1"/><line x1="12" y1="16" x2="21" y2="16"/></svg>
       </button>
-      <button id="insert-date" class="icon-button" title="Insert date (YYYY-MM-DD)" aria-label="Insert date" disabled={!activeDoc || readOnly} onclick={() => insertSnippet(currentDateString())}>
+      <button id="insert-date" class="icon-button" title="Insert date (YYYY-MM-DD)" aria-label="Insert date" disabled={!activeDoc || (readOnly && !canComposeLine)} onclick={() => insertSnippet(currentDateString())}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       </button>
-      <button id="insert-time" class="icon-button" title="Insert time (h:mm AM/PM)" aria-label="Insert time" disabled={!activeDoc || readOnly} onclick={() => insertSnippet(currentTimeString())}>
+      <button id="insert-time" class="icon-button" title="Insert time (h:mm AM/PM)" aria-label="Insert time" disabled={!activeDoc || (readOnly && !canComposeLine)} onclick={() => insertSnippet(currentTimeString())}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
       </button>
-      <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc || readOnly} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
+      <button id="insert-divider" class="icon-button" title="Insert dividing line" aria-label="Insert dividing line" disabled={!activeDoc || (readOnly && !canComposeLine)} onclick={() => insertSnippet("-".repeat(preferences.dividerDashes))}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="3" y1="12" x2="7" y2="12"/><line x1="10" y1="12" x2="14" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/></svg>
       </button>
       <button id="move-line-up" class="icon-button" title="Move line up (Alt+ArrowUp)" aria-label="Move line up" disabled={!activeDoc || readOnly || activeDoc?.tasksOnly} onclick={() => { moveLineUp(view); view.focus(); }}>
