@@ -1211,7 +1211,11 @@ class SyncTests(unittest.TestCase):
         watcher = Watcher(self.ws, self.api, settle=10, report=messages.append)
         watcher.step(0)
         watcher.step(10)
+        before = self.path.stat()
         self.path.write_bytes(b'ONE\ntwo\nthree\n')
+        # Simulated seconds must also advance the file signature: rapid same-size
+        # writes can share mtime/ctime on filesystems with coarse clock updates.
+        os.utime(self.path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
         watcher.step(11)
         self.remote(b'one\ntwo\nTHREE\n')
         watcher.notify()
