@@ -234,7 +234,7 @@ def main():
         expect(page.locator('#toggle-readonly')).to_have_attribute('aria-pressed','false')
         page.locator('#toggle-readonly').click()
         expect(page.locator('#toggle-readonly')).to_have_attribute('aria-pressed','true')
-        expect(page.locator('#toggle-todo')).to_be_disabled()
+        expect(page.locator('#toggle-todo')).to_be_enabled()
         expect(page.locator('#undo')).to_be_disabled()
         expect(page.locator('#save-status')).to_contain_text('Read only')
         page.locator('#toggle-readonly').click()

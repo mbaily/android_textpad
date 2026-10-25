@@ -57,8 +57,8 @@ def main(browser_name="chromium"):
         page.keyboard.press("ArrowDown")
 
         new_line = page.locator("#line-input")
-        snippets = [page.locator(selector) for selector in ("#insert-date", "#insert-time", "#insert-divider")]
-        for action in snippets:
+        draft_tools = [page.locator(selector) for selector in ("#insert-date", "#insert-time", "#insert-divider", "#toggle-todo")]
+        for action in draft_tools:
             expect(action).to_be_enabled()
         # These tools edit the draft, including its selection, without touching
         # the document or adding entries to its undo history.
@@ -82,7 +82,29 @@ def main(browser_name="chromium"):
         expect(lines).to_have_text(original.replace("\r\n", "\n").split("\n"))
         expect(page.locator("#save")).to_be_disabled()
         expect(page.locator("#undo")).to_be_disabled()
-        expect(page.locator("#toggle-todo")).to_be_disabled()
+        expect(page.locator("#toggle-todo")).to_be_enabled()
+        task = page.locator("#toggle-todo")
+        new_line.fill(""); task.click()
+        expect(new_line).to_have_value("[ ] ")
+        expect(new_line).to_be_focused()
+        assert new_line.evaluate("el => el.selectionStart === 4 && el.selectionEnd === 4")
+        new_line.fill("buy milk")
+        new_line.evaluate("el => el.setSelectionRange(4, 8)")
+        for marker in ("[ ]", "[X]", "[C]", "[ ]"):
+            task.click()
+            expect(new_line).to_have_value(marker + " buy milk")
+            expect(new_line).to_be_focused()
+            assert new_line.evaluate("el => el.value.slice(el.selectionStart, el.selectionEnd)") == "milk"
+        new_line.fill("  - buy milk")
+        for marker in ("[ ]", "[X]", "[C]", "[ ]"):
+            task.click()
+            expect(new_line).to_have_value("  - " + marker + " buy milk")
+        new_line.fill("\t* [x] done"); task.click()
+        expect(new_line).to_have_value("\t* [C] done")
+        new_line.fill("+ [c] cancelled"); task.click()
+        expect(new_line).to_have_value("+ [ ] cancelled")
+        expect(lines).to_have_text(original.replace("\r\n", "\n").split("\n"))
+        expect(page.locator("#save")).to_be_disabled()
         new_line.fill("new 😀")
         page.locator("#line-indent-more").click()
         expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 4 spaces")
@@ -93,7 +115,7 @@ def main(browser_name="chromium"):
         expanded_height = page.locator("#editor-host").bounding_box()["height"]
         disclosure.click()
         expect(disclosure).to_have_attribute("aria-expanded", "false")
-        for action in snippets:
+        for action in draft_tools:
             expect(action).to_be_disabled()
         expect(new_line).to_be_hidden()
         expect(page.locator("#line-input-status")).to_be_hidden()
@@ -106,7 +128,7 @@ def main(browser_name="chromium"):
         disclosure.focus()
         page.keyboard.press("Enter")
         expect(disclosure).to_have_attribute("aria-expanded", "true")
-        for action in snippets:
+        for action in draft_tools:
             expect(action).to_be_enabled()
         expect(new_line).to_have_value("new 😀")
         expect(page.locator("#line-input-status")).to_have_text("Add below line 2 · Indent: 4 spaces")
@@ -168,7 +190,7 @@ def main(browser_name="chromium"):
         page.locator("#toggle-tasks-filter").click()
         expect(new_line).to_be_disabled()
         expect(page.locator("#line-add")).to_be_disabled()
-        for action in snippets:
+        for action in draft_tools:
             expect(action).to_be_disabled()
         page.locator("#toggle-tasks-filter").click()
         expect(new_line).to_be_enabled()
@@ -200,11 +222,14 @@ def main(browser_name="chromium"):
         page.locator("#insert-date").scroll_into_view_if_needed()
         page.locator("#insert-date").tap()
         expect(new_line).to_have_value("mobile " + mobile_date)
+        task.scroll_into_view_if_needed()
+        task.tap()
+        expect(new_line).to_have_value("[ ] mobile " + mobile_date)
         expect(new_line).to_be_focused()
         bounds = page.locator("#line-composer").bounding_box()
         assert bounds["y"] >= 170 and bounds["y"] + bounds["height"] <= 521, bounds
         new_line.press("Enter")
-        expect(lines).to_have_text(["root", "\tfirst", "\t\ttabbed", "\t\tmobile " + mobile_date, "\t\tnested", ""])
+        expect(lines).to_have_text(["root", "\tfirst", "\t\ttabbed", "\t\t[ ] mobile " + mobile_date, "\t\tnested", ""])
         expect(new_line).to_be_focused()
         page.wait_for_function("""() => {
             const cursor = document.querySelector('.cm-cursor-primary').getBoundingClientRect();

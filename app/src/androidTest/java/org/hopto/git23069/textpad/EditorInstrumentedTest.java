@@ -166,7 +166,7 @@ public class EditorInstrumentedTest {
                 assertTrue(editor.getText().toString().endsWith("😀")); assertTrue(app.current().buffer.dirty());
                 assertTrue(app.readOnlyMode);
                 assertNull(editor.getKeyListener());
-                assertFalse(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
+                assertTrue(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
             });
         }
     }
@@ -190,7 +190,7 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(),"Toggle read-only mode").performClick();
                 assertNull(editor.getKeyListener());
                 assertFalse(button(activity.getWindow().getDecorView(),"Undo").isEnabled());
-                assertFalse(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
+                assertTrue(button(activity.getWindow().getDecorView(),"Toggle todo").isEnabled());
                 button(activity.getWindow().getDecorView(),"Toggle read-only mode").performClick();
                 assertNotNull(editor.getKeyListener());
                 assertTrue(button(activity.getWindow().getDecorView(),"Undo").isEnabled());
@@ -314,7 +314,7 @@ public class EditorInstrumentedTest {
                 button(activity.getWindow().getDecorView(), "Toggle read-only mode").performClick();
                 assertFalse(activity.findViewById(R.id.line_input).isEnabled());
                 assertFalse(button(activity.getWindow().getDecorView(), "Add line below cursor").isEnabled());
-                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line", "Toggle todo"})
                     assertFalse(button(activity.getWindow().getDecorView(), action).isEnabled());
             });
         }
@@ -333,7 +333,7 @@ public class EditorInstrumentedTest {
                 long documentState = app.current().buffer.state();
                 button(decor, "Toggle read-only mode").performClick();
                 android.widget.EditText input = activity.findViewById(R.id.line_input);
-                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line", "Toggle todo"})
                     assertTrue(button(decor, action).isEnabled());
                 button(decor, "Insert dividing line").performClick();
                 assertEquals("------------", input.getText().toString());
@@ -353,15 +353,15 @@ public class EditorInstrumentedTest {
                 assertEquals(original, editor.getText().toString());
                 assertEquals(original, app.current().buffer.text());
                 assertEquals(documentState, app.current().buffer.state()); assertFalse(app.current().buffer.dirty());
-                assertFalse(button(decor, "Undo").isEnabled()); assertFalse(button(decor, "Toggle todo").isEnabled());
+                assertFalse(button(decor, "Undo").isEnabled()); assertTrue(button(decor, "Toggle todo").isEnabled());
                 activity.findViewById(R.id.line_composer_toggle).performClick();
-                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line", "Toggle todo"})
                     assertFalse(button(decor, action).isEnabled());
                 activity.findViewById(R.id.line_composer_toggle).performClick();
-                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line", "Toggle todo"})
                     assertTrue(button(decor, action).isEnabled());
                 button(decor, "Filter uncompleted tasks").performClick();
-                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line"})
+                for (String action : new String[]{"Insert date", "Insert time", "Insert dividing line", "Toggle todo"})
                     assertFalse(button(decor, action).isEnabled());
                 button(decor, "Filter uncompleted tasks").performClick();
                 assertEquals("------------", input.getText().toString());
@@ -369,6 +369,52 @@ public class EditorInstrumentedTest {
                 editor.setSelection(editor.length());
                 button(decor, "Add line below cursor").performClick();
                 assertEquals(original + "\n  ------------", app.current().buffer.text());
+                assertTrue(app.current().buffer.dirty());
+            });
+        }
+    }
+
+    @Test public void readOnlyComposerCyclesTaskMarkersWithoutEditingExistingLines() throws Exception {
+        String original = "[ ] first\n  note";
+        Uri uri = seed("line-task-markers.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                View decor = activity.getWindow().getDecorView();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(0, editor.length());
+                long documentState = app.current().buffer.state();
+                button(decor, "Toggle read-only mode").performClick();
+                View task = button(decor, "Toggle todo"); assertTrue(task.isEnabled());
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                task.performClick(); assertEquals("[ ] ", input.getText().toString());
+                assertEquals(4, input.getSelectionEnd()); assertTrue(input.hasFocus());
+                input.setText("buy milk"); input.setSelection(4, 8);
+                for (String marker : new String[]{"[ ]", "[X]", "[C]", "[ ]"}) {
+                    task.performClick(); assertEquals(marker + " buy milk", input.getText().toString());
+                    assertEquals("milk", input.getText().subSequence(input.getSelectionStart(), input.getSelectionEnd()).toString());
+                    assertTrue(input.hasFocus());
+                }
+                input.setText("  - buy milk"); input.setSelection(input.length());
+                for (String marker : new String[]{"[ ]", "[X]", "[C]", "[ ]"}) {
+                    task.performClick(); assertEquals("  - " + marker + " buy milk", input.getText().toString());
+                }
+                input.setText("\t* [x] done"); task.performClick();
+                assertEquals("\t* [C] done", input.getText().toString());
+                input.setText("+ [c] cancelled"); task.performClick();
+                assertEquals("+ [ ] cancelled", input.getText().toString());
+                assertEquals(original, editor.getText().toString());
+                assertEquals(documentState, app.current().buffer.state()); assertFalse(app.current().buffer.dirty());
+                input.setText("buy milk"); task.performClick();
+                activity.findViewById(R.id.line_composer_toggle).performClick(); assertFalse(task.isEnabled());
+                activity.findViewById(R.id.line_composer_toggle).performClick(); assertTrue(task.isEnabled());
+                assertEquals("[ ] buy milk", input.getText().toString());
+                button(decor, "Filter uncompleted tasks").performClick(); assertFalse(task.isEnabled());
+                button(decor, "Filter uncompleted tasks").performClick(); assertTrue(task.isEnabled());
+                assertFalse(app.current().buffer.dirty());
+                editor.setSelection(editor.length());
+                button(decor, "Add line below cursor").performClick();
+                assertEquals(original + "\n  [ ] buy milk", app.current().buffer.text());
                 assertTrue(app.current().buffer.dirty());
             });
         }

@@ -2505,9 +2505,21 @@
   }
 
   function toggleTodo() {
-    if (!activeDoc || !view || readOnly) return;
-    const sel = view.state.selection.main;
-    const doc = view.state.doc;
+    const composing = canComposeLine && Boolean(lineInputEl);
+    if (!activeDoc || !view || (readOnly && !composing)) return;
+    let state = view.state;
+    if (composing) {
+      const start = lineInputEl.selectionStart ?? lineInputEl.value.length;
+      const end = lineInputEl.selectionEnd ?? start;
+      const backwards = lineInputEl.selectionDirection === "backward";
+      // Reuse the document's task edits and selection mapping on the draft.
+      state = EditorState.create({
+        doc: lineInputEl.value,
+        selection: { anchor: backwards ? end : start, head: backwards ? start : end },
+      });
+    }
+    const sel = state.selection.main;
+    const doc = state.doc;
     const startLine = doc.lineAt(sel.from);
     const effectiveTo = sel.to > sel.from && doc.sliceString(sel.to - 1, sel.to) === "\n" ? sel.to - 1 : sel.to;
     const endLine = doc.lineAt(effectiveTo);
@@ -2549,7 +2561,7 @@
       }
     }
     if (!changes.length) {
-      view.focus();
+      if (composing) lineInputEl.focus(); else view.focus();
       return;
     }
     let nextAnchor = sel.anchor;
@@ -2582,6 +2594,19 @@
         nextAnchor = newTo;
         nextHead = newFrom;
       }
+    }
+    if (composing) {
+      const length = doc.length + changes.reduce((delta, ch) => delta + ch.insert.length - (ch.to - ch.from), 0);
+      if (length > 10 * 1024 * 1024) {
+        notice("Insertion would exceed the editor size limit.", true); return;
+      }
+      const next = state.update({ changes, selection: { anchor: nextAnchor, head: nextHead } }).state;
+      lineInputEl.focus();
+      lineInputEl.value = next.doc.toString();
+      const range = next.selection.main;
+      lineInputEl.setSelectionRange(range.from, range.to, range.anchor > range.head ? "backward" : "forward");
+      activeDoc.lineDraft = lineInputEl.value;
+      return;
     }
     view.dispatch({
       changes,
@@ -3115,7 +3140,7 @@
         // Preserve focus without cancelling touch/pointer events: WebKit
         // suppresses the subsequent click if pointerdown is cancelled.
         const button = event.target.closest("button");
-        const usesLineInput = document.activeElement === lineInputEl && ["insert-date", "insert-time", "insert-divider"].includes(button?.id);
+        const usesLineInput = document.activeElement === lineInputEl && ["insert-date", "insert-time", "insert-divider", "toggle-todo"].includes(button?.id);
         if (event.button === 0 && button && (view?.hasFocus || usesLineInput)) {
           event.preventDefault();
         }
@@ -3152,7 +3177,7 @@
       <button id="indent-more" class="icon-button" title="Increase indentation" aria-label="Increase indentation" disabled={!activeDoc || readOnly} onclick={() => { indentMore(view); view.focus(); }}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="5" x2="4" y2="19"/><line x1="8" y1="12" x2="19" y2="12"/><polyline points="15 8 19 12 15 16"/></svg>
       </button>
-      <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] → [X] → [C] → [ ])" aria-label="Toggle todo" disabled={!activeDoc || readOnly} onclick={toggleTodo}>
+      <button id="toggle-todo" class="icon-button" title="Toggle todo ([ ] → [X] → [C] → [ ])" aria-label="Toggle todo" disabled={!activeDoc || (readOnly && !canComposeLine)} onclick={toggleTodo}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="8.5 12.5 11 15 16 9.5"/></svg>
       </button>
       <button id="toggle-tasks-filter" class="icon-button" class:active={activeDoc?.tasksOnly} aria-pressed={String(Boolean(activeDoc?.tasksOnly))} title={activeDoc?.tasksOnly ? "Show all tasks (Ctrl+Alt+T)" : "Show uncompleted tasks only (Ctrl+Alt+T)"} aria-label="Show uncompleted tasks only" disabled={!activeDoc} onclick={() => toggleTasksFilter()}>

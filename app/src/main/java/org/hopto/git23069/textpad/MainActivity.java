@@ -561,7 +561,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         updateLineComposer();
         boolean editable = isEditable(doc);
         setButtonEnabled(undoButton, editable && doc.buffer.canUndo());
-        setButtonEnabled(todoButton, editable);
+        setButtonEnabled(todoButton, editable || canAddLine());
         setButtonEnabled(taskFilterButton, doc != null);
         taskFilterButton.setBackground(iconDrawable(Icon.TASK_FILTER, shownTab != null && shownTab.tasksOnly ? ACCENT : TEXT));
         setButtonEnabled(moveUpButton, editable && (shownTab == null || !shownTab.tasksOnly));
@@ -924,9 +924,11 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void toggleTodo() {
-        EditorDocument doc = app.current(); if (!isEditable(doc)) return;
-        int selStart = Math.max(0, editor.getSelectionStart()), selEnd = Math.max(selStart, editor.getSelectionEnd());
-        String text = editor.getText().toString();
+        boolean composing = canAddLine();
+        EditorDocument doc = app.current(); if (!composing && !isEditable(doc)) return;
+        EditText target = composing ? lineInput : editor;
+        int selStart = Math.max(0, target.getSelectionStart()), selEnd = Math.max(selStart, target.getSelectionEnd());
+        String text = target.getText().toString();
         int blockStart = text.lastIndexOf('\n', Math.max(-1, selStart - 1)) + 1;
         int effectiveEnd = selEnd > selStart && text.charAt(selEnd - 1) == '\n' ? selEnd - 1 : selEnd;
         int blockEnd = text.indexOf('\n', effectiveEnd);
@@ -971,10 +973,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             String line = raw.substring(0, len);
             int ie = markerOffsets[i];
             String rest = line.substring(ie);
-            boolean target = !hasNonBlank || !blanks[i];
+            boolean targetLine = !hasNonBlank || !blanks[i];
             int editFrom = lineOffset + ie, editTo = editFrom, insertLen = 0;
             String modified = line;
-            if (target) {
+            if (targetLine) {
                 if (action == 0 && states[i] == 0) {
                     modified = line.substring(0, ie) + "[ ] " + rest;
                     insertLen = 4;
@@ -1008,20 +1010,20 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             lineOffset += raw.length() + 1;
         }
         String changed = out.toString();
-        if (editor.length() - (blockEnd - blockStart) + changed.length() > TextCodec.MAX_BYTES) {
+        if (target.length() - (blockEnd - blockStart) + changed.length() > TextCodec.MAX_BYTES) {
             toast("Insertion would exceed the editor size limit."); return;
         }
-        editor.requestFocus();
+        target.requestFocus();
         if (!changed.equals(block)) {
-            editor.getText().replace(blockStart, blockEnd, changed);
+            target.getText().replace(blockStart, blockEnd, changed);
         }
-        int maxLen = editor.length();
+        int maxLen = target.length();
         if (selStart == selEnd) {
-            editor.setSelection(Math.min(maxLen, Math.max(0, singleCursor)));
+            target.setSelection(Math.min(maxLen, Math.max(0, singleCursor)));
         } else {
             int s = Math.min(maxLen, Math.max(0, newSelStart));
             int e = Math.min(maxLen, Math.max(s, newSelEnd));
-            editor.setSelection(s, e);
+            target.setSelection(s, e);
         }
         saveViewState(); updateStatus();
     }
