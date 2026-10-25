@@ -35,6 +35,24 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, capture_output=True, **kwargs).stdout
 
 
+def read_environment(path):
+    values = {}
+    for line in path.read_text().splitlines():
+        if line and not line.startswith("#"):
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
+
+
+def storage_paths(environment):
+    database = Path(environment.get("TEXTPAD_DATABASE", str(DATA / "textpad.sqlite3")))
+    if database == LEGACY_DATA / "textpad.sqlite3":
+        database = DATA / "textpad.sqlite3"
+    if not database.is_absolute():
+        raise RuntimeError("TEXTPAD_DATABASE must be an absolute path for deployment")
+    return database, database.parent / "backups"
+
+
 def helpers(stage):
     spec = spec_from_file_location("download_installer", stage / "install-downloads.py")
     module = module_from_spec(spec)
@@ -101,9 +119,11 @@ def main(stage):
         run("/usr/sbin/useradd", "--system", "--gid", "textpad", "--home-dir", "/nonexistent",
             "--no-create-home", "--shell", "/usr/sbin/nologin", "textpad")
         account = pwd.getpwnam("textpad")
-    DATA.mkdir(mode=0o700, exist_ok=True)
-    os.chown(DATA, account.pw_uid, group.gr_gid)
-    backups = DATA / "backups"
+    environment_path = CONFIG / "server.env"
+    database, backups = storage_paths(read_environment(environment_path) if environment_path.exists() else {})
+    data = database.parent
+    data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chown(data, account.pw_uid, group.gr_gid)
     backups.mkdir(mode=0o700, exist_ok=True)
     os.chown(backups, account.pw_uid, group.gr_gid)
     was_active = subprocess.run(["systemctl", "is-active", "--quiet", "android-textpad.service"], capture_output=True).returncode == 0
@@ -122,12 +142,12 @@ def main(stage):
             except OSError:
                 pass
         legacy_db = LEGACY_DATA / "textpad.sqlite3"
-        target_db = DATA / "textpad.sqlite3"
+        target_db = database
         if legacy_db.exists() and not target_db.exists():
             for suffix in ["", "-wal", "-shm"]:
                 src = LEGACY_DATA / f"textpad.sqlite3{suffix}"
                 if src.exists():
-                    dst = DATA / f"textpad.sqlite3{suffix}"
+                    dst = Path(str(database) + suffix)
                     shutil.move(str(src), str(dst))
                     dst.chmod(0o600)
                     os.chown(dst, account.pw_uid, group.gr_gid)
@@ -146,10 +166,9 @@ def main(stage):
                 output.flush()
                 os.fsync(output.fileno())
             os.chown(path, 0, group.gr_gid)
-    environment_path = CONFIG / "server.env"
     if not environment_path.exists():
         atomic_write(environment_path, (
-            f"TEXTPAD_DATABASE={DATA}/textpad.sqlite3\n"
+            f"TEXTPAD_DATABASE={database}\n"
             f"TEXTPAD_TOKEN_FILE={CONFIG}/api-token\n"
             f"TEXTPAD_SESSION_FILE={CONFIG}/session-key\n"
             f"TEXTPAD_PUBLIC_URL={PUBLIC}\n").encode(), 0o640)
@@ -158,16 +177,13 @@ def main(stage):
         env_text = environment_path.read_text()
         updated_env = env_text.replace(
             f"TEXTPAD_DATABASE={LEGACY_DATA}/textpad.sqlite3",
-            f"TEXTPAD_DATABASE={DATA}/textpad.sqlite3",
+            f"TEXTPAD_DATABASE={database}",
         )
         if updated_env != env_text:
             atomic_write(environment_path, updated_env.encode(), 0o640)
             os.chown(environment_path, 0, group.gr_gid)
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    for line in environment_path.read_text().splitlines():
-        if line and not line.startswith("#"):
-            key, value = line.split("=", 1)
-            environment[key] = value
+    environment.update(read_environment(environment_path))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     releases = BASE / "server-releases"
     releases.mkdir(mode=0o755, exist_ok=True)
@@ -182,7 +198,6 @@ def main(stage):
         "-m", "textpad_server", "init", cwd=release, env=environment)
     run("/usr/sbin/runuser", "-u", "textpad", "--", str(release / ".venv/bin/gunicorn"),
         "--config", "python:textpad_server.gunicorn_config", "--check-config", "textpad_server:create_app()", cwd=release, env=environment)
-    database = DATA / "textpad.sqlite3"
     database.chmod(0o600)
     os.chown(database, account.pw_uid, group.gr_gid)
     snapshot = backups / f"before-deploy-{stamp}.sqlite3"

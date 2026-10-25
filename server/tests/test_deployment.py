@@ -1,21 +1,78 @@
 """Exercise release cleanup and APK activation without touching the host."""
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 import hashlib
 from importlib.util import module_from_spec, spec_from_file_location
 import io
 import json
 import os
 from pathlib import Path
+import sqlite3
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 spec = spec_from_file_location("downloads", Path(__file__).parents[1] / "deploy/install-downloads.py")
 installer = module_from_spec(spec)
 spec.loader.exec_module(installer)
+server_spec = spec_from_file_location("server_installer", Path(__file__).parents[1] / "deploy/install-server.py")
+server_installer = module_from_spec(server_spec)
+server_spec.loader.exec_module(server_installer)
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_external_database_is_backed_up_without_recreating_default_data(self):
+        stage = Path(self.temp.name)/'stage'
+        (stage/'app').mkdir(parents=True)
+        (stage/'app/requirements.lock').write_text('')
+        for name in ['server.conf', 'android-textpad.service', 'android-textpad-backup.service', 'android-textpad-backup.timer']:
+            (stage/name).write_text('# fixture\n')
+        config = Path(self.temp.name)/'config'
+        config.mkdir()
+        database = Path(self.temp.name)/'user-data/custom.sqlite3'
+        database.parent.mkdir()
+        with closing(sqlite3.connect(database)) as db:
+            db.execute('CREATE TABLE precious (content TEXT)')
+            db.execute("INSERT INTO precious VALUES ('preserved data')")
+            db.commit()
+        (config/'server.env').write_text(f'TEXTPAD_DATABASE={database}\n')
+        units = Path(self.temp.name)/'units'
+        units.mkdir()
+        vhost = Path(self.temp.name)/'vhost.conf'
+        vhost.write_bytes(b'<VirtualHost *:443>\n</VirtualHost>\n')
+        default_data = self.base/'data'
+        with patch.multiple(server_installer, BASE=self.base, CONFIG=config, DATA=default_data,
+                LEGACY_DATA=Path(self.temp.name)/'missing-legacy', UNIT_DIRECTORY=units,
+                APACHE_INCLUDE=Path(self.temp.name)/'server.conf', HTTPS_VHOST=vhost), \
+                patch.object(server_installer, 'helpers', return_value=(installer.atomic_write, lambda data,path:data, lambda *args,**kwargs:[])), \
+                patch.object(server_installer, 'run', return_value=b'Sign in'), \
+                patch.object(server_installer.subprocess, 'run', return_value=SimpleNamespace(returncode=0)), \
+                patch.object(server_installer.os, 'chown'), \
+                patch.object(server_installer.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"status":"ok"}')), \
+                redirect_stdout(io.StringIO()):
+            server_installer.main(stage)
+        self.assertFalse(default_data.exists())
+        saved = list((database.parent/'backups').glob('before-deploy-*.sqlite3'))
+        self.assertEqual(len(saved), 1)
+        with closing(sqlite3.connect(saved[0])) as restored:
+            self.assertEqual(restored.execute('PRAGMA integrity_check').fetchall(), [('ok',)])
+            self.assertEqual(restored.execute('SELECT content FROM precious').fetchall(), [('preserved data',)])
+
+    def test_server_deployment_uses_configured_database_filename_and_backup_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            env = Path(temporary) / "server.env"
+            env.write_text("# Preserved configuration\nTEXTPAD_DATABASE=/srv/textpad-data/custom.sqlite3\n")
+            database, backups = server_installer.storage_paths(server_installer.read_environment(env))
+        self.assertEqual(database, Path('/srv/textpad-data/custom.sqlite3'))
+        self.assertEqual(backups, database.parent/'backups')
+
+    def test_server_deployment_keeps_default_and_legacy_database_migration(self):
+        expected = server_installer.DATA/'textpad.sqlite3'
+        for env in ({}, {'TEXTPAD_DATABASE':str(server_installer.LEGACY_DATA/'textpad.sqlite3')}):
+            self.assertEqual(server_installer.storage_paths(env), (expected, expected.parent/'backups'))
+        with self.assertRaisesRegex(RuntimeError, 'absolute path'):
+            server_installer.storage_paths({'TEXTPAD_DATABASE':'relative.sqlite3'})
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

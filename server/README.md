@@ -46,11 +46,28 @@ UTF-8, UTF-16 LE/BE, ASCII, BOMs, and existing LF/CRLF/CR or mixed terminators a
 | `/opt/android_textpad/deployment` | Symlink to the published APK download site |
 | `/opt/android_textpad/releases/` | Retained APK download releases |
 | `/opt/android_textpad/config-backups/` | Root-only deployment/configuration snapshots |
-| `/etc/android-textpad/server.env` | Service paths and public URL |
-| `/etc/android-textpad/api-token` | API and default browser credential, root/textpad readable |
-| `/etc/android-textpad/session-key` | Browser cookie signing key |
-| `/opt/android_textpad/data/textpad.sqlite3` | Current documents, exact bytes, revisions, and upload receipts |
-| `/opt/android_textpad/data/backups/` | Consistent SQLite backups, retained until manually removed |
+| `/srv/textpad-data/config/server.env` | Service paths and public URL |
+| `/srv/textpad-data/config/api-token` | API and default browser credential, root/textpad readable |
+| `/srv/textpad-data/config/session-key` | Browser cookie signing key |
+| `/srv/textpad-data/textpad.sqlite3` | Current documents, exact bytes, revisions, and upload receipts |
+| `/srv/textpad-data/backups/` | Consistent SQLite backups, retained until manually removed |
+
+Since 25 October 2026 the live database, server settings, unchanged API token,
+session key and existing backups all live under
+`/srv/textpad-data/`. `/etc/android-textpad` is a
+compatibility link to its `config/` directory. Both systemd services use
+`storage.conf` drop-ins selecting the canonical environment file and writable
+root; the backup service explicitly passes `backup --directory` to the new
+`backups/` directory. Restore those drop-ins with the data/configuration.
+Reference copies are retained in `config/systemd/`.
+
+`TEXTPAD_DATABASE`, `TEXTPAD_TOKEN_FILE`, `TEXTPAD_SESSION_FILE` and optional
+`TEXTPAD_BROWSER_PASSWORD_FILE` select the corresponding server files. The
+installer reads the configured database filename when preparing directories and
+its pre-deployment backup. The administrative CLI still needs an explicit
+`backup --directory` when overriding its built-in backup default. Without
+configuration, runtime defaults still use `/opt/android_textpad/data` and
+`/etc/android-textpad`. Browser and Android device storage remains on each client.
 
 `android-textpad.service` runs Gunicorn as the dedicated `textpad` account, listening on `127.0.0.1:8768` with two worker processes and 16 threads per worker. WebSocket connections each occupy a thread, suitable for this private deployment. Caddy strips `/android_textpad` and proxies editor/API requests, including both authenticated WebSocket paths, over plain HTTP. It serves the APK download site directly from `/opt/android_textpad/deployment`. The former Apache HTTPS endpoint is retired and returns HTTP 410 for Textpad paths. No new public port is opened. The existing certificate and private root CA are reused; clients must trust that CA and retain hostname verification. Port 8443 belongs to another application.
 
@@ -94,7 +111,7 @@ to the same bytes. Existing older releases are reclaimed on the next successful
 deployment of the corresponding component. The two installers share a lock,
 so release cleanup cannot race another Textpad deployment.
 
-Retention never removes `/opt/android_textpad/data`, its database backups, or
+Retention never removes `/srv/textpad-data`, its database backups, or
 credentials in `/etc/android-textpad`. Those backups still need their separate
 backup and retention policy.
 
@@ -106,10 +123,10 @@ The daily `android-textpad-backup.timer` uses SQLite's online backup API, includ
 
 ```sh
 sudo systemctl start android-textpad-backup.service
-sudo ls -l /opt/android_textpad/data/backups/
+sudo ls -l /srv/textpad-data/backups/
 ```
 
-To restore a selected backup, stop the service **and backup timer**, retain the current database and its `-wal`/`-shm` files together in a separate recovery directory, then install the selected backup as `/opt/android_textpad/data/textpad.sqlite3` owned by `textpad:textpad`, mode `0600`. Do not leave old WAL/SHM files beside the restored database. Check `PRAGMA integrity_check` on the selected backup before installation, then start the service and timer. Database restoration restores documents, history, and retry receipts to the backup's point in time; `/etc/android-textpad/` credentials are separate. Copy database backups and credentials to your normal protected backup location as needed.
+To restore a selected backup, stop the service **and backup timer**, retain the current database and its `-wal`/`-shm` files together in a separate recovery directory, then install the selected backup as `/srv/textpad-data/textpad.sqlite3` owned by `textpad:textpad`, mode `0600`. Do not leave old WAL/SHM files beside the restored database. Check `PRAGMA integrity_check` on the selected backup before installation, then start the service and timer. Database restoration restores documents, history, and retry receipts to the backup's point in time; `/etc/android-textpad/` credentials are separate. Copy database backups and credentials to your normal protected backup location as needed.
 
 Historical revisions can be removed explicitly by an administrator; the current revision is protected and idempotency receipts are retained:
 
