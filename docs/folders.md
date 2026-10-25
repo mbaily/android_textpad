@@ -136,3 +136,41 @@ outbox and applied atomically on reconnect. Pending or currently saving files mu
 finish synchronization before moving. Moving a saved file with unsaved text edits
 preserves its buffer and history. The IndexedDB upgrade retains existing cached
 documents and pending saves.
+
+## Android Files view
+
+The native **Files** tab and **Browse shared files and folders** entry-screen button
+open the same logical library as the web editor. **Sync → Browse server files**
+also opens this view. Breadcrumbs, **Folders**, and Android Back navigate the
+hierarchy; **Editor** returns to editing. Current-folder search and alphabetical
+folder/file ordering support large catalogs through recycled native rows. Folder
+ancestry and illegal move destinations are computed iteratively, without a depth
+limit.
+
+Use **New folder**, **New file**, **Actions**, or each row's **More** menu to create,
+rename, move, and delete empty folders. File checkboxes, **Select all**, and **Move**
+use the atomic group-move API. File menus also provide downloads and revision
+history. Folder changes, saved-file renames/moves, and creation of new shared files
+require a connection. Catalog reads run independently of content synchronization;
+pending uploads never block browsing. Live notifications refresh an open library,
+including when no local files have been linked yet.
+
+Opening a file reuses its existing linked local tab/file when available. Otherwise
+Textpad downloads and verifies the bytes, creates an app-private saved copy with a
+stable server-ID-based URI, and links it for normal saved-file synchronization.
+These copies retain encoding, BOMs, line endings, backups, and offline editing.
+**Save As** or **Download a copy** exports a copy through Android's document picker.
+Shared folders organize the server library; phone-storage locations continue to be
+managed through Android's file controls. Renaming a shared file updates its managed
+copy's display name while independently chosen phone filenames retain their local
+names.
+
+The last folder and an atomic catalog snapshot are saved per server address.
+Previously opened local copies and cached folders remain available offline. New
+shared files are created atomically in their selected folder, then opened locally;
+text edits upload only after a local save. A missing destination rejects creation.
+Files with pending upload receipts or active saves must finish syncing before a
+library move or rename. Dirty editor buffers can remain open during metadata
+changes, with their text and undo history intact. The Files view and selection
+survive activity recreation; unsaved text still has the existing process-lifetime
+limitations.

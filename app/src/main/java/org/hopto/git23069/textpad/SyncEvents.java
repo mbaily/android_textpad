@@ -41,7 +41,10 @@ final class SyncEvents {
                     try {
                         String type=new JSONObject(text).optString("type");
                         if(!type.equals("ready") && !type.equals("changed")) return;
-                        app.main.post(() -> { if(current==generation) { attempts=0; app.sync.syncAll(false); } });
+                        app.main.post(() -> { if(current==generation) {
+                            attempts=0; app.sync.syncAll(false);
+                            if (app.filesVisible && app.library != null) app.library.refresh();
+                        } });
                     } catch(Exception ignored) { }
                 }
                 @Override public void onClosing(WebSocket ws,int code,String reason) { ws.close(code,null); }

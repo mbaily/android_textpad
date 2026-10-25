@@ -44,7 +44,7 @@ final class SyncUi {
                 .setNegativeButton("Close",null).show();
     }
 
-    private void settings() {
+    void settings() {
         LinearLayout fields=fields(); fields.addView(label("Server address"));
         EditText endpoint=input(SyncHttpClient.DEFAULT_ENDPOINT,false);
         endpoint.setText(app.sync.prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT)); fields.addView(endpoint);
@@ -58,6 +58,7 @@ final class SyncUi {
                 .setPositiveButton("Save",null).setNegativeButton("Cancel",null).create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try {
+                if (app.library.busy) { endpoint.setError("Wait for the current library operation to finish before changing server settings."); return; }
                 String url=endpoint.getText().toString().trim(); new SyncHttpClient(url,token.getText().toString());
                 String previous=app.sync.prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT);
                 if(!url.equals(previous) && !app.sync.bindings().isEmpty()) {
@@ -122,18 +123,10 @@ final class SyncUi {
     }
 
     private void browse() {
-        request(RemoteApi::list,files -> {
-            if(files.isEmpty()) { app.notice("Server files","There are no synced documents on the server yet."); return; }
-            new AlertDialog.Builder(activity).setTitle("Server files").setItems(files.stream()
-                    .map(r -> r.name()+" · "+r.size()+" bytes\nrevision "+r.revision()).toArray(String[]::new),(d,i) -> {
-                RemoteApi.Remote remote=files.get(i);
-                new AlertDialog.Builder(activity).setTitle(remote.name()).setItems(new String[]{"Download to a local file…","Previous revisions…"},(dialog,which) -> {
-                    if(which == 0) request(api -> api.get(remote.id()),this::download);
-                    else history(remote);
-                }).setNegativeButton("Cancel",null).show();
-            }).setNegativeButton("Close",null).show();
-        });
+        activity.showFiles();
     }
+
+    void downloadFile(RemoteApi.Remote remote) { request(api -> api.get(remote.id()), this::download); }
 
     private void download(RemoteApi.Remote remote) {
         download(remote,true);
@@ -145,7 +138,7 @@ final class SyncUi {
             app.pendingSave=new TextpadApplication.PendingSave(doc,null,false); activity.launchSavePicker();
         } catch(Exception e) { app.notice("Could not download",SyncManager.message(e)); }
     }
-    private void history(RemoteApi.Remote document) {
+    void history(RemoteApi.Remote document) {
         request(api -> api.revisions(document.id()),revisions -> showRevisionsDialog(document,revisions));
     }
     private static String sourceLabel(String source) {

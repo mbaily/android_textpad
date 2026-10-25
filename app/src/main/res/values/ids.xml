@@ -1,5 +1,13 @@
 <resources>
     <item name="editor" type="id" />
+    <item name="files_tab" type="id" />
+    <item name="library_browser" type="id" />
+    <item name="library_entries" type="id" />
+    <item name="library_search" type="id" />
+    <item name="library_name" type="id" />
+    <item name="library_status" type="id" />
+    <item name="library_selection" type="id" />
+    <item name="library_move_selected" type="id" />
     <item name="recent_files" type="id" />
     <item name="recent_file_list" type="id" />
     <item name="recent_files_empty" type="id" />

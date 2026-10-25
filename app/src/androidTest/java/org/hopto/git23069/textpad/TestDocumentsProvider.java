@@ -6,6 +6,7 @@ import android.net.Uri;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.os.CancellationSignal;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import java.io.File;
@@ -49,5 +50,15 @@ public class TestDocumentsProvider extends ContentProvider {
         String id = DocumentsContract.getDocumentId(uri);
         if (id.startsWith("readonly")) throw new SecurityException("Read-only test document");
         return file(id).delete() ? 1 : 0;
+    }
+    @Override public Bundle call(String method, String arg, Bundle extras) {
+        // DocumentsContract.deleteDocument uses ContentProvider.call, not delete.
+        // An unhandled call returning null is otherwise mistaken for success.
+        if ("android:deleteDocument".equals(method)) {
+            Uri uri = extras == null ? null : extras.getParcelable("uri", Uri.class);
+            if (uri == null || delete(uri, null, null) != 1) throw new IllegalArgumentException("Test document was not deleted");
+            return Bundle.EMPTY;
+        }
+        throw new UnsupportedOperationException(method);
     }
 }

@@ -53,7 +53,9 @@ final class SyncManager {
         boolean enabled=testApi==null && configured();
         SyncScheduler.configure(app,enabled);
         if(events==null) events=new SyncEvents(app);
-        if(foreground && enabled) {
+        if (app.library != null) app.library.ensureScope();
+        boolean browse = app.filesVisible && !prefs.getString("token", "").isBlank();
+        if(foreground && testApi == null && (enabled || browse)) {
             try { events.start(prefs.getString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT),TokenVault.read(prefs)); }
             catch(Exception ignored) { events.stop(); }
         } else events.stop();
@@ -134,7 +136,11 @@ final class SyncManager {
             throw new IOException("Could not store the sync receipt. The saved file is intact; retry sync.");
         app.main.post(() -> {
             EditorDocument doc=openDocument(binding.uri);
-            if (doc != null) { doc.serverRevision=remote.revision(); doc.syncedHash=HexFormat.of().parseHex(remote.hash()); app.refresh(); }
+            if (doc != null) {
+                doc.serverRevision=remote.revision(); doc.syncedHash=HexFormat.of().parseHex(remote.hash());
+                if (app.store.managed(doc.uri)) { doc.name = remote.name(); app.store.remember(doc.uri, doc.name); }
+                app.refresh();
+            }
         });
     }
     private String requestId(Binding binding, String hash) throws IOException {

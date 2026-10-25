@@ -70,6 +70,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private CheckBox matchCase;
     private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, taskFilterButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
     private HashtagUi activeHashtagUi;
+    private LibraryUi libraryUi;
+    private HorizontalScrollView editorTools;
+    private LinearLayout headerFileActions;
+    private Button filesTab;
+    private boolean libraryBackRegistered;
+    private final android.window.OnBackInvokedCallback libraryBack = this::navigateBackFromFiles;
     private EditorTab shownTab;
     private long shownState = -1;
     private boolean changing, started, dialogVisible, findAllFiles;
@@ -93,6 +99,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         super.onCreate(state);
         app = (TextpadApplication) getApplication();
         if (state != null) app.readOnlyMode = state.getBoolean("readOnlyMode", app.readOnlyMode);
+        if (state != null) app.filesVisible = state.getBoolean("filesVisible", app.filesVisible);
         buildUi();
         if (state == null) handleIntent(getIntent());
     }
@@ -100,9 +107,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     @Override protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putBoolean("readOnlyMode", app.readOnlyMode);
+        outState.putBoolean("filesVisible", app.filesVisible);
     }
 
-    @Override protected void onStart() { super.onStart(); started = true; app.attach(this); scheduleAutosave(); app.sync.setForeground(true); app.sync.syncAll(false); }
+    @Override protected void onStart() {
+        super.onStart(); started = true; app.attach(this); scheduleAutosave(); app.sync.setForeground(true); app.sync.syncAll(false);
+        if (app.filesVisible) app.library.refresh();
+    }
     @Override protected void onStop() {
         saveViewState(); started = false; app.main.removeCallbacks(autosave); app.sync.setForeground(false); app.detach(this); super.onStop();
     }
@@ -127,9 +138,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         TextView subtitle = label("A LITTLE SPACE TO WRITE", 9, MUTED); subtitle.setLetterSpacing(.15f);
         brand.addView(title); brand.addView(subtitle); header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
         saveButton = iconButton(Icon.SAVE, ACCENT, "Save file", v -> { if (app.current() != null) app.save(app.current(), null); });
-        header.addView(saveButton);
-        header.addView(iconButton(Icon.NEW, TEXT, "New document", v -> { saveViewState(); app.newDocument(); }));
-        header.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
+        headerFileActions = row(); headerFileActions.addView(saveButton);
+        headerFileActions.addView(iconButton(Icon.NEW, TEXT, "New document", v -> { saveViewState(); app.newDocument(); }));
+        headerFileActions.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
+        header.addView(headerFileActions);
         Button menu = iconButton(Icon.MENU, TEXT, "More options", this::showMenu); header.addView(menu);
         root.addView(header);
         root.addView(divider());
@@ -184,15 +196,19 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         recentHeader.addView(iconButton(Icon.NEW, ACCENT, "New document", v -> app.newDocument()));
         recentHeader.addView(iconButton(Icon.OPEN, TEXT, "Open file", v -> openPicker()));
         empty.addView(recentHeader);
+        Button browse = new Button(this); browse.setText("Browse shared files and folders"); browse.setAllCaps(false);
+        browse.setContentDescription("Browse shared files and folders"); browse.setOnClickListener(v -> showFiles()); empty.addView(browse);
         ScrollView recentScroll = new ScrollView(this); recentScroll.setFillViewport(true);
         recentFileList = column(); recentFileList.setId(R.id.recent_file_list); recentFileList.setPadding(0, dp(12), 0, dp(20));
         recentScroll.addView(recentFileList);
         empty.addView(recentScroll, new LinearLayout.LayoutParams(-1, 0, 1));
         body.addView(empty, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        libraryUi = new LibraryUi(this, app); body.addView(libraryUi.view, new android.widget.FrameLayout.LayoutParams(-1, -1));
         root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
 
         root.addView(divider());
         HorizontalScrollView tools = new HorizontalScrollView(this); tools.setHorizontalScrollBarEnabled(false);
+        editorTools = tools;
         LinearLayout toolbar = row(); toolbar.setPadding(dp(8), dp(4), dp(8), dp(4));
         undoButton = iconButton(Icon.UNDO, TEXT, "Undo", v -> history(false));
         redoButton = iconButton(Icon.REDO, TEXT, "Redo", v -> history(true));
@@ -266,10 +282,11 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void refresh(boolean saveCurrentViewState) {
         if (editor == null) return;
+        boolean wasBrowsing = libraryUi.view.getVisibility() == View.VISIBLE;
         EditorTab selected = app.currentTab();
         DocumentBuffer targetBuffer = selected == null ? null : (selected.tasksOnly && selected.filteredBuffer != null ? selected.filteredBuffer : selected.document.buffer);
         if (shownTab != selected || (selected != null && (shownState != selected.document.buffer.state() || editor.buffer != targetBuffer))) {
-            if (saveCurrentViewState) saveViewState();
+            if (saveCurrentViewState && !wasBrowsing) saveViewState();
             boolean switchTab = shownTab != selected;
             shownTab = selected; changing = true;
             if (selected != null) {
@@ -308,8 +325,24 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             } else { editor.setTasksOnly(false, null, null); editor.buffer = null; editor.setDocumentText(""); shownState = -1; }
             changing = false;
         }
-        editor.setVisibility(selected == null ? View.GONE : View.VISIBLE);
-        empty.setVisibility(selected == null ? View.VISIBLE : View.GONE);
+        editor.setVisibility(selected == null || app.filesVisible ? View.GONE : View.VISIBLE);
+        empty.setVisibility(selected == null && !app.filesVisible ? View.VISIBLE : View.GONE);
+        libraryUi.view.setVisibility(app.filesVisible ? View.VISIBLE : View.GONE);
+        if (app.filesVisible != libraryBackRegistered) {
+            if (app.filesVisible) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, libraryBack);
+            else getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(libraryBack);
+            libraryBackRegistered = app.filesVisible;
+        }
+        editorTools.setVisibility(app.filesVisible ? View.GONE : View.VISIBLE);
+        headerFileActions.setVisibility(app.filesVisible ? View.GONE : View.VISIBLE);
+        location.setVisibility(app.filesVisible ? View.GONE : View.VISIBLE);
+        if (app.filesVisible) libraryUi.render();
+        else if (wasBrowsing && selected != null) editor.post(() -> {
+            if (app.filesVisible || app.currentTab() != selected) return;
+            changing = true;
+            editor.setSelection(Math.min(editor.length(), selected.selectionStart), Math.min(editor.length(), selected.selectionEnd));
+            editor.scrollTo(selected.scrollX, selected.scrollY); changing = false;
+        });
         if (selected == null) updateRecentFiles();
         if (selected != null && ((editor.getKeyListener() != null) != isEditable(selected.document)))
             editor.configure(app.settings, isEditable(selected.document));
@@ -342,14 +375,18 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void updateTabLabels() {
-        boolean rebuild = tabNames.size() != app.tabs.size() || app.tabs.stream().anyMatch(t -> !tabNames.containsKey(t.id));
+        boolean rebuild = filesTab == null || tabNames.size() != app.tabs.size() || app.tabs.stream().anyMatch(t -> !tabNames.containsKey(t.id));
         if (rebuild) {
             tabBar.removeAllViews(); tabNames.clear(); tabViews.clear();
+            filesTab = new Button(this); filesTab.setId(R.id.files_tab); filesTab.setText("Files"); filesTab.setTextSize(13); filesTab.setAllCaps(false);
+            filesTab.setContentDescription("Browse shared files"); filesTab.setOnClickListener(v -> showFiles());
+            filesTab.setMinWidth(dp(66)); filesTab.setMinimumWidth(dp(66)); filesTab.setPadding(dp(12), 0, dp(12), 0);
+            tabBar.addView(filesTab, new LinearLayout.LayoutParams(-2, dp(44)));
             for (EditorTab tab : app.tabs) {
                 LinearLayout view = row(); view.setGravity(Gravity.CENTER_VERTICAL);
                 TextView name = label("", 13, TEXT); name.setSingleLine(true); name.setMaxWidth(dp(170));
                 name.setEllipsize(android.text.TextUtils.TruncateAt.END); name.setPadding(dp(13), dp(10), dp(4), dp(10));
-                name.setOnClickListener(v -> { saveViewState(); app.selectedTab = tab.id; app.refresh(); });
+                name.setOnClickListener(v -> { saveViewState(); app.filesVisible = false; app.selectedTab = tab.id; app.refresh(); app.sync.configurationChanged(); });
                 name.setOnLongClickListener(v -> { showDocumentInfo(tab.document); return true; });
                 view.addView(name); Button close = iconButton(Icon.CLOSE, TEXT, "Close " + tab.document.name, v -> closeTab(tab));
                 view.addView(close); tabBar.addView(view); tabNames.put(tab.id, name); tabViews.put(tab.id, view);
@@ -359,11 +396,12 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             EditorDocument doc = tab.document;
             String label = (doc.buffer.dirty() ? "● " : "") + doc.name;
             tabNames.get(tab.id).setText(label);
-            tabNames.get(tab.id).setTextColor(tab.id == app.selectedTab ? ACCENT : MUTED);
-            tabViews.get(tab.id).setBackground(rounded(tab.id == app.selectedTab ? 0xff263026 : BG, 8));
+            tabNames.get(tab.id).setTextColor(!app.filesVisible && tab.id == app.selectedTab ? ACCENT : MUTED);
+            tabViews.get(tab.id).setBackground(rounded(!app.filesVisible && tab.id == app.selectedTab ? 0xff263026 : BG, 8));
         }
+        filesTab.setTextColor(app.filesVisible ? ACCENT : MUTED); filesTab.setBackground(rounded(app.filesVisible ? 0xff263026 : BG, 8));
         if (app.tabs.isEmpty()) {
-            if (tabBar.getChildCount() == 0) tabBar.addView(label(app.opening ? "Opening file…" : "No open documents", 12, MUTED));
+            if (tabBar.getChildCount() == 1) tabBar.addView(label(app.opening ? "Opening file…" : "No open documents", 12, MUTED));
         }
     }
 
@@ -392,6 +430,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         boolean canSave = doc != null && !doc.saving && !doc.replacing && doc.buffer.dirty();
         saveButton.setBackground(iconDrawable(Icon.SAVE, canSave ? ACCENT : TEXT));
         setButtonEnabled(saveButton, canSave);
+        if (app.filesVisible) {
+            status.setText(app.library.busy ? "Shared library · Working…" : app.library.connected ? "Shared library · Connected" : "Shared library · Cached files");
+            return;
+        }
         if (doc == null) { status.setText(app.opening ? "Opening file…" : "OFFLINE · READY"); location.setText("LOCAL FILES · FULLY OFFLINE"); return; }
         location.setText(doc.uri == null ? "NEW DOCUMENT · NOT SAVED" : app.store.location(doc.uri, doc.name));
         int offset = Math.max(0, editor.getSelectionStart());
@@ -412,7 +454,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void saveViewState() {
-        if (shownTab == null || changing || editor == null) return;
+        if (shownTab == null || changing || editor == null || app.filesVisible) return;
         shownTab.selectionStart = Math.max(0, editor.getSelectionStart()); shownTab.selectionEnd = Math.max(0, editor.getSelectionEnd());
         shownTab.scrollX = editor.getScrollX(); shownTab.scrollY = editor.getScrollY();
     }
@@ -534,7 +576,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        String[] actions = {"New document", "Open file…", "Recent files…", "Hashtags & Tag groups…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit"};
+        String[] actions = {"New document", "Open file…", "Recent files…", "Hashtags & Tag groups…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit", "Files and folders…"};
         for (int i = 0; i < actions.length; i++) menu.getMenu().add(0, i, i, actions[i]);
         menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.wrap());
         menu.getMenu().findItem(10).setCheckable(true).setChecked(app.settings.lineNumbers());
@@ -543,6 +585,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         for (int i : new int[]{5,6,8,11,12,15}) menu.getMenu().findItem(i).setEnabled(current != null);
         menu.getMenu().findItem(7).setEnabled(current != null && current.uri != null && current.writable && !current.saving);
         menu.setOnMenuItemClickListener(item -> {
+            if (app.filesVisible && java.util.Set.of(4, 5, 6, 7, 8, 11, 12, 15).contains(item.getItemId())) showEditor();
             switch (item.getItemId()) {
                 case 0 -> { saveViewState(); app.newDocument(); }
                 case 1 -> openPicker(); case 2 -> showRecents();
@@ -558,6 +601,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                         .setItems(java.util.Arrays.stream(TextCodec.Encoding.values()).map(e -> e.label).toArray(String[]::new),
                                 (d, which) -> openPicker(TextCodec.Encoding.values()[which])).setNegativeButton("Cancel", null).show();
                 case 18 -> exitApp();
+                case 19 -> showFiles();
             }
             return true;
         }); menu.show();
@@ -1071,7 +1115,23 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void showSync() { new SyncUi(this, app).show(); }
 
+    void showFiles() {
+        saveViewState();
+        if (findPanel.getVisibility() == View.VISIBLE) closeFind();
+        var keyboard = getSystemService(android.view.inputmethod.InputMethodManager.class);
+        if (keyboard != null) keyboard.hideSoftInputFromWindow(editor.getWindowToken(), 0);
+        app.filesVisible = true; app.library.ensureScope(); app.refresh(); app.sync.configurationChanged(); app.library.refresh();
+    }
+
+    void showEditor() { app.filesVisible = false; app.refresh(); app.sync.configurationChanged(); }
+
+    private void navigateBackFromFiles() {
+        var folder = app.library.tree.get(app.library.folderId);
+        if (folder == null) showEditor(); else app.library.selectFolder(folder.parentId());
+    }
+
     private void showHashtags(boolean startOnErrands) {
+        if (app.filesVisible) showEditor();
         saveViewState();
         activeHashtagUi = new HashtagUi(this, app);
         activeHashtagUi.show(startOnErrands);
@@ -1121,11 +1181,13 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.isCtrlPressed()) {
+            if (app.filesVisible && (event.getKeyCode() == KeyEvent.KEYCODE_S || event.getKeyCode() == KeyEvent.KEYCODE_Z
+                    || event.getKeyCode() == KeyEvent.KEYCODE_Y || event.getKeyCode() == KeyEvent.KEYCODE_W)) showEditor();
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_S -> { if (event.isShiftPressed()) saveAs(false); else if (app.current() != null) app.save(app.current(), null); return true; }
                 case KeyEvent.KEYCODE_O -> { openPicker(); return true; }
                 case KeyEvent.KEYCODE_N -> { saveViewState(); app.newDocument(); return true; }
-                case KeyEvent.KEYCODE_F -> { showFind(event.isShiftPressed()); return true; }
+                case KeyEvent.KEYCODE_F -> { if (app.filesVisible) libraryUi.focusSearch(); else showFind(event.isShiftPressed()); return true; }
                 case KeyEvent.KEYCODE_Z -> { history(event.isShiftPressed()); return true; }
                 case KeyEvent.KEYCODE_Y -> { history(true); return true; }
                 case KeyEvent.KEYCODE_W -> { if (app.currentTab() != null) closeTab(app.currentTab()); return true; }

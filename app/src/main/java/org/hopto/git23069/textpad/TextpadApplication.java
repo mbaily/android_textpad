@@ -39,14 +39,15 @@ public final class TextpadApplication extends Application {
     DocumentStore store;
     EditorSettings settings;
     SyncManager sync;
+    LibraryManager library;
     long selectedTab = -1, nextTab = 1;
     int untitled = 1;
-    boolean opening, exiting, readOnlyMode;
+    boolean opening, exiting, readOnlyMode, filesVisible;
     PendingSave pendingSave;
     TextCodec.Encoding nextOpenEncoding;
 
     @Override public void onCreate() {
-        super.onCreate(); store = new DocumentStore(this); settings = new EditorSettings(this); sync = new SyncManager(this);
+        super.onCreate(); store = new DocumentStore(this); settings = new EditorSettings(this); sync = new SyncManager(this); library = new LibraryManager(this);
         main.post(sync::initialize);
     }
     EditorTab currentTab() { return tabs.stream().filter(t -> t.id == selectedTab).findFirst().orElse(null); }
@@ -60,7 +61,7 @@ public final class TextpadApplication extends Application {
     void notice(String title, String message) { emit(new Event(title, message, null)); }
     void emit(Event event) { events.addLast(event); deliverNext(); }
     void deliverNext() { if (listener != null && !events.isEmpty()) listener.event(events.removeFirst()); }
-    void addTab(EditorDocument doc) { EditorTab tab = new EditorTab(nextTab++, doc); tabs.add(tab); selectedTab = tab.id; refresh(); }
+    void addTab(EditorDocument doc) { filesVisible = false; EditorTab tab = new EditorTab(nextTab++, doc); tabs.add(tab); selectedTab = tab.id; refresh(); }
     void newDocument() { addTab(new EditorDocument("Untitled " + untitled++ + ".txt", DocumentBuffer.empty())); }
     void duplicate() { if (current() != null) addTab(current()); }
     void close(long tabId) {
@@ -85,7 +86,7 @@ public final class TextpadApplication extends Application {
         // Opening the same URI again intentionally adds another view of its shared buffer unless reuseTab is requested.
         for (EditorTab tab : tabs) {
             if (DocumentStore.same(uri, tab.document.uri)) {
-                if (reuseTab) { selectedTab = tab.id; refresh(); }
+                if (reuseTab) { filesVisible = false; selectedTab = tab.id; refresh(); }
                 else addTab(tab.document);
                 if (afterOpen != null) afterOpen.run();
                 return;
@@ -111,7 +112,7 @@ public final class TextpadApplication extends Application {
                     opening = false;
                     for (EditorTab existing : tabs) {
                         if (DocumentStore.same(existing.document.uri, uri)) {
-                            if (reuseTab) { selectedTab = existing.id; refresh(); }
+                            if (reuseTab) { filesVisible = false; selectedTab = existing.id; refresh(); }
                             else addTab(existing.document);
                             if (afterOpen != null) afterOpen.run();
                             return;

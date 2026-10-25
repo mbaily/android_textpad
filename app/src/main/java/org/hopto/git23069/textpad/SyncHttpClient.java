@@ -136,14 +136,52 @@ final class SyncHttpClient implements RemoteApi {
         } catch (JSONException e) { throw new IOException("Could not encode the folder request.", e); }
     }
 
-    private Folder parseFolder(JSONObject json) throws JSONException {
+    @Override public List<Remote> moveDocuments(List<String> ids, String folderId) throws IOException {
+        try {
+            JSONArray selected = new JSONArray();
+            for (String id : ids) selected.put(segment(id));
+            List<Remote> moved = array(request("POST", "/api/v1/library/move", new JSONObject().put("document_ids", selected)
+                    .put("folder_id", folderId == null ? JSONObject.NULL : segment(folderId))));
+            var acknowledged = new java.util.HashSet<>(moved.stream().map(Remote::id).toList());
+            if (moved.size() != ids.size() || !acknowledged.equals(new java.util.HashSet<>(ids))
+                    || moved.stream().anyMatch(file -> !java.util.Objects.equals(folderId, file.folderId())))
+                throw new IOException("The server did not confirm every selected file's destination. Refresh the library before retrying.");
+            return moved;
+        } catch (JSONException e) { throw new IOException("Could not encode the selected files.", e); }
+    }
+
+    @Override public Remote renameDocument(String id, String name, String baseRevision, String requestId) throws IOException {
+        try {
+            return remote(request("PUT", path(id) + "/name", new JSONObject().put("name", name)
+                    .put("base_revision", segment(baseRevision)).put("request_id", segment(requestId))), false);
+        } catch (JSONException e) { throw new IOException("Could not encode the filename.", e); }
+    }
+
+    @Override public Folder renameFolder(String id, String name) throws IOException {
+        try { return parseFolder(request("PUT", "/api/v1/folders/" + segment(id), new JSONObject().put("name", name))); }
+        catch (JSONException e) { throw new IOException("Could not encode the folder name.", e); }
+    }
+
+    @Override public Remote createDocument(String id, String name, byte[] bytes, String requestId, String folderId) throws IOException {
+        try {
+            Remote saved = remote(request("PUT", path(id), new JSONObject().put("name", name)
+                    .put("content_base64", Base64.encodeToString(bytes, Base64.NO_WRAP)).put("base_revision", JSONObject.NULL)
+                    .put("request_id", segment(requestId)).put("folder_id", folderId == null ? JSONObject.NULL : segment(folderId))), false);
+            if (!saved.id().equals(id) || !saved.hash().equals(HexFormat.of().formatHex(SaveTransaction.hash(bytes)))
+                    || saved.size() != bytes.length || !java.util.Objects.equals(folderId, saved.folderId()))
+                throw new IOException("The server did not save this file in its selected folder. Refresh the library before retrying.");
+            return saved;
+        } catch (JSONException e) { throw new IOException("Could not encode the new file.", e); }
+    }
+
+    static Folder parseFolder(JSONObject json) throws JSONException {
         return new Folder(json.getString("id"), json.getString("name"),
                 json.isNull("parent_id") ? null : json.getString("parent_id"),
                 json.getString("created_at"), json.getString("updated_at"));
     }
 
     private String path(String id) { return "/api/v1/documents/"+segment(id); }
-    private String segment(String value) {
+    private static String segment(String value) {
         if (!value.matches("[A-Za-z0-9_-]{1,128}")) throw new IllegalArgumentException("Invalid server document or revision ID.");
         return value;
     }
@@ -154,7 +192,7 @@ final class SyncHttpClient implements RemoteApi {
             return results;
         } catch (JSONException e) { throw new IOException("The server returned an invalid document list.",e); }
     }
-    private Remote remote(JSONObject json, boolean withContent) throws IOException {
+    static Remote remote(JSONObject json, boolean withContent) throws IOException {
         try {
             String id = segment(json.getString("id")), rev = segment(json.getString("revision")), hash = json.getString("sha256");
             long size = json.getLong("size");
@@ -185,7 +223,17 @@ final class SyncHttpClient implements RemoteApi {
             if (status == 404 && path.equals("/api/v1/documents"))
                 throw new IOException("No Textpad sync API was found at "+endpoint+" (HTTP 404). Check Sync → Actions → Server settings. "
                         +"For git23069.hopto.org, use "+DEFAULT_ENDPOINT+".");
-            if (status < 200 || status >= 300) throw new IOException("Sync server returned HTTP "+status+".");
+            if (status < 200 || status >= 300) {
+                String detail = "Sync server returned HTTP " + status + ".";
+                try (InputStream rawError = connection.getErrorStream()) {
+                    if (rawError != null) {
+                        InputStream error = "gzip".equalsIgnoreCase(connection.getContentEncoding()) ? new GZIPInputStream(rawError) : rawError;
+                        String message = new JSONObject(new String(error.readNBytes(65536), StandardCharsets.UTF_8)).optString("error", "");
+                        if (!message.isBlank() && message.length() <= 2000) detail = message;
+                    }
+                } catch (IOException | JSONException ignored) { }
+                throw new IOException(detail);
+            }
             try (InputStream rawIn = connection.getInputStream();
                  InputStream in = "gzip".equalsIgnoreCase(connection.getContentEncoding()) ? new GZIPInputStream(rawIn) : rawIn;
                  ByteArrayOutputStream out = new ByteArrayOutputStream()) {

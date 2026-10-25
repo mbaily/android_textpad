@@ -39,6 +39,7 @@ final class DocumentStore {
     DocumentStore(Context context) { this.context = context; resolver = context.getContentResolver(); }
 
     String location(Uri uri, String name) {
+        if (managed(uri)) return "Shared library / " + name;
         String id;
         try { id = DocumentsContract.getDocumentId(uri); }
         catch (IllegalArgumentException e) { return name; }
@@ -52,6 +53,11 @@ final class DocumentStore {
     }
 
     Info info(Uri uri) {
+        if (uri != null && "file".equals(uri.getScheme()) && uri.getPath() != null) {
+            File file = new File(uri.getPath());
+            String name = managed(uri) ? context.getSharedPreferences("sync", 0).getString(key(uri) + ".name", file.getName()) : file.getName();
+            return new Info(name, file.canWrite());
+        }
         String name = uri.getLastPathSegment() == null ? "Untitled.txt" : uri.getLastPathSegment();
         boolean writable = false;
         try (Cursor c = resolver.query(uri, new String[]{OpenableColumns.DISPLAY_NAME, DocumentsContract.Document.COLUMN_FLAGS}, null, null, null)) {
@@ -69,6 +75,17 @@ final class DocumentStore {
             if (in == null) throw new IOException("The document provider could not open this file.");
             return readLimited(in);
         } catch (SecurityException e) { throw new IOException("File access has expired. Open the file again through the picker.", e); }
+    }
+
+    boolean managed(Uri uri) {
+        return uri != null && "file".equals(uri.getScheme()) && uri.getPath() != null
+                && uri.getPath().startsWith(new File(context.getFilesDir(), "shared-library").getAbsolutePath() + "/");
+    }
+
+    Uri managedUri(String serverKey, String id) {
+        if (!serverKey.matches("[a-f0-9]{64}") || !id.matches("[A-Za-z0-9_-]{1,128}"))
+            throw new IllegalArgumentException("Invalid shared file identifier.");
+        return Uri.fromFile(new File(context.getFilesDir(), "shared-library/" + serverKey + "/documents/" + id + ".txt"));
     }
 
     static byte[] readLimited(InputStream in) throws IOException {
@@ -195,6 +212,10 @@ final class DocumentStore {
 
     boolean delete(Uri uri) {
         forget(uri);
+        if (managed(uri)) {
+            try { return Files.deleteIfExists(new File(uri.getPath()).toPath()); }
+            catch (IOException ignored) { return false; }
+        }
         try {
             if (DocumentsContract.deleteDocument(resolver, uri)) return true;
         } catch (Exception ignored) { }
@@ -273,7 +294,7 @@ final class DocumentStore {
                         if (child.isFile() && child.canRead() && child.length() <= TextCodec.MAX_BYTES
                                 && isLikelyTextName(child.getName(), null)) {
                             Uri u = Uri.fromFile(child);
-                            found.putIfAbsent(identity(u), new Recent(child.getName(), u));
+                            found.putIfAbsent(identity(u), new Recent(managed(u) ? info(u).name() : child.getName(), u));
                         }
                     }
                 }

@@ -30,5 +30,17 @@ interface RemoteApi {
     default Folder putFolder(String id, String name, String parentId) throws IOException { throw new IOException("Folders are unavailable on this server."); }
     default void deleteFolder(String id) throws IOException { throw new IOException("Folders are unavailable on this server."); }
     default Remote moveDocument(String id, String folderId) throws IOException { throw new IOException("Folders are unavailable on this server."); }
+    default List<Remote> moveDocuments(List<String> ids, String folderId) throws IOException {
+        if (ids.size() == 1) return List.of(moveDocument(ids.get(0), folderId));
+        throw new IOException("Moving several files requires an updated server.");
+    }
+    default Remote renameDocument(String id, String name, String baseRevision, String requestId) throws IOException {
+        throw new IOException("Renaming files requires an updated server.");
+    }
+    default Folder renameFolder(String id, String name) throws IOException { return putFolder(id, name, folder(id).parentId()); }
+    default Remote createDocument(String id, String name, byte[] bytes, String requestId, String folderId) throws IOException {
+        if (folderId != null) throw new IOException("Creating files inside folders requires an updated server.");
+        return put(id, name, bytes, null, requestId);
+    }
 }
 

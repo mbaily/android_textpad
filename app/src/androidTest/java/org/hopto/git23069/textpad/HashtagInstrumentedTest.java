@@ -85,6 +85,10 @@ public class HashtagInstrumentedTest {
                 ((CodeEditor) activity.findViewById(R.id.editor)).getText().append("[ ] Call #calls\n[X] Done #calls\n");
                 dialog = new HashtagUi(activity, app).show(true);
                 dialog.findViewById(R.id.tag_group_new).performClick();
+            });
+            // Dialog OnShow installs the validated button listener on a queued message.
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            main(() -> {
                 ((EditText) popup().findViewById(R.id.tag_group_name)).setText("Work");
                 popup().findViewById(android.R.id.button1).performClick();
                 ((EditText) dialog.findViewById(R.id.tag_group_hashtags)).setText("#CALLS #calls");
@@ -92,8 +96,9 @@ public class HashtagInstrumentedTest {
                 assertEquals(List.of("calls"), app.settings.tagGroups().get(0).hashtags());
             });
             waitFor(() -> list(R.id.hashtag_results).getAdapter().getItemCount() == 2);
+            main(() -> click("Rename group"));
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
             main(() -> {
-                click("Rename group");
                 ((EditText) popup().findViewById(R.id.tag_group_name)).setText("alpha");
                 popup().findViewById(android.R.id.button1).performClick();
                 assertEquals("alpha", app.settings.tagGroups().get(0).name());
@@ -107,7 +112,9 @@ public class HashtagInstrumentedTest {
                 options.performItemClick(text(popup(), "alpha (1)"), 0, options.getAdapter().getItemId(0));
                 click("Delete group");
                 popup().findViewById(android.R.id.button1).performClick();
-                assertTrue(app.settings.tagGroups().isEmpty());
+            });
+            waitFor(() -> app.settings.tagGroups().isEmpty());
+            main(() -> {
                 assertEquals("[ ] Call #calls\n[X] Done #calls\n", app.current().buffer.text());
                 dialog.dismiss();
             });
