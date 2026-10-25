@@ -4,6 +4,7 @@ import android.util.Base64;
 import org.hopto.git23069.textpad.core.SaveTransaction;
 import org.hopto.git23069.textpad.core.TextCodec;
 import org.hopto.git23069.textpad.core.SyncEndpoint;
+import org.hopto.git23069.textpad.core.Folder;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -99,6 +100,48 @@ final class SyncHttpClient implements RemoteApi {
                 tags, json.getString("updated_at"), false, false, "");
     }
 
+    @Override public List<Folder> folders() throws IOException {
+        try {
+            JSONArray array = request("GET", "/api/v1/folders", null).getJSONArray("folders");
+            List<Folder> folders = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) folders.add(parseFolder(array.getJSONObject(i)));
+            return folders;
+        } catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned invalid folders.", e); }
+    }
+
+    @Override public Folder folder(String id) throws IOException {
+        try { return parseFolder(request("GET", "/api/v1/folders/" + segment(id), null)); }
+        catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned an invalid folder.", e); }
+    }
+
+    @Override public Folder putFolder(String id, String name, String parentId) throws IOException {
+        try {
+            String parent = parentId == null ? null : segment(parentId);
+            return parseFolder(request("PUT", "/api/v1/folders/" + segment(id), new JSONObject()
+                    .put("name", name).put("parent_id", parent == null ? JSONObject.NULL : parent)));
+        } catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned an invalid folder.", e); }
+    }
+
+    @Override public void deleteFolder(String id) throws IOException {
+        try {
+            if (!request("DELETE", "/api/v1/folders/" + segment(id), null).getBoolean("deleted"))
+                throw new IOException("The server did not delete the folder.");
+        } catch (JSONException e) { throw new IOException("The server returned an invalid folder deletion.", e); }
+    }
+
+    @Override public Remote moveDocument(String id, String folderId) throws IOException {
+        try {
+            return remote(request("PUT", path(id) + "/folder", new JSONObject()
+                    .put("folder_id", folderId == null ? JSONObject.NULL : segment(folderId))), false);
+        } catch (JSONException e) { throw new IOException("Could not encode the folder request.", e); }
+    }
+
+    private Folder parseFolder(JSONObject json) throws JSONException {
+        return new Folder(json.getString("id"), json.getString("name"),
+                json.isNull("parent_id") ? null : json.getString("parent_id"),
+                json.getString("created_at"), json.getString("updated_at"));
+    }
+
     private String path(String id) { return "/api/v1/documents/"+segment(id); }
     private String segment(String value) {
         if (!value.matches("[A-Za-z0-9_-]{1,128}")) throw new IllegalArgumentException("Invalid server document or revision ID.");
@@ -119,7 +162,8 @@ final class SyncHttpClient implements RemoteApi {
             byte[] bytes = withContent ? Base64.decode(json.getString("content_base64"),Base64.DEFAULT) : null;
             if (bytes != null && (bytes.length != size || !HexFormat.of().formatHex(SaveTransaction.hash(bytes)).equals(hash)))
                 throw new IOException("Downloaded contents did not match the server checksum.");
-            return new Remote(id,json.getString("name"),rev,hash,size,bytes,json.optString("source",""),json.optBoolean("replaced_newer_revision",false));
+            String folderId = json.isNull("folder_id") ? null : segment(json.getString("folder_id"));
+            return new Remote(id,json.getString("name"),rev,hash,size,bytes,json.optString("source",""),json.optBoolean("replaced_newer_revision",false),folderId);
         } catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned an invalid document.",e); }
     }
     private JSONObject request(String method, String path, JSONObject body) throws IOException {

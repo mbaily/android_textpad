@@ -1,6 +1,6 @@
 # Textpad sync API v1
 
-The Debian 13/SQLite service implements this Android client contract at `https://git23069.hopto.org/android_textpad`. All endpoints require HTTPS and `Authorization: Bearer <token>`. JSON is UTF-8. Maximum decoded document size is 10 MiB; responses are capped at 16 MiB by the client. Return 401/403 for bad credentials and suitable 4xx/5xx responses for failures. The client does not follow redirects or disable TLS verification.
+The Debian 13/SQLite service implements this Android client contract at `https://git23069.hopto.org:9443/android_textpad`. All endpoints require HTTPS and `Authorization: Bearer <token>`. JSON is UTF-8. Maximum decoded document size is 10 MiB; responses are capped at 16 MiB by the client. Return 401/403 for bad credentials and suitable 4xx/5xx responses for failures. The client does not follow redirects or disable TLS verification.
 
 ## Representation
 
@@ -10,13 +10,16 @@ The Debian 13/SQLite service implements this Android client contract at `https:/
   "name": "notes.txt",
   "revision": "42",
   "sha256": "64 lowercase hex characters computed over the exact file bytes",
-  "size": 1234
+  "size": 1234,
+  "folder_id": null
 }
 ```
 
 IDs and revision identifiers contain 1–128 ASCII letters, digits, `_` or `-`. Clients generate UUID document IDs for new associations. `revision` is a string; the service uses a monotonically increasing SQLite integer represented as text. Filenames are metadata, never server filesystem paths. A content response adds `content_base64`, standard Base64 encoding of the exact file bytes including any BOM and line terminators. The client verifies its size and checksum before use.
 
 ## Endpoints
+
+Logical folders use nullable `parent_id` references; document metadata uses nullable `folder_id`, with null meaning the top level. Existing files migrate to the top level. A new document's PUT may include `folder_id` to commit its initial folder placement atomically with its contents and retry receipt; a missing folder rejects creation without leaving a top-level file. A non-null initial folder participates in the receipt fingerprint. Content saves and history restores preserve existing membership; changing it uses the separate placement endpoint. The folder endpoints also exist under `/editor/api` with session/CSRF authentication. See the [folder model and migration contract](folders.md) for hierarchy integrity, nonempty deletion, and API details.
 
 | Request | Response |
 | --- | --- |
@@ -26,6 +29,14 @@ IDs and revision identifiers contain 1–128 ASCII letters, digits, `_` or `-`. 
 | `PUT /api/v1/documents/{id}` | Metadata of the accepted revision |
 | `GET /api/v1/documents/{id}/revisions` | `{"documents": [metadata, ...]}`, newest first, including current revision |
 | `GET /api/v1/documents/{id}/revisions/{revision}` | That revision's metadata and `content_base64` |
+| `GET /api/v1/folders` | Flat `{"folders": [...]}` catalog with parent IDs; optional `parent_id` filter |
+| `GET /api/v1/folders/{id}` | Folder metadata: `id`, `name`, `parent_id`, `created_at`, `updated_at` |
+| `GET /api/v1/folders/{id}/contents` | Immediate child folders and files |
+| `GET /api/v1/folders/{id}/path` | Flat `{"folders": [...]}` ancestor path, from top to bottom |
+| `GET /api/v1/library/root` | Top-level folders and files |
+| `PUT /api/v1/folders/{id}` | Create, rename, or move using `name` and optional `parent_id` |
+| `DELETE /api/v1/folders/{id}` | Delete an empty folder; `{"deleted": true}` |
+| `PUT /api/v1/documents/{id}/folder` | Move a file using `{"folder_id": "..."}` or `{"folder_id": null}` |
 | `GET /api/v1/errands` | `{"hashtags": ["chemist", ...], "updated_at": "..."}` |
 | `PUT /api/v1/errands` | Saves `{"hashtags": ["chemist", ...]}` and returns the normalized list and timestamp |
 | `GET /api/v1/tag-groups` | `{"groups": [{"id": "...", "name": "Home", "hashtags": ["calls"], "updated_at": "..."}, ...]}`, alphabetically by name, ignoring case |
@@ -39,7 +50,7 @@ Tag groups use stable client-generated UUIDs and independent last-write-wins sav
 
 Android and browser caches retain pending edits and deletion markers while offline. They send only changed groups, then merge the current server collection with any still-pending local changes. A response acknowledges only the exact local change sent, preserving edits made while a request is in flight. Clean cached groups absent from the current server collection are removed locally. Name conflicts or failed writes retain the local group for correction/retry. The CLI's existing Errands endpoints and commands are unchanged.
 
-Hashtag search accepts `{"tags": ["chemist", "groceries"], "hide_completed": true, "exclude_ids": ["local-document-id"]}`. Tags use OR matching. `hide_completed` excludes both completed `[X]` and cancelled `[C]` task lines, including lowercase markers, indentation, and list bullets. Its API default is false; the CLI explicitly sends true by default. `exclude_ids` lets a client search its saved local copies without duplicating server matches. The response contains `all_hashtags` (including tags on closed tasks) and `results`, each with `id`, `name`, `revision`, `updated_at`, `matched_tags`, and `lines`. Each line contains `line_number` (one-based), `offset` (in decoded text with LF newlines), full `text`, and `matched_tags`. Files with no visible matching lines are omitted. Empty `tags` discovers hashtags without returning matches. The browser route `/editor/api/hashtags` provides the same search with session/CSRF authentication.
+Hashtag search accepts `{"tags": ["chemist", "groceries"], "hide_completed": true, "exclude_ids": ["local-document-id"]}`. Tags use OR matching. `hide_completed` excludes both completed `[X]` and cancelled `[C]` task lines, including lowercase markers, indentation, and list bullets. Its API default is false; the CLI explicitly sends true by default. `exclude_ids` lets a client search its saved local copies without duplicating server matches. The response contains `all_hashtags` (including tags on closed tasks) and `results`, each with `id`, `name`, `revision`, `updated_at`, `folder_id`, `matched_tags`, and `lines`. Each line contains `line_number` (one-based), `offset` (in decoded text with LF newlines), full `text`, and `matched_tags`. Files with no visible matching lines are omitted. Empty `tags` discovers hashtags without returning matches. The browser route `/editor/api/hashtags` provides the same search with session/CSRF authentication.
 
 A PUT body contains:
 
@@ -84,7 +95,7 @@ The browser editor is at `/editor/` under the public endpoint. Its `/editor/api/
 
 `wss://git23069.hopto.org/android_textpad/api/v1/events` authenticates the WebSocket upgrade with the same bearer header as Android HTTPS requests. The browser uses `/editor/api/events` with its signed cookie and a mandatory matching Origin. Tokens are never passed in a URL.
 
-On connection the server sends `{"type":"ready","cursor":"42"}`; subsequent committed revisions or tag group changes produce `{"type":"changed","cursor":"43"}`. The cursor is a monotonically increasing numeric string, combining the SQLite revision sequence high-water mark and a persisted counter of tag group changes across server processes. Clients treat it as a change hint and re-fetch current state. Notifications contain no document text, names, or credentials. Retrying an accepted request or saving an unchanged group creates no new notification.
+On connection the server sends `{"type":"ready","cursor":"42"}`; subsequent committed revisions, tag group changes, or folder/file-placement changes produce `{"type":"changed","cursor":"43"}`. The cursor is a monotonically increasing numeric string, combining the SQLite revision sequence high-water mark and persisted counters of tag group and library hierarchy changes across server processes. Clients treat it as a change hint and re-fetch current state. Notifications contain no document text, names, or credentials. Retrying an accepted request or saving an unchanged group creates no new notification.
 
 Clients reconcile through the existing HTTPS API after every ready/change event and after reconnecting. Notifications are hints, not a replacement for revision/checksum validation or durable upload receipts. Full reconciliation on reconnect covers writes missed while disconnected, including across server restarts or restoring a database. Unsaved buffers still defer pulls.
 

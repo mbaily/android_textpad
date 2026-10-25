@@ -17,6 +17,8 @@ The standalone [Vim 9 plugin](../vim/README.md) adds the uncompleted-tasks view 
 
 ## Browser editor
 
+The sidebar shows nested folders and files in alphabetical order, with folders first. Select a folder for new files/subfolders, or **Top level** for entries outside folders. **⋯** menus provide folder rename/move/delete and file moves; the destination picker excludes circular moves and deletion requires an empty folder. Folder operations require a connection. The tree and existing files remain accessible offline, and new offline file saves retain their intended folder through reload and reconnect. See the [folder model and browser behavior](../docs/folders.md).
+
 Sign in with the API token. Retrieve it over SSH; credentials are generated on the server and are never included in this repository or an APK:
 
 ```sh
@@ -159,6 +161,7 @@ PYTHONPATH=server python3 server/tests/browser_smoke.py
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
 PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py
+PYTHONPATH=server python3 server/tests/browser_folders_smoke.py
 PYTHONPATH=server python3 server/tests/browser_keyboard_smoke.py
 ```
 

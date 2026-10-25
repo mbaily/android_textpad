@@ -56,6 +56,7 @@ class Document:
     size: int
     content: bytes | None = None
     encoding: str | None = None
+    folder_id: str | None = None
 
     @classmethod
     def parse(cls, data, content=False):
@@ -69,7 +70,10 @@ class Document:
             raw = base64.b64decode(data['content_base64'], validate=True) if content else None
             if raw is not None and (len(raw) != size or hashlib.sha256(raw).hexdigest() != digest):
                 raise SyncError("Downloaded bytes do not match the server's size/checksum.")
-            return cls(doc_id, name, revision, digest, size, raw, data.get('encoding'))
+            folder_id = data.get('folder_id')
+            if folder_id is not None:
+                identifier(folder_id)
+            return cls(doc_id, name, revision, digest, size, raw, data.get('encoding'), folder_id)
         except (KeyError, TypeError, ValueError, binascii.Error) as error:
             raise SyncError("Invalid document returned by the server.") from error
 

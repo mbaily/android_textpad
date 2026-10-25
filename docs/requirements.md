@@ -18,6 +18,7 @@
 
 ## Synchronization
 
+- Logical folders in the shared library contain files and other folders with no configured nesting limit. Use stable IDs and nullable parent/folder references for top-level entries. Preserve existing files and content history, reject cycles and missing parents, and reject deletion of nonempty folders. The web sidebar provides a collapsible, alphabetically ordered tree, folder/file creation, folder rename/move/delete, and file moves. Preserve unsaved buffers during moves and initial folder placement through offline file saves; keep folder mutations online, with cached browsing offline.
 - Two-way synchronization across devices; all editing and synchronization operates on saved local files. No draft upload or remote-only editing.
 - Explicit participation flag for each local file on each device. Disabled files are never downloaded over or uploaded. Persist sync metadata without restoring tabs.
 - Identical filenames and similar contents suggest an association. User confirms once; a permanent server document ID identifies future revisions, independent of filesystem paths.

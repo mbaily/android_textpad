@@ -6,6 +6,7 @@
   import { defaultKeymap, history, historyKeymap, isolateHistory, undo, redo, undoDepth, redoDepth, indentMore, indentLess, moveLineUp, moveLineDown, indentWithTab } from "@codemirror/commands";
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
   import { filterTasks, isClosedTask } from "./taskFilter.js";
+  import { indexLibrary, libraryRows, folderPath, descendantIds } from "./libraryTree.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -48,6 +49,21 @@
   const documents = new SvelteMap();
   let files = $state([]);
   let fileListLoaded = $state(false);
+  const libraryStateKey = `textpad.editor.library:${prefix}`;
+  let initialLibraryState = { expanded: [], selected: null };
+  try {
+    const stored = JSON.parse(localStorage.getItem(libraryStateKey) || "{}");
+    initialLibraryState = {
+      expanded: Array.isArray(stored.expanded) ? stored.expanded.filter(id => typeof id === "string") : [],
+      selected: typeof stored.selected === "string" ? stored.selected : null,
+    };
+  } catch {}
+  let folders = $state([]);
+  let expandedFolderIds = $state(initialLibraryState.expanded);
+  let selectedFolderId = $state(initialLibraryState.selected);
+  let folderSupport = $state(false);
+  let libraryBusy = $state(false);
+  let libraryGeneration = 0;
   let initialRecentFileIds = [];
   try {
     const saved = JSON.parse(localStorage.getItem(recentFilesKey) || "[]");
@@ -145,7 +161,7 @@
   let syncChannel = null;
 
   const IDB_NAME = "textpad.editor.offline";
-  const IDB_VERSION = 1;
+  const IDB_VERSION = 2;
 
   function openOfflineDb() {
     if (typeof indexedDB === "undefined") return Promise.resolve(null);
@@ -157,9 +173,13 @@
             const db = req.result;
             if (!db.objectStoreNames.contains("files")) db.createObjectStore("files", { keyPath: "id" });
             if (!db.objectStoreNames.contains("documents")) db.createObjectStore("documents", { keyPath: "id" });
+            if (!db.objectStoreNames.contains("folders")) db.createObjectStore("folders", { keyPath: "id" });
             if (!db.objectStoreNames.contains("outbox")) db.createObjectStore("outbox", { keyPath: "id" });
           };
-          req.onsuccess = () => resolve(req.result);
+          req.onsuccess = () => {
+          req.result.onversionchange = () => req.result.close();
+          resolve(req.result);
+        };
           req.onerror = () => resolve(null);
           req.onblocked = () => resolve(null);
         } catch {
@@ -228,7 +248,7 @@
     const plainFiles = idbPlain(remoteFiles);
     await new Promise((resolve) => {
       try {
-        const tx = db.transaction(["files", "outbox"], "readwrite");
+        const tx = db.transaction(["files", "outbox", "documents"], "readwrite");
         const filesStore = tx.objectStore("files");
         const outboxStore = tx.objectStore("outbox");
         const outboxReq = outboxStore.getAll();
@@ -237,7 +257,18 @@
           filesStore.clear();
           for (const f of plainFiles) {
             const pending = outboxMap.get(f.id);
-            filesStore.put(pending ? pending.fileSummary : f);
+            const folderId = f.folder_id ?? null;
+            filesStore.put(pending ? { ...pending.fileSummary, folder_id: folderId } : f);
+            if (pending) {
+              pending.fileSummary.folder_id = folderId;
+              pending.docMeta.folder_id = folderId;
+              outboxStore.put(pending);
+            }
+            const cached = tx.objectStore("documents").get(f.id);
+            cached.onsuccess = () => {
+              if (cached.result && (cached.result.folder_id ?? null) !== folderId)
+                tx.objectStore("documents").put({ ...cached.result, folder_id: folderId });
+            };
             outboxMap.delete(f.id);
           }
           for (const pending of outboxMap.values()) {
@@ -296,7 +327,8 @@
     if (!db) return;
     await new Promise((resolve) => {
       try {
-        const tx = db.transaction(["files", "documents", "outbox"], "readwrite");
+        const tx = db.transaction(["files", "documents", "outbox", "folders"], "readwrite");
+        tx.objectStore("folders").clear();
         tx.objectStore("files").clear();
         tx.objectStore("documents").clear();
         tx.objectStore("outbox").clear();
@@ -309,11 +341,218 @@
     pendingSyncCount = 0;
   }
 
+  async function idbStoreFolders(items) {
+    const db = await openOfflineDb();
+    if (!db) return;
+    const plain = idbPlain(items);
+    await new Promise(resolve => {
+      try {
+        const tx = db.transaction("folders", "readwrite");
+        tx.objectStore("folders").clear();
+        for (const folder of plain) tx.objectStore("folders").put(folder);
+        tx.oncomplete = tx.onerror = () => resolve();
+      } catch { resolve(); }
+    });
+  }
+
+  async function idbMoveFile(id, folderId) {
+    const db = await openOfflineDb();
+    if (!db) return;
+    await new Promise(resolve => {
+      try {
+        const tx = db.transaction(["files", "documents"], "readwrite");
+        for (const store of ["files", "documents"]) {
+          const request = tx.objectStore(store).get(id);
+          request.onsuccess = () => {
+            if (request.result) tx.objectStore(store).put({ ...request.result, folder_id: folderId });
+          };
+        }
+        tx.oncomplete = tx.onerror = () => resolve();
+      } catch { resolve(); }
+    });
+  }
+
+  async function loadFolders() {
+    try {
+      const result = await api("/folders");
+      if (!Array.isArray(result.folders)) throw new Error("The server returned an invalid folder list.");
+      return { folders: result.folders, supported: true };
+    } catch (error) {
+      if (error.status === 404) return { folders: [], supported: false };
+      throw error;
+    }
+  }
+
+  function rememberLibraryState() {
+    try { localStorage.setItem(libraryStateKey, JSON.stringify({ expanded: expandedFolderIds, selected: selectedFolderId })); } catch {}
+  }
+
+  function selectFolder(id) {
+    selectedFolderId = id ?? null;
+    rememberLibraryState();
+  }
+
+  function revealFolder(id) {
+    const expanded = new Set(expandedFolderIds);
+    for (const folder of folderPath(library, id)) expanded.add(folder.id);
+    if (expanded.size !== expandedFolderIds.length) {
+      expandedFolderIds = [...expanded];
+      rememberLibraryState();
+    }
+  }
+
+  function toggleFolder(id) {
+    const expanded = new Set(expandedFolderIds);
+    if (!expanded.delete(id)) expanded.add(id);
+    expandedFolderIds = [...expanded];
+    selectFolder(id);
+  }
+
+  function folderLabel(id, compact = false) {
+    const path = folderPath(library, id).map(folder => folder.name);
+    return ["Top level", ...(compact && path.length > 3 ? ["…", ...path.slice(-3)] : path)].join(" / ");
+  }
+
+  function destinationFolders() {
+    const excluded = new Set(modalState?.excluded || []);
+    return (library.childFolders.get(modalState?.folderId ?? null) || []).filter(folder => !excluded.has(folder.id));
+  }
+
+  async function writeLibrary(path, options) {
+    const result = await api(path, options);
+    libraryGeneration++;
+    return result;
+  }
+
+  async function mutateLibrary(action) {
+    if (libraryBusy) return;
+    if (!apiOnline || !folderSupport) {
+      notice("Connect to the server to change folders.", true);
+      return;
+    }
+    libraryBusy = true;
+    libraryGeneration++;
+    try {
+      await action();
+      await refreshFiles();
+      syncChannel?.postMessage({ type: "changed", id: "library" });
+    } catch (error) { failure(error); }
+    finally { libraryBusy = false; }
+  }
+
+  async function nameFolder(folder = null, parentId = selectedFolderId) {
+    const result = await openModal({
+      type: "folderName", title: folder ? "Rename folder" : "New folder", filename: folder?.name || "",
+      folderId: folder ? folder.parent_id : parentId,
+      actions: [{ label: "Cancel", value: false }, { label: folder ? "Rename" : "Create", value: true, primary: true }],
+    });
+    if (!result) return;
+    const name = (result.filename || "").trim().normalize("NFC");
+    if (!name || [...name].length > 255 || name === "." || name === ".." || /[/\\\x00-\x1f\x7f]/.test(name)) {
+      notice("Choose a folder name of 1–255 characters without slashes or control characters.", true);
+      return;
+    }
+    await mutateLibrary(async () => {
+      const saved = await writeLibrary(`/folders/${folder?.id || crypto.randomUUID()}`, {
+        method: "PUT", body: JSON.stringify(folder ? { name } : { name, parent_id: parentId }),
+      });
+      folders = [...folders.filter(item => item.id !== saved.id), saved];
+      fileFilter = "";
+      selectFolder(saved.id);
+      revealFolder(saved.id);
+      await idbStoreFolders(folders);
+    });
+  }
+
+  async function moveFolder(folder) {
+    const result = await openModal({
+      type: "folderDestination", title: `Move ${folder.name}`, folderId: folder.parent_id,
+      excluded: [...descendantIds(library, folder.id)],
+      actions: [{ label: "Cancel", value: false }, { label: "Move here", value: true, primary: true }],
+    });
+    if (!result || result.folderId === folder.parent_id) return;
+    await mutateLibrary(async () => {
+      const current = await api(`/folders/${folder.id}`);
+      const saved = await writeLibrary(`/folders/${folder.id}`, {
+        method: "PUT", body: JSON.stringify({ name: current.name, parent_id: result.folderId }),
+      });
+      folders = folders.map(item => item.id === saved.id ? saved : item);
+      fileFilter = "";
+      selectFolder(saved.id);
+      revealFolder(saved.id);
+      await idbStoreFolders(folders);
+    });
+  }
+
+  async function deleteFolder(folder) {
+    if ((library.childFolders.get(folder.id)?.length || 0) + (library.childFiles.get(folder.id)?.length || 0)) {
+      notice("Move this folder’s files and subfolders before deleting it.", true);
+      return;
+    }
+    if (!await confirm("Delete folder?", `Delete “${folder.name}”?`, "Delete folder")) return;
+    await mutateLibrary(async () => {
+      await writeLibrary(`/folders/${folder.id}`, { method: "DELETE" });
+      folders = folders.filter(item => item.id !== folder.id);
+      expandedFolderIds = expandedFolderIds.filter(id => id !== folder.id);
+      if (selectedFolderId === folder.id) selectFolder(folder.parent_id);
+      await idbStoreFolders(folders);
+    });
+  }
+
+  async function moveFile(file) {
+    const doc = documents.get(file.id);
+    if (doc?.saving || doc?.pendingSync || (doc && !doc.revision && doc.pending) || await idbGet("outbox", file.id)) {
+      notice("Finish syncing this file before moving it.", true);
+      return;
+    }
+    const result = await openModal({
+      type: "folderDestination", title: `Move ${file.name}`, folderId: file.folder_id ?? null, excluded: [],
+      actions: [{ label: "Cancel", value: false }, { label: "Move here", value: true, primary: true }],
+    });
+    if (!result || result.folderId === (file.folder_id ?? null)) return;
+    if (doc && !doc.revision && !doc.pendingSync) {
+      doc.folder_id = result.folderId;
+      selectFolder(result.folderId);
+      revealFolder(result.folderId);
+      return;
+    }
+    await mutateLibrary(async () => {
+      const moved = await writeLibrary(`/documents/${file.id}/folder`, { method: "PUT", body: JSON.stringify({ folder_id: result.folderId }) });
+      files = files.map(item => item.id === file.id ? { ...item, folder_id: moved.folder_id } : item);
+      if (doc) doc.folder_id = moved.folder_id;
+      selectFolder(moved.folder_id);
+      revealFolder(moved.folder_id);
+      await idbMoveFile(file.id, moved.folder_id);
+    });
+  }
+
+  async function folderActions(folder) {
+    selectFolder(folder.id);
+    const action = await openModal({ type: "folderActions", title: folder.name, folder,
+      actions: [{ label: "Close", value: null }] });
+    if (action === "file") await newFile(folder.id);
+    else if (action === "new") await nameFolder(null, folder.id);
+    else if (action === "rename") await nameFolder(folder);
+    else if (action === "move") await moveFolder(folder);
+    else if (action === "delete") await deleteFolder(folder);
+  }
+
+  async function fileActions(file) {
+    const action = await openModal({ type: "fileActions", title: file.name, file,
+      actions: [{ label: "Close", value: null }] });
+    if (action === "open") await openFile(file.id);
+    else if (action === "move") await moveFile(file);
+  }
+
   const activeDoc = $derived(active ? documents.get(active) ?? null : null);
-  const filteredFiles = $derived.by(() => {
-    const q = fileFilter.toLocaleLowerCase();
-    return files.filter((file) => file.name.toLocaleLowerCase().includes(q));
+  const sidebarFiles = $derived.by(() => {
+    const entries = new Map(files.map(file => [file.id, file]));
+    for (const doc of documents.values()) if (!doc.revision && !doc.pendingSync)
+      entries.set(doc.id, { id: doc.id, name: doc.name, folder_id: doc.folder_id ?? null, size: 0, unsaved: true });
+    return [...entries.values()];
   });
+  const library = $derived(indexLibrary(folders, sidebarFiles));
+  const visibleLibrary = $derived(libraryRows(library, expandedFolderIds, fileFilter));
   const recentFiles = $derived.by(() => {
     const available = new Map(files.map((file) => [file.id, file]));
     const ids = [...new Set([...recentFileIds, ...files.map((file) => file.id)])];
@@ -419,6 +658,7 @@
     }
     if (!response.ok) {
       const error = new Error(data.error || `Server returned HTTP ${response.status}.`);
+      error.status = response.status;
       error.expired = response.status === 401;
       throw error;
     }
@@ -692,6 +932,7 @@
   function createDocModel(metadata) {
     const doc = $state({
       ...metadata,
+      folder_id: metadata.folder_id ?? null,
       dirty: false,
       saving: false,
       remoteChanged: false,
@@ -776,6 +1017,7 @@
     active = id;
     const doc = id ? documents.get(id) ?? null : null;
     viewDocument = doc;
+    if (doc) revealFolder(doc.folder_id);
     if (doc && (doc.revision || doc.pendingSync)) rememberRecentFile(doc.id);
     if (doc && view) {
       view.setState(doc.state);
@@ -804,10 +1046,17 @@
   }
 
   async function fetchDocument(id) {
+    const summaryAtStart = files.find(file => file.id === id);
+    const folderAtStart = summaryAtStart?.folder_id ?? null;
+    const currentPlacement = metadata => {
+      const current = files.find(file => file.id === id);
+      return summaryAtStart && current && (current.folder_id ?? null) !== folderAtStart
+        ? { ...metadata, folder_id: current.folder_id ?? null } : metadata;
+    };
     const cached = await idbGet("documents", id);
     const headers = {};
     if (cached?.revision && cached?.sha256 && typeof cached?.text === "string") {
-      headers["If-None-Match"] = `"${cached.revision}:${cached.sha256}"`;
+      headers["If-None-Match"] = `"${cached.revision}:${cached.sha256}${cached.folder_id ? ":" + cached.folder_id : ""}"`;
     }
     let response;
     try {
@@ -828,7 +1077,7 @@
     }
     if (response.status === 304 && cached) {
       apiOnline = true;
-      return cached;
+      return currentPlacement(cached);
     }
     let data;
     try {
@@ -838,15 +1087,19 @@
     }
     if (!response.ok) {
       const error = new Error(data.error || `Server returned HTTP ${response.status}.`);
+      error.status = response.status;
       error.expired = response.status === 401;
       throw error;
     }
     apiOnline = true;
+    data = currentPlacement(data);
     await idbStoreDocument(data);
     return data;
   }
 
   async function openFile(id) {
+    const summary = files.find(file => file.id === id) || documents.get(id);
+    if (summary) selectFolder(summary.folder_id ?? null);
     opening = id;
     closeSidebarOnMobile();
     if (documents.has(id)) {
@@ -882,10 +1135,11 @@
     }
   }
 
-  async function newFile() {
+  async function newFile(folderId = selectedFolderId) {
     const result = await openModal({
       type: "newFile",
       title: "New server file",
+      folderId,
       filename: "Untitled.txt",
       actions: [
         { label: "Cancel", value: false },
@@ -903,6 +1157,7 @@
     const doc = createDocModel({
       id: crypto.randomUUID(),
       name,
+      folder_id: folderId,
       revision: null,
       text: "",
       encoding: "utf-8",
@@ -910,6 +1165,9 @@
       line_endings: "LF",
       size: 0,
     });
+    fileFilter = "";
+    selectFolder(folderId);
+    revealFolder(folderId);
     doc.dirty = true;
     documents.set(doc.id, doc);
     activate(doc.id);
@@ -989,6 +1247,7 @@
           bom: doc.bom,
           base_revision: doc.revision,
           request_id: crypto.randomUUID(),
+          ...(!doc.revision && doc.folder_id != null ? { folder_id: doc.folder_id } : {}),
         },
       };
       doc.pending = pending;
@@ -996,7 +1255,10 @@
     doc.saving = true;
     try {
       const result = await api(`/documents/${doc.id}`, { method: "PUT", body: JSON.stringify(pending.body) });
+      if (pending.body.folder_id != null && result.folder_id !== pending.body.folder_id)
+        throw new Error("The server could not save this file in its folder. Your edits are retained; update the server and retry.");
       const storedText = typeof result.text === "string" ? result.text : pending.body.text;
+      doc.folder_id = result.folder_id ?? null;
       doc.revision = result.revision;
       doc.sha256 = result.sha256;
       doc.size = result.size;
@@ -1044,6 +1306,7 @@
         const offlineMeta = {
           id: doc.id,
           name: pending.body.name,
+          folder_id: doc.folder_id,
           revision: doc.revision,
           sha256: doc.sha256 || "",
           size: byteLength,
@@ -1064,6 +1327,7 @@
         const summary = {
           id: doc.id,
           name: offlineMeta.name,
+          folder_id: offlineMeta.folder_id,
           revision: offlineMeta.revision,
           sha256: offlineMeta.sha256,
           size: offlineMeta.size,
@@ -1169,6 +1433,8 @@
       const openDoc = documents.get(item.id);
       if (openDoc?.saving) continue;
       const result = await api(`/documents/${item.id}`, { method: "PUT", body: JSON.stringify(item.body) });
+      if (item.body.folder_id != null && result.folder_id !== item.body.folder_id)
+        throw new Error("The server could not save a pending file in its folder. The pending file is retained.");
       const storedText = typeof result.text === "string" ? result.text : item.body.text;
       await idbRemoveOutbox(item.id);
       const fullMetadata = {
@@ -1191,6 +1457,7 @@
           if (openDoc.bom === openDoc.savedBom) openDoc.bom = result.bom;
           openDoc.savedBom = result.bom;
         }
+        openDoc.folder_id = result.folder_id ?? null;
         openDoc.revision = result.revision;
         openDoc.sha256 = result.sha256;
         openDoc.size = result.size;
@@ -1225,8 +1492,9 @@
   }
 
   async function cacheDocumentsInBackground(remoteFiles) {
+    const generation = libraryGeneration;
     for (const remote of remoteFiles) {
-      if (!apiOnline) break;
+      if (!apiOnline || generation !== libraryGeneration) break;
       const cached = await idbGet("documents", remote.id);
       if (cached && cached.revision === remote.revision) continue;
       const pending = await idbGet("outbox", remote.id);
@@ -1238,6 +1506,9 @@
         });
         if (res.ok) {
           const data = await res.json();
+          if (generation !== libraryGeneration) break;
+          const current = files.find(file => file.id === remote.id);
+          if (current && current.revision !== remote.revision) continue;
           await idbStoreDocument(data);
         }
       } catch {
@@ -1252,15 +1523,26 @@
       return;
     }
     polling = true;
+    const generation = libraryGeneration;
     try {
       await flushOutbox();
       await syncErrands();
       await syncTagGroups().catch(() => {});
-      const result = await api("/documents");
+      const [result, catalog] = await Promise.all([api("/documents"), loadFolders()]);
+      if (generation !== libraryGeneration) { refreshAgain = true; return; }
+      const oldLocations = new Map(files.map(file => [file.id, file.folder_id ?? null]));
+      if (result.documents.some(file => oldLocations.has(file.id) && oldLocations.get(file.id) !== (file.folder_id ?? null)))
+        libraryGeneration++;
+      folders = catalog.folders;
+      folderSupport = catalog.supported;
+      if (selectedFolderId && !folders.some(folder => folder.id === selectedFolderId)) selectFolder(null);
       files = result.documents;
-      await idbSyncFileList(files);
+      const appliedGeneration = libraryGeneration;
+      await Promise.all([idbStoreFolders(folders), idbSyncFileList(files)]);
+      if (appliedGeneration !== libraryGeneration) { refreshAgain = true; return; }
       for (const remote of files) {
         const doc = documents.get(remote.id);
+        if (doc) doc.folder_id = remote.folder_id ?? null;
         if (!doc || !doc.revision || doc.revision === remote.revision) continue;
         if (doc.dirty || doc.saving || doc.pending) {
           doc.remoteChanged = true;
@@ -1273,6 +1555,7 @@
       cacheDocumentsInBackground(files);
     } catch (error) {
       if (error.offline) {
+        folders = await idbGetAll("folders");
         const cachedFiles = await idbGetAll("files");
         const outbox = await idbGetAll("outbox");
         pendingSyncCount = outbox.length;
@@ -2256,8 +2539,10 @@
 
   function resolveModalAction(actionValue) {
     if (!modalState) return;
-    if (modalState.type === "newFile" || modalState.type === "renameFile" || modalState.type === "tagGroupName") {
+    if (modalState.type === "newFile" || modalState.type === "renameFile" || modalState.type === "tagGroupName" || modalState.type === "folderName") {
       finishModal(actionValue ? { filename: modalState.filename } : null);
+    } else if (modalState.type === "folderDestination") {
+      finishModal(actionValue ? { folderId: modalState.folderId } : null);
     } else if (modalState.type === "encoding") {
       finishModal(actionValue ? { action: actionValue, encoding: modalState.encoding, bom: modalState.bom } : null);
     } else if (modalState.type === "settings") {
@@ -2442,25 +2727,43 @@
       >×</button>
     </div>
     <div class="sidebar-heading">
-      <h1>Synced files <span id="file-count">{files.length}</span></h1>
-      <button id="new-file" class="icon-button" title="New server file" aria-label="New server file" onclick={newFile}>+</button>
-    </div>
-    <label for="file-filter" class="sr-only">Filter synced files</label>
-    <input id="file-filter" class="file-filter" type="search" placeholder="Find a file…" autocomplete="off" bind:value={fileFilter}>
-    <div id="file-list" class="file-list" aria-live="polite">
-      {#each filteredFiles as file (file.id)}
-        <button
-          class="file-item"
-          class:selected={active === file.id}
-          data-id={file.id}
-          title="{file.name}\n{file.id}"
-          onclick={() => openFile(file.id)}
-        >
-          <span class="file-name">{file.name}</span>
-          <span class="file-meta">{bytes(file.size)} · {date(file.updated_at)}</span>
+      <h1>Files &amp; folders <span id="file-count">{sidebarFiles.length}</span></h1>
+      <div class="library-create-actions">
+        <button id="new-folder" class="icon-button" title="New folder" aria-label="New folder" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => nameFolder()}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M12 10v7m-3-3.5h6"/></svg>
         </button>
+        <button id="new-file" class="icon-button" title="New server file" aria-label="New server file" onclick={() => newFile()}>+</button>
+      </div>
+    </div>
+    <p id="library-location" class="library-location" title={folderLabel(selectedFolderId)}>Create in: {folderLabel(selectedFolderId, true)}</p>
+    <label for="file-filter" class="sr-only">Filter synced files</label>
+    <input id="file-filter" class="file-filter" type="search" placeholder="Find a file or folder…" autocomplete="off" bind:value={fileFilter}>
+    <button id="library-root" class="library-root" class:selected={selectedFolderId === null} aria-pressed={selectedFolderId === null} onclick={() => selectFolder(null)}>Top level</button>
+    <div id="file-list" class="file-list" aria-live="polite" role="list" aria-label="Folders and files">
+      {#each visibleLibrary as row (row.kind + row.entry.id)}
+        {@const entry = row.entry}
+        <div class="library-entry" role="listitem" data-kind={row.kind} data-entry-id={entry.id} data-depth={row.depth} style:--entry-depth={Math.min(row.depth, 8)}>
+          {#if row.kind === "folder"}
+            <button class="folder-item entry-open" class:selected={selectedFolderId === entry.id} data-folder-id={entry.id} aria-expanded={row.expanded} title={folderLabel(entry.id)} onclick={() => toggleFolder(entry.id)}>
+              <span class="folder-chevron" class:expanded={row.expanded} aria-hidden="true">›</span>
+              <svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+              <span class="file-name">{entry.name}</span>
+              <span class="folder-count">{row.count}</span>
+            </button>
+            <button class="entry-actions" aria-label={`Actions for folder ${entry.name}`} title="Folder actions" onclick={() => folderActions(entry)}><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          {:else}
+            <button class="file-item entry-open" class:selected={active === entry.id} data-id={entry.id} title={folderLabel(entry.folder_id) + " / " + entry.name} onclick={() => openFile(entry.id)}>
+              <span class="file-name">{entry.name}</span>
+              <span class="file-meta">{entry.unsaved ? "Unsaved" : bytes(entry.size) + " · " + date(entry.updated_at)}</span>
+            </button>
+            <button class="entry-actions" aria-label={`Actions for file ${entry.name}`} title="File actions" onclick={() => fileActions(entry)}><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+          {/if}
+        </div>
+        {#if row.kind === "folder" && row.expanded && row.count === 0 && !fileFilter}
+          <p class="empty-folder small muted" style:--entry-depth={Math.min(row.depth + 1, 8)}>Empty folder</p>
+        {/if}
       {:else}
-        <p class="muted small">{fileFilter ? "No matching files." : "No synced files yet. Create one here, or sync a file from Android."}</p>
+        <p class="muted small">{fileFilter ? "No matching files or folders." : "No synced files yet. Create one here, or sync a file from Android."}</p>
       {/each}
     </div>
     <div class="sidebar-footer">
@@ -2666,7 +2969,7 @@
       <section id="welcome" class="recent-files-home" class:hidden={!!activeDoc} aria-labelledby="recent-files-title">
         <div class="recent-files-heading">
           <h2 id="recent-files-title">Recent files</h2>
-          <button id="welcome-new" class="primary" aria-label="New server file" onclick={newFile}>New file</button>
+          <button id="welcome-new" class="primary" aria-label="New server file" onclick={() => newFile()}>New file</button>
         </div>
         {#if recentFiles.length > 0}
           <ul id="recent-file-list" class="recent-file-list" aria-label="Recent files">
@@ -2994,7 +3297,38 @@
       {:else if modalState?.type === "newFile"}
         <label for="modal-filename">Filename</label>
         <input id="modal-filename" maxlength="255" aria-label="Filename" bind:value={modalState.filename}>
-        <p>The file joins your synced documents when you save it.</p>
+        <p>In: {folderLabel(modalState.folderId, true)}. The file joins your synced documents when you save it.</p>
+      {:else if modalState?.type === "folderName"}
+        <label for="modal-folder-name">Folder name</label>
+        <input id="modal-folder-name" maxlength="255" aria-label="Folder name" bind:value={modalState.filename}>
+        <p class="folder-dialog-location">In: {folderLabel(modalState.folderId, true)}</p>
+      {:else if modalState?.type === "folderActions"}
+        <div class="library-action-menu">
+          <button type="button" onclick={() => finishModal("file")}>New file</button>
+          <button type="button" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => finishModal("new")}>New subfolder</button>
+          <button type="button" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => finishModal("rename")}>Rename folder</button>
+          <button type="button" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => finishModal("move")}>Move folder</button>
+          <button type="button" class="danger-text" disabled={!apiOnline || !folderSupport || libraryBusy} onclick={() => finishModal("delete")}>Delete folder</button>
+        </div>
+        {#if !apiOnline}<p>Connect to create, rename, move, or delete folders.</p>{/if}
+      {:else if modalState?.type === "fileActions"}
+        <div class="library-action-menu">
+          <button type="button" onclick={() => finishModal("open")}>Open file</button>
+          <button type="button" disabled={libraryBusy || ((!apiOnline || !folderSupport) && !modalState.file?.unsaved)} onclick={() => finishModal("move")}>Move to folder…</button>
+        </div>
+      {:else if modalState?.type === "folderDestination"}
+        <p class="folder-dialog-location" title={folderLabel(modalState.folderId)}>Destination: {folderLabel(modalState.folderId, true)}</p>
+        <div class="destination-navigation">
+          <button type="button" disabled={modalState.folderId == null} onclick={() => (modalState.folderId = null)}>Top level</button>
+          <button type="button" disabled={modalState.folderId == null} onclick={() => (modalState.folderId = library.byId.get(modalState.folderId)?.parent_id ?? null)}>Up one level</button>
+        </div>
+        <div class="destination-folders" aria-label="Destination folders">
+          {#each destinationFolders() as folder (folder.id)}
+            <button type="button" data-folder-id={folder.id} onclick={() => (modalState.folderId = folder.id)}>{folder.name}<span aria-hidden="true">›</span></button>
+          {:else}
+            <p class="small muted">No subfolders here.</p>
+          {/each}
+        </div>
       {:else if modalState?.type === "tagGroupName"}
         <label for="modal-group-name">Group name</label>
         <input id="modal-group-name" maxlength="100" aria-label="Group name" bind:value={modalState.filename}>

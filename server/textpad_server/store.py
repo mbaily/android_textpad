@@ -9,8 +9,13 @@ import sqlite3
 import unicodedata
 
 from .codec import InvalidText, decode, edited, merge_3way
+from .models import Folder, filename, identifier
 
 METADATA = "sequence,document_id,name,sha256,size,encoding,created_at,source"
+# Folder tables/columns are additive, so existing server releases can still open
+# this database during a deployment rollback, just as with the source column.
+SCHEMA_VERSION = 1
+UNCHANGED = object()
 RECENT_KEEP_COUNT = 10
 RECENT_KEEP_SECONDS = 3600
 HOURLY_KEEP_SECONDS = 24 * 3600
@@ -31,12 +36,6 @@ class RevisionConflict(ValueError):
     pass
 
 
-def identifier(value):
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
-        raise ValueError("Invalid document, revision, or request identifier.")
-    return value
-
-
 def infer_source(client_id=None, explicit_source=None):
     if explicit_source:
         return identifier(str(explicit_source))
@@ -49,17 +48,6 @@ def infer_source(client_id=None, explicit_source=None):
         if cid.startswith("ios"):
             return "ios"
     return "api"
-
-
-def filename(value):
-    if not isinstance(value, str) or not value.strip() or value in {".", ".."} \
-            or re.search(r"[/\\\x00-\x1f\x7f]", value):
-        raise ValueError("Use a filename of 1–255 characters without slashes or control characters.")
-    value = unicodedata.normalize("NFC", value.strip())
-    if not value or len(value) > 255 or value in {".", ".."}:
-        raise ValueError("Use a filename of 1–255 characters without slashes or control characters.")
-    value.encode("utf-8", errors="strict")
-    return value
 
 
 HASHTAG_RE = re.compile(r"(?:^|(?<=[\s(\[{\"']))#([A-Za-z_][A-Za-z0-9_-]*)(?=$|\s|[.,;:!?)\]}\"'])")
@@ -93,7 +81,7 @@ def normalize_hashtags(value):
 def representation(row):
     item = {"id": row["document_id"], "name": row["name"], "revision": str(row["sequence"]),
             "sha256": row["sha256"], "size": row["size"], "updated_at": row["created_at"],
-            "encoding": row["encoding"]}
+            "encoding": row["encoding"], "folder_id": row["folder_id"]}
     if "source" in row.keys() and row["source"]:
         item["source"] = row["source"]
     return item
@@ -171,7 +159,7 @@ class Store:
         self.on_commit = on_commit
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with closing(self.connect()) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] > 1:
+            if db.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
                 raise RuntimeError("This database was created by a newer Textpad server.")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
@@ -203,11 +191,55 @@ class Store:
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
                 );
-                PRAGMA user_version=1;
             """)
+            self._migrate(db)
+
+    @staticmethod
+    def _migrate(db):
+        # Serialize upgrades across workers and roll back every schema change on failure.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if db.execute("PRAGMA user_version").fetchone()[0] > SCHEMA_VERSION:
+                raise RuntimeError("This database was created by a newer Textpad server.")
             cols = {row[1] for row in db.execute("PRAGMA table_info(revisions)")}
             if "source" not in cols:
                 db.execute("ALTER TABLE revisions ADD COLUMN source TEXT NOT NULL DEFAULT ''")
+            db.execute("""CREATE TABLE IF NOT EXISTS folders (
+                id TEXT PRIMARY KEY NOT NULL CHECK(length(id) BETWEEN 1 AND 128),
+                name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 255),
+                name_key TEXT NOT NULL,
+                parent_id TEXT REFERENCES folders(id) ON DELETE RESTRICT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                CHECK(parent_id IS NULL OR parent_id <> id)
+            )""")
+            cols = {row[1] for row in db.execute("PRAGMA table_info(documents)")}
+            if "folder_id" not in cols:
+                db.execute("ALTER TABLE documents ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE RESTRICT")
+            db.execute("CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id)")
+            db.execute("CREATE INDEX IF NOT EXISTS documents_folder ON documents(folder_id)")
+            db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS folders_sibling_name
+                          ON folders(coalesce(parent_id, ''), name_key)""")
+            # Traverse parent links rather than materializing paths or limiting tree depth.
+            for event in ("INSERT", "UPDATE OF parent_id"):
+                suffix = "insert" if event == "INSERT" else "update"
+                db.execute(f"""CREATE TRIGGER IF NOT EXISTS folders_no_cycles_{suffix}
+                    BEFORE {event} ON folders WHEN NEW.parent_id IS NOT NULL
+                    BEGIN
+                        SELECT RAISE(ABORT, 'Folder hierarchy cannot contain cycles.') WHERE EXISTS (
+                            WITH RECURSIVE ancestors(id) AS (
+                                SELECT NEW.parent_id UNION
+                                SELECT f.parent_id FROM folders f JOIN ancestors a ON f.id=a.id
+                                WHERE f.parent_id IS NOT NULL
+                            ) SELECT 1 FROM ancestors WHERE id=NEW.id
+                        );
+                    END""")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS folders_stable_id BEFORE UPDATE OF id ON folders
+                          WHEN NEW.id <> OLD.id BEGIN SELECT RAISE(ABORT, 'Folder IDs cannot change.'); END""")
+            db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=20, isolation_level=None)
@@ -219,9 +251,155 @@ class Store:
     def list(self):
         with closing(self.connect()) as db:
             columns = ",".join("r." + name for name in METADATA.split(","))
-            rows = db.execute(f"""SELECT {columns} FROM documents d JOIN revisions r ON d.current_revision=r.sequence
+            rows = db.execute(f"""SELECT {columns},d.folder_id FROM documents d JOIN revisions r ON d.current_revision=r.sequence
                                   ORDER BY r.created_at DESC,r.sequence DESC""").fetchall()
             return [representation(row) for row in rows]
+
+    @staticmethod
+    def _folder(db, folder_id):
+        row = db.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
+        if row is None:
+            raise NotFound("Folder not found.")
+        return Folder.from_row(row)
+
+    def folder(self, folder_id):
+        identifier(folder_id)
+        with closing(self.connect()) as db:
+            return self._folder(db, folder_id)
+
+    def folders(self, parent_id=UNCHANGED):
+        with closing(self.connect()) as db:
+            if parent_id is UNCHANGED:
+                rows = db.execute("SELECT * FROM folders").fetchall()
+            else:
+                if parent_id is not None:
+                    identifier(parent_id)
+                    self._folder(db, parent_id)
+                rows = db.execute("SELECT * FROM folders WHERE parent_id IS ?", (parent_id,)).fetchall()
+        return sorted((Folder.from_row(row) for row in rows), key=lambda folder: (folder.name.casefold(), folder.id))
+
+    def folder_path(self, folder_id):
+        """Return root-to-leaf ancestors without Python recursion or stored path limits."""
+        identifier(folder_id)
+        with closing(self.connect()) as db:
+            rows = db.execute("""WITH RECURSIVE ancestors(id) AS (
+                SELECT ? UNION SELECT f.parent_id FROM folders f JOIN ancestors a ON f.id=a.id
+                WHERE f.parent_id IS NOT NULL
+            ) SELECT f.* FROM folders f JOIN ancestors a ON f.id=a.id""", (folder_id,)).fetchall()
+        by_id = {row["id"]: Folder.from_row(row) for row in rows}
+        if folder_id not in by_id:
+            raise NotFound("Folder not found.")
+        path, seen = [], set()
+        while folder_id is not None:
+            if folder_id in seen or folder_id not in by_id:
+                raise ValueError("Invalid folder hierarchy.")
+            seen.add(folder_id)
+            folder = by_id[folder_id]
+            path.append(folder)
+            folder_id = folder.parent_id
+        return list(reversed(path))
+
+    def folder_contents(self, folder_id=None):
+        if folder_id is not None:
+            identifier(folder_id)
+        with closing(self.connect()) as db:
+            db.execute("BEGIN")
+            folder = self._folder(db, folder_id).to_dict() if folder_id is not None else None
+            children = [Folder.from_row(row) for row in db.execute("SELECT * FROM folders WHERE parent_id IS ?", (folder_id,))]
+            columns = ",".join("r." + name for name in METADATA.split(","))
+            documents = [representation(row) for row in db.execute(f"""SELECT {columns}, d.folder_id
+                FROM documents d JOIN revisions r ON d.current_revision=r.sequence WHERE d.folder_id IS ?
+                ORDER BY r.created_at DESC,r.sequence DESC""", (folder_id,))]
+        children.sort(key=lambda child: (child.name.casefold(), child.id))
+        return dict(folder=folder, folders=[child.to_dict() for child in children], documents=documents)
+
+    @staticmethod
+    def _library_changed(db, updated_at):
+        db.execute("""INSERT INTO settings VALUES('library_version','1',?)
+                      ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1, updated_at=excluded.updated_at""",
+                   (updated_at,))
+
+    def put_folder(self, folder_id, name, parent_id=UNCHANGED):
+        identifier(folder_id)
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                existing = db.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
+                parent = (existing["parent_id"] if existing else None) if parent_id is UNCHANGED else parent_id
+                now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                folder = Folder(folder_id, name, parent, existing["created_at"] if existing else now, now)
+                if parent is not None:
+                    self._folder(db, parent)
+                    cycle = db.execute("""WITH RECURSIVE ancestors(id) AS (
+                        SELECT ? UNION SELECT f.parent_id FROM folders f JOIN ancestors a ON f.id=a.id
+                        WHERE f.parent_id IS NOT NULL
+                    ) SELECT 1 FROM ancestors WHERE id=?""", (parent, folder_id)).fetchone()
+                    if cycle:
+                        raise ValueError("A folder cannot be moved inside one of its descendants.")
+                duplicate = db.execute("""SELECT 1 FROM folders WHERE parent_id IS ? AND name_key=? AND id<>?""",
+                                       (parent, folder.name.casefold(), folder_id)).fetchone()
+                if duplicate:
+                    raise RequestConflict("A folder with that name already exists in this folder.")
+                if existing and existing["name"] == folder.name and existing["parent_id"] == parent:
+                    db.rollback()
+                    return Folder.from_row(existing)
+                db.execute("""INSERT INTO folders(id,name,name_key,parent_id,created_at,updated_at) VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET name=excluded.name,name_key=excluded.name_key,
+                        parent_id=excluded.parent_id,updated_at=excluded.updated_at""",
+                           (folder.id, folder.name, folder.name.casefold(), parent, folder.created_at, now))
+                self._library_changed(db, now)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+        if self.on_commit is not None:
+            self.on_commit()
+        return folder
+
+    def delete_folder(self, folder_id):
+        identifier(folder_id)
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                if db.execute("""SELECT 1 FROM folders WHERE parent_id=? UNION ALL
+                                  SELECT 1 FROM documents WHERE folder_id=? LIMIT 1""", (folder_id, folder_id)).fetchone():
+                    raise RequestConflict("Move this folder's files and subfolders before deleting it.")
+                changed = db.execute("DELETE FROM folders WHERE id=?", (folder_id,)).rowcount
+                if changed:
+                    self._library_changed(db, datetime.now(timezone.utc).isoformat(timespec="microseconds"))
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+        if changed and self.on_commit is not None:
+            self.on_commit()
+
+    def move_document(self, document_id, folder_id):
+        identifier(document_id)
+        if folder_id is not None:
+            identifier(folder_id)
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                existing = db.execute("SELECT folder_id FROM documents WHERE id=?", (document_id,)).fetchone()
+                if existing is None:
+                    raise NotFound("Document not found.")
+                if folder_id is not None:
+                    self._folder(db, folder_id)
+                changed = existing["folder_id"] != folder_id
+                if changed:
+                    db.execute("UPDATE documents SET folder_id=? WHERE id=?", (folder_id, document_id))
+                    self._library_changed(db, datetime.now(timezone.utc).isoformat(timespec="microseconds"))
+                columns = ",".join("r." + name for name in METADATA.split(","))
+                response = representation(db.execute(f"""SELECT {columns},d.folder_id FROM documents d
+                    JOIN revisions r ON d.current_revision=r.sequence WHERE d.id=?""", (document_id,)).fetchone())
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+        if changed and self.on_commit is not None:
+            self.on_commit()
+        return response
 
     def _record_cursor(self, db, client_id, document_id, sequence):
         if client_id is None:
@@ -251,13 +429,13 @@ class Store:
             columns = ",".join("r." + name for name in METADATA.split(","))
             if revision is None:
                 row = db.execute(
-                    f"SELECT {columns} FROM documents d JOIN revisions r ON d.current_revision=r.sequence WHERE d.id=?",
+                    f"SELECT {columns},d.folder_id FROM documents d JOIN revisions r ON d.current_revision=r.sequence WHERE d.id=?",
                     (document_id,),
                 ).fetchone()
             else:
                 identifier(str(revision))
                 row = db.execute(
-                    f"SELECT {METADATA} FROM revisions WHERE document_id=? AND sequence=?",
+                    f"SELECT {columns},d.folder_id FROM revisions r JOIN documents d ON d.id=r.document_id WHERE r.document_id=? AND r.sequence=?",
                     (document_id, revision),
                 ).fetchone()
             if row is None:
@@ -272,11 +450,12 @@ class Store:
             identifier(str(client_id))
         with closing(self.connect()) as db:
             if revision is None:
-                row = db.execute("""SELECT r.* FROM documents d JOIN revisions r ON d.current_revision=r.sequence
+                row = db.execute("""SELECT r.*,d.folder_id FROM documents d JOIN revisions r ON d.current_revision=r.sequence
                                     WHERE d.id=?""", (document_id,)).fetchone()
             else:
                 identifier(str(revision))
-                row = db.execute("SELECT * FROM revisions WHERE document_id=? AND sequence=?", (document_id, revision)).fetchone()
+                row = db.execute("""SELECT r.*,d.folder_id FROM revisions r JOIN documents d ON d.id=r.document_id
+                                    WHERE r.document_id=? AND r.sequence=?""", (document_id, revision)).fetchone()
             if row is None:
                 raise NotFound("Document or revision not found.")
             if revision is None:
@@ -288,11 +467,13 @@ class Store:
         with closing(self.connect()) as db:
             if db.execute("SELECT id FROM documents WHERE id=?", (document_id,)).fetchone() is None:
                 raise NotFound("Document not found.")
+            columns = ",".join("r." + name for name in METADATA.split(","))
             return [representation(row) for row in db.execute(
-                f"SELECT {METADATA} FROM revisions WHERE document_id=? ORDER BY sequence DESC", (document_id,))]
+                f"""SELECT {columns},d.folder_id FROM revisions r JOIN documents d ON d.id=r.document_id
+                    WHERE r.document_id=? ORDER BY r.sequence DESC""", (document_id,))]
 
     def put(self, document_id, name, content, base_revision, request_id, encoding_hint=None, client_id=None, source=None,
-            require_base_revision=False):
+            require_base_revision=False, folder_id=UNCHANGED):
         identifier(document_id), identifier(request_id)
         name = filename(name)
         if base_revision is not None:
@@ -304,23 +485,32 @@ class Store:
         rev_source = infer_source(client_id, source)
         decoded = decode(content, encoding_hint)
         sha256 = hashlib.sha256(content).hexdigest()
-        request_hash = hashlib.sha256(name.encode() + b"\0" + content).hexdigest()
+        request_bytes = name.encode() + b"\0" + content
+        if folder_id is not UNCHANGED and folder_id is not None:
+            identifier(folder_id)
+            request_bytes = b"\0folder\0" + json.dumps([name, folder_id]).encode() + b"\0" + content
+        request_hash = hashlib.sha256(request_bytes).hexdigest()
         with closing(self.connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 receipt = db.execute("SELECT * FROM receipts WHERE document_id=? AND request_id=?", (document_id, request_id)).fetchone()
                 if receipt is not None:
                     if receipt["request_hash"] != request_hash:
-                        raise RequestConflict("This request ID was already used for different contents or a different filename.")
+                        raise RequestConflict("This request ID was already used for different contents, a different filename, or a different initial folder.")
                     db.rollback()
                     return json.loads(receipt["response"])
                 previous = db.execute(
-                    """SELECT r.sequence, r.name, r.content, r.sha256, r.size, r.encoding, r.created_at, r.source
+                    """SELECT r.sequence, r.name, r.content, r.sha256, r.size, r.encoding, r.created_at, r.source, d.folder_id
                        FROM documents d JOIN revisions r ON d.current_revision=r.sequence
                        WHERE d.id=?""",
                     (document_id,),
                 ).fetchone()
                 current_revision = str(previous["sequence"]) if previous is not None else None
+                target_folder = previous["folder_id"] if previous else (None if folder_id is UNCHANGED else folder_id)
+                if previous and folder_id is not UNCHANGED and folder_id != target_folder:
+                    raise RequestConflict("Use the folder move action to change an existing file's folder.")
+                if previous is None and target_folder is not None:
+                    self._folder(db, target_folder)
                 if require_base_revision and current_revision != (str(base_revision) if base_revision is not None else None):
                     raise RevisionConflict("The server revision changed. Reconcile before saving again.")
                 if (
@@ -342,6 +532,7 @@ class Store:
                         "source": previous["source"] or rev_source,
                         "previous_revision": revision,
                         "replaced_newer_revision": False,
+                        "folder_id": previous["folder_id"],
                     }
                     if client_id is not None:
                         now_iso = datetime.now(timezone.utc).isoformat(timespec="microseconds")
@@ -352,7 +543,7 @@ class Store:
                     db.execute("INSERT INTO receipts VALUES(?,?,?,?)", (document_id, request_id, request_hash, json.dumps(response)))
                     db.commit()
                     return response
-                db.execute("INSERT OR IGNORE INTO documents(id) VALUES (?)", (document_id,))
+                db.execute("INSERT OR IGNORE INTO documents(id,folder_id) VALUES (?,?)", (document_id, target_folder))
                 created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
                 old_revision = str(previous["sequence"]) if previous is not None else None
                 merged_raw = None
@@ -471,6 +662,7 @@ class Store:
                         "previous_revision": old_revision,
                         "replaced_newer_revision": old_revision is not None and old_revision != base_revision,
                     }
+                response["folder_id"] = target_folder
                 if client_id is not None:
                     db.execute(
                         "INSERT OR REPLACE INTO device_cursors VALUES(?,?,?,?)",
@@ -576,8 +768,9 @@ class Store:
         with closing(self.connect()) as db:
             row = db.execute("SELECT seq FROM sqlite_sequence WHERE name='revisions'").fetchone()
             groups = db.execute("SELECT value FROM settings WHERE key='tag_groups_version'").fetchone()
+            library = db.execute("SELECT value FROM settings WHERE key='library_version'").fetchone()
             # Keep the numeric event contract used by older CLI clients.
-            return str((row[0] if row else 0) + (int(groups[0]) if groups else 0))
+            return str((row[0] if row else 0) + (int(groups[0]) if groups else 0) + (int(library[0]) if library else 0))
 
     def backup(self, destination):
         destination = Path(destination)
@@ -693,7 +886,7 @@ class Store:
         matches = []
         with closing(self.connect()) as db:
             rows = db.execute(
-                """SELECT r.sequence, r.document_id, r.name, r.content, r.encoding, r.created_at
+                """SELECT r.sequence, r.document_id, r.name, r.content, r.encoding, r.created_at, d.folder_id
                    FROM documents d JOIN revisions r ON d.current_revision=r.sequence
                    ORDER BY r.created_at DESC, r.sequence DESC"""
             ).fetchall()
@@ -743,6 +936,7 @@ class Store:
                     "name": row["name"],
                     "revision": str(row["sequence"]),
                     "updated_at": row["created_at"],
+                    "folder_id": row["folder_id"],
                     "matched_tags": file_tags,
                     "lines": line_matches,
                 })

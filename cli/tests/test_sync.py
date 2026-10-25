@@ -113,6 +113,19 @@ class SyncTests(unittest.TestCase):
         self.assertEqual([], json.loads(out)['hashtags'])
         self.assertEqual([], self.store.get_errands()['hashtags'])
 
+    def test_existing_cli_content_sync_preserves_logical_folder_membership(self):
+        self.tracked()
+        folder_id = 'folder-' + self.docid
+        self.store.put_folder(folder_id, 'Shared library')
+        self.store.move_document(self.docid, folder_id)
+        self.assertEqual(folder_id, self.api.get(self.docid).folder_id)
+        self.path.write_bytes(b'Saved CLI edit\n')
+        result = self.sync()
+        self.assertEqual('uploaded', result.state)
+        current = self.api.get(self.docid)
+        self.assertEqual(folder_id, current.folder_id)
+        self.assertEqual(b'Saved CLI edit\n', current.content)
+
     def test_errands_tag_files_set_add_and_remove_shared_tags(self):
         self.store.put_errands(['old'])
         with tempfile.TemporaryDirectory() as folder:
@@ -1426,6 +1439,15 @@ class ValidationTests(unittest.TestCase):
                          {'all_hashtags': [], 'results': [{'id': 'ok', 'name': 'file', 'lines': [None], 'matched_tags': []}]}):
             with patch.object(api, 'request', return_value=response), self.assertRaises(SyncError):
                 api.search_hashtags(['chemist'])
+
+    def test_document_folder_metadata_accepts_older_servers_and_validates_new_ids(self):
+        metadata = dict(id='doc', name='notes.txt', revision='1', sha256='0' * 64, size=0)
+        self.assertIsNone(Document.parse(metadata).folder_id)
+        self.assertIsNone(Document.parse({**metadata, 'folder_id': None}).folder_id)
+        self.assertEqual('folder-1', Document.parse({**metadata, 'folder_id': 'folder-1'}).folder_id)
+        for invalid in ('', '../folder', 42, []):
+            with self.assertRaises(SyncError):
+                Document.parse({**metadata, 'folder_id': invalid})
 
     def test_insecure_flag_is_per_invocation_and_accepts_either_position(self):
         for args in (['--insecure', 'sync'], ['sync', '--insecure'],

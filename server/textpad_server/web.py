@@ -23,7 +23,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .codec import MAX_BYTES, InvalidText, decode, edited, merge_3way
 from .events import ChangeSignal
-from .store import NotFound, RequestConflict, RevisionConflict, Store, filename, identifier
+from .store import NotFound, RequestConflict, RevisionConflict, SCHEMA_VERSION, Store, filename, identifier
 
 
 def read_secret(path):
@@ -198,7 +198,7 @@ def create_app(test_config=None):
     def health():
         with closing(store.connect()) as db:
             db.execute("SELECT 1").fetchone()
-        return jsonify(status="ok", service="textpad", schema=1)
+        return jsonify(status="ok", service="textpad", schema=SCHEMA_VERSION)
 
     @app.get("/api/v1/documents")
     def api_documents():
@@ -216,7 +216,8 @@ def create_app(test_config=None):
         return None
 
     def doc_etag(metadata):
-        return f'"{metadata["revision"]}:{metadata["sha256"]}"'
+        placement = ":" + metadata["folder_id"] if metadata.get("folder_id") is not None else ""
+        return f'"{metadata["revision"]}:{metadata["sha256"]}{placement}"'
 
     def etag_matches(etag):
         header = request.headers.get("If-None-Match", "")
@@ -255,7 +256,8 @@ def create_app(test_config=None):
             raise ValueError("Invalid Base64 file contents.") from error
         return jsonify(store.put(document_id, payload.get("name"), raw, payload.get("base_revision"),
                                  payload.get("request_id"), payload.get("encoding"), client_id=client_cursor_id(payload),
-                                 source=payload.get("source"), require_base_revision=payload.get("require_base_revision", False)))
+                                 source=payload.get("source"), require_base_revision=payload.get("require_base_revision", False),
+                                 **({"folder_id": payload["folder_id"]} if "folder_id" in payload else {})))
 
     @app.get("/api/v1/documents/<document_id>/revisions")
     def api_revisions(document_id):
@@ -414,7 +416,7 @@ def create_app(test_config=None):
         raw = edited(base, payload.get("text"), payload.get("encoding"), payload.get("bom"))
         response = store.put(document_id, name, raw, base_revision, payload.get("request_id"),
                              payload.get("encoding") or base.encoding, client_id=client_cursor_id(payload),
-                             source="web")
+                             source="web", **({"folder_id": payload["folder_id"]} if "folder_id" in payload else {}))
         if response.get("merged_newer_revision"):
             _, final_raw = store.get(document_id, response["revision"])
             formatted = decode(final_raw, response["encoding"])
@@ -499,6 +501,58 @@ def create_app(test_config=None):
         if not isinstance(payload, dict):
             raise ValueError("Send a JSON errands object.")
         return jsonify(store.put_errands(payload.get("hashtags")))
+
+    @app.get("/api/v1/folders")
+    @app.get("/editor/api/folders")
+    def get_folders():
+        if "parent_id" in request.args:
+            folders = store.folders(request.args["parent_id"] or None)
+        else:
+            folders = store.folders()
+        return jsonify(folders=[folder.to_dict() for folder in folders])
+
+    @app.get("/api/v1/folders/<folder_id>")
+    @app.get("/editor/api/folders/<folder_id>")
+    def get_folder(folder_id):
+        return jsonify(store.folder(folder_id).to_dict())
+
+    @app.get("/api/v1/folders/<folder_id>/contents")
+    @app.get("/editor/api/folders/<folder_id>/contents")
+    def get_folder_contents(folder_id):
+        return jsonify(store.folder_contents(folder_id))
+
+    @app.get("/api/v1/library/root")
+    @app.get("/editor/api/library/root")
+    def get_library_root():
+        return jsonify(store.folder_contents())
+
+    @app.get("/api/v1/folders/<folder_id>/path")
+    @app.get("/editor/api/folders/<folder_id>/path")
+    def get_folder_path(folder_id):
+        return jsonify(folders=[folder.to_dict() for folder in store.folder_path(folder_id)])
+
+    @app.put("/api/v1/folders/<folder_id>")
+    @app.put("/editor/api/folders/<folder_id>")
+    def put_folder(folder_id):
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON folder object.")
+        parent = {"parent_id": payload["parent_id"]} if "parent_id" in payload else {}
+        return jsonify(store.put_folder(folder_id, payload.get("name"), **parent).to_dict())
+
+    @app.delete("/api/v1/folders/<folder_id>")
+    @app.delete("/editor/api/folders/<folder_id>")
+    def delete_folder(folder_id):
+        store.delete_folder(folder_id)
+        return jsonify(deleted=True)
+
+    @app.put("/api/v1/documents/<document_id>/folder")
+    @app.put("/editor/api/documents/<document_id>/folder")
+    def move_document(document_id):
+        payload = request.get_json()
+        if not isinstance(payload, dict) or "folder_id" not in payload:
+            raise ValueError("Provide folder_id, or null for the top level.")
+        return jsonify(store.move_document(document_id, payload["folder_id"]))
 
     @app.get("/api/v1/tag-groups")
     @app.get("/editor/api/tag-groups")

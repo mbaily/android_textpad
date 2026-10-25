@@ -2,11 +2,15 @@ package org.hopto.git23069.textpad;
 
 import java.io.IOException;
 import java.util.List;
+import org.hopto.git23069.textpad.core.Folder;
 
 interface RemoteApi {
-    record Remote(String id, String name, String revision, String hash, long size, byte[] content, String source, boolean replacedNewerRevision) {
+    record Remote(String id, String name, String revision, String hash, long size, byte[] content, String source, boolean replacedNewerRevision, String folderId) {
+        Remote(String id, String name, String revision, String hash, long size, byte[] content, String source, boolean replacedNewerRevision) {
+            this(id, name, revision, hash, size, content, source, replacedNewerRevision, null);
+        }
         Remote(String id, String name, String revision, String hash, long size, byte[] content) {
-            this(id, name, revision, hash, size, content, "", false);
+            this(id, name, revision, hash, size, content, "", false, null);
         }
     }
     List<Remote> list() throws IOException;
@@ -21,5 +25,10 @@ interface RemoteApi {
     default List<TagGroup> getTagGroups() throws IOException { throw new IOException("Tag groups are unavailable on this server."); }
     default TagGroup putTagGroup(TagGroup group) throws IOException { throw new IOException("Tag groups are unavailable on this server."); }
     default void deleteTagGroup(String id) throws IOException { throw new IOException("Tag groups are unavailable on this server."); }
+    default List<Folder> folders() throws IOException { throw new IOException("Folders are unavailable on this server."); }
+    default Folder folder(String id) throws IOException { throw new IOException("Folders are unavailable on this server."); }
+    default Folder putFolder(String id, String name, String parentId) throws IOException { throw new IOException("Folders are unavailable on this server."); }
+    default void deleteFolder(String id) throws IOException { throw new IOException("Folders are unavailable on this server."); }
+    default Remote moveDocument(String id, String folderId) throws IOException { throw new IOException("Folders are unavailable on this server."); }
 }
 
