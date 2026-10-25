@@ -18,7 +18,7 @@ HTTP_VHOST = Path("/etc/apache2/sites-available/000-default.conf")
 HTTPS_INCLUDE = Path("/etc/apache2/android-textpad-downloads.conf")
 HTTP_INCLUDE = Path("/etc/apache2/android-textpad-http.conf")
 CA = "/etc/ssl/nucbox3/nucbox3-ca/nucbox3.crt"
-URL = "https://git23069.hopto.org/android_textpad/"
+URL = "https://git23069.hopto.org:9443/android_textpad/"
 
 
 def prune_releases(directory, *, protected=(), backup_prefix="", keep=3):
@@ -89,7 +89,7 @@ def switch(target):
 
 def fetch(path):
     return run("curl", "--silent", "--show-error", "--fail", "--max-time", "15",
-               "--cacert", CA, "--resolve", "git23069.hopto.org:443:127.0.0.1", URL + path)
+               "--cacert", CA, "--resolve", "git23069.hopto.org:9443:127.0.0.1", URL + path)
 
 
 def main():
