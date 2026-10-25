@@ -50,6 +50,7 @@
   let files = $state([]);
   let fileListLoaded = $state(false);
   let libraryLoadError = $state("");
+  let showLoadingHint = $state(false);
   const libraryStateKey = `textpad.editor.library:${prefix}`;
   let initialLibraryState = { expanded: [], selected: null };
   try {
@@ -383,6 +384,16 @@
       if (error.status === 404) return { folders: [], supported: false };
       throw error;
     }
+  }
+
+  async function showCachedLibrary() {
+    const generation = libraryGeneration;
+    const [cachedFiles, cachedFolders] = await Promise.all([idbGetAll("files"), idbGetAll("folders")]);
+    // A server response or a folder action is newer than this cached snapshot.
+    if (fileListLoaded || generation !== libraryGeneration || (!cachedFiles.length && !cachedFolders.length)) return;
+    files = cachedFiles.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+    folders = cachedFolders;
+    fileListLoaded = true;
   }
 
   function rememberLibraryState() {
@@ -2623,6 +2634,8 @@
     window.addEventListener("pageshow", scheduleViewport);
 
     applyPreferences();
+    const loadingHintTimer = setTimeout(() => { showLoadingHint = true; }, 250);
+    showCachedLibrary();
     refreshFiles().catch(failure);
     syncErrands().catch(() => {});
     connectEvents();
@@ -2708,6 +2721,7 @@
 
     return () => {
       clearInterval(pollInterval);
+      clearTimeout(loadingHintTimer);
       if (viewportFrame !== null) cancelAnimationFrame(viewportFrame);
       viewport?.removeEventListener("resize", scheduleViewport);
       viewport?.removeEventListener("scroll", scheduleViewport);
@@ -2791,7 +2805,9 @@
           <p class="empty-folder small muted" style:--entry-depth={Math.min(row.depth + 1, 8)}>Empty folder</p>
         {/if}
       {:else}
-        <p id="library-empty" class="muted small" role="status">{libraryLoadError ? "Files and folders could not be loaded. Use Refresh to retry." : !fileListLoaded ? "Loading files and folders…" : fileFilter ? "No matching files or folders." : "No synced files yet. Create one here, or sync a file from Android."}</p>
+        {#if libraryLoadError || fileListLoaded || showLoadingHint}
+          <p id="library-empty" class="muted small" role="status">{libraryLoadError ? "Files and folders could not be loaded. Use Refresh to retry." : !fileListLoaded ? "Loading files and folders…" : fileFilter ? "No matching files or folders." : "No synced files yet. Create one here, or sync a file from Android."}</p>
+        {/if}
       {/each}
     </div>
     <div class="sidebar-footer">
@@ -3010,7 +3026,7 @@
               </li>
             {/each}
           </ul>
-        {:else}
+        {:else if libraryLoadError || fileListLoaded || showLoadingHint}
           <p id="recent-files-empty" class="recent-files-empty" role="status">{libraryLoadError ? "Recent files could not be loaded. Use Refresh to retry." : fileListLoaded ? "No recent files yet." : "Loading recent files…"}</p>
         {/if}
       </section>

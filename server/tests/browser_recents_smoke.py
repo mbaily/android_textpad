@@ -41,6 +41,25 @@ def main():
         expect(page.locator("#welcome")).to_be_visible()
         expect(names).to_have_text(["Tasks.txt", "Notes.txt"])
 
+        # A warm reload displays cached rows before the server catalog responds.
+        held_catalog = []
+        hold_catalog = True
+        def catalog_request(route):
+            if hold_catalog:
+                held_catalog.append(route)
+            else:
+                route.continue_()
+        page.route("**/editor/api/documents", catalog_request)
+        page.reload()
+        expect(names).to_have_text(["Tasks.txt", "Notes.txt"])
+        expect(page.locator(".file-item")).to_have_count(2)
+        expect(page.locator("#library-empty")).to_have_count(0)
+        expect(page.locator("#recent-files-empty")).to_have_count(0)
+        hold_catalog = False
+        for route in list(held_catalog):
+            route.continue_()
+        page.unroute("**/editor/api/documents", catalog_request)
+
         # Recently opened order survives reload, independently of server modification order.
         rows.filter(has_text="Notes.txt").click()
         page.get_by_role("button", name="Close Notes.txt", exact=True).click()
