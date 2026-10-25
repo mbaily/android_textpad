@@ -15,6 +15,7 @@
 .line-input-controls{display:flex;align-items:center;gap:6px;min-width:0}
 .line-input-controls input{flex:1;min-width:0;font:var(--font-size) var(--editor-font)}
 .line-input-controls button{min-width:36px;min-height:38px}
+.line-input-controls .icon-button{display:grid;place-items:center;width:36px;flex:none;padding:0}
 .read-only .cm-cursorLayer{animation:none!important;opacity:1!important}
 .read-only .cm-cursor{display:block!important;border-left-color:var(--green)!important}
 .recent-files-home{flex:1;min-width:0;min-height:0;overflow:auto;padding:28px clamp(18px,4vw,48px);color:var(--muted)}

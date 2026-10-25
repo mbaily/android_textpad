@@ -90,6 +90,49 @@ public class LineInsertionTest {
         assertEquals("\nadded", insertion.text());
     }
 
+    @Test public void deletesExactlyTheCursorLineIncludingItsSeparator() {
+        String[][] cases = {
+                {"first\nsecond\nlast", "2", "second\nlast"},
+                {"first\nsecond\nlast", "8", "first\nlast"},
+                {"first\nsecond\nlast", "14", "first\nsecond"},
+                {"first\n\nlast", "6", "first\nlast"},
+                {"first\n", "6", "first"},
+                {"first\n", "0", ""},
+                {"only 😀", "3", ""},
+                {"\n\n", "1", "\n"},
+                {"", "0", ""},
+                {"first\nlast", "-5", "last"},
+                {"first\nlast", "100", "first"},
+        };
+        for (String[] item : cases) {
+            var doc = new DocumentBuffer(TextCodec.split(item[0], TextCodec.Encoding.UTF8, false));
+            var deletion = LineInsertion.deletionAt(doc.text(), Integer.parseInt(item[1]));
+            doc.edit(deletion.offset(), deletion.end(), "");
+            assertEquals(item[2], doc.text());
+            assertEquals(deletion.offset(), deletion.cursor());
+            assertTrue(deletion.cursor() <= doc.length());
+        }
+    }
+
+    @Test public void deletingALinePreservesOtherTerminatorsAndUndoRestoresExactBytes() throws Exception {
+        String original = "first\r\nsecond\nlast\r";
+        for (int offset : new int[]{0, 8, 14, 18}) {
+            var doc = new DocumentBuffer(TextCodec.split(original, TextCodec.Encoding.UTF8, false));
+            var deletion = LineInsertion.deletionAt(doc.text(), offset);
+            doc.edit(deletion.offset(), deletion.end(), "");
+            String expected = switch (offset) {
+                case 0 -> "second\nlast\r";
+                case 8 -> "first\r\nlast\r";
+                case 14 -> "first\r\nsecond\n";
+                default -> "first\r\nsecond\nlast";
+            };
+            assertArrayEquals(expected.getBytes(StandardCharsets.UTF_8), doc.snapshot().bytes());
+            doc.undo(); assertArrayEquals(original.getBytes(StandardCharsets.UTF_8), doc.snapshot().bytes());
+            assertFalse(doc.dirty()); doc.redo();
+            assertArrayEquals(expected.getBytes(StandardCharsets.UTF_8), doc.snapshot().bytes());
+        }
+    }
+
     @Test public void rejectsMultilineInputWithoutEditing() {
         for (String input : new String[]{"a\nb", "a\rb", "a\r\nb", "a\u2028b", "a\u2029b"}) {
             assertThrows(IllegalArgumentException.class, () -> LineInsertion.below("original", 0, "", input));

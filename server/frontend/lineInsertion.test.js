@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { indentation, indentUnit, adjustIndent, insertionBelow } from "./lineInsertion.js";
+import { indentation, indentUnit, adjustIndent, insertionBelow, deletionAt } from "./lineInsertion.js";
 
 test("copies whitespace and infers nearby space steps", () => {
   const text = "root\n  first\n    nested\n  sibling\n\n    last";
@@ -61,6 +61,28 @@ test("fills only the current blank line without adding a separator", () => {
 test("replaces only blank whitespace with the requested indentation", () => {
   assert.deepEqual(insertionBelow("first\n \t \nlast", 7, "    ", "filled 😀"),
     { from: 6, to: 9, insert: "    filled 😀", cursor: 19 });
+});
+
+test("deletes exactly the cursor line including its separator", () => {
+  for (const [text, offset, expected] of [
+    ["first\nsecond\nlast", 2, "second\nlast"],
+    ["first\nsecond\nlast", 8, "first\nlast"],
+    ["first\nsecond\nlast", 14, "first\nsecond"],
+    ["first\n\nlast", 6, "first\nlast"],
+    ["first\n", 6, "first"],
+    ["first\n", 0, ""],
+    ["only 😀", 3, ""],
+    ["\n\n", 1, "\n"],
+    ["", 0, ""],
+    ["first\nlast", -5, "last"],
+    ["first\nlast", 100, "first"],
+  ]) {
+    const deletion = deletionAt(text, offset);
+    const result = text.slice(0, deletion.from) + text.slice(deletion.to);
+    assert.equal(result, expected);
+    assert.equal(deletion.cursor, deletion.from);
+    assert.ok(deletion.cursor <= result.length);
+  }
 });
 
 test("nonblank whitespace characters remain protected", () => {

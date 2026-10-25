@@ -71,7 +71,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout lineComposer, lineComposerBody;
     private EditText lineInput;
     private TextView lineInputStatus;
-    private Button lineComposerToggle, lineLessButton, lineMoreButton, lineAddButton;
+    private Button lineComposerToggle, lineDeleteButton, lineLessButton, lineMoreButton, lineAddButton;
     private boolean updatingLineInput, lineComposerCollapsed;
     private CheckBox matchCase;
     private Button saveButton, undoButton, redoButton, findButton, findAllButton, hashtagsButton, indentLessButton, indentMoreButton, todoButton, taskFilterButton, dateButton, timeButton, dividerButton, moveUpButton, moveDownButton, bottomButton, readOnlyButton, replaceOneButton, replaceAllButton;
@@ -374,6 +374,8 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         lineInputStatus = label("", 11, MUTED); lineInputStatus.setId(R.id.line_input_status);
         lineComposerBody.addView(lineInputStatus);
         LinearLayout controls = row(); controls.setGravity(Gravity.CENTER_VERTICAL);
+        lineDeleteButton = iconButton(Icon.DELETE_LINE, TEXT, "Delete current line", v -> deleteCurrentLine());
+        controls.addView(lineDeleteButton);
         lineLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease new line indentation", v -> adjustLineIndent(false));
         lineMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase new line indentation", v -> adjustLineIndent(true));
         controls.addView(lineLessButton); controls.addView(lineMoreButton);
@@ -476,6 +478,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             updatingLineInput = true; lineInput.setText(shownTab.lineDraft); lineInput.setSelection(lineInput.length()); updatingLineInput = false;
         }
         boolean enabled = canAddLine();
+        setButtonEnabled(lineDeleteButton, enabled && editor.length() > 0);
         lineInput.setEnabled(enabled); lineMoreButton.setEnabled(enabled);
         lineLessButton.setEnabled(enabled && !shownTab.lineIndent.isEmpty());
         lineAddButton.setEnabled(enabled && !shownTab.lineDraft.isEmpty());
@@ -507,6 +510,33 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         editor.setSelection(insertion.cursor());
         editor.bringPointIntoView(insertion.cursor()); saveViewState();
         lineInput.requestFocus();
+    }
+
+    private void deleteCurrentLine() {
+        if (!canAddLine() || editor.length() == 0) return;
+        EditorTab tab = shownTab;
+        EditorDocument doc = tab.document;
+        DocumentBuffer buffer = doc.buffer;
+        long state = buffer.state();
+        int offset = editor.getSelectionEnd(), line = buffer.lineAt(offset);
+        LineInsertion.Deletion deletion = LineInsertion.deletionAt(editor.getText(), offset);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Delete line " + (line + 1) + "?")
+                .setMessage("Delete the entire current line? You can undo this after leaving read-only mode.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Delete", (d, which) -> {
+                    if (!canAddLine() || shownTab != tab) return;
+                    if (doc.buffer != buffer || buffer.state() != state || editor.getSelectionEnd() != offset) {
+                        toast("The document changed. Please choose the line again."); return;
+                    }
+                    buffer.edit(deletion.offset(), deletion.end(), "");
+                    tab.selectionStart = tab.selectionEnd = deletion.cursor(); tab.lineAnchor = -1;
+                    refresh(false);
+                    editor.setSelection(deletion.cursor());
+                    editor.bringPointIntoView(deletion.cursor()); saveViewState();
+                }).create();
+        dialog.setOnDismissListener(d -> {
+            if (canAddLine() && shownTab == tab) lineInput.requestFocus();
+        });
+        dialog.show();
     }
 
     private void toggleReadOnly() {
@@ -1372,7 +1402,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     private LinearLayout column() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.VERTICAL); return view; }
     private LinearLayout row() { LinearLayout view = new LinearLayout(this); view.setOrientation(LinearLayout.HORIZONTAL); view.setGravity(Gravity.CENTER_VERTICAL); return view; }
     private TextView label(String text, int size, int color) { TextView view = new TextView(this); view.setText(text); view.setTextSize(size); view.setTextColor(color); return view; }
-    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, HASHTAG, INDENT_LESS, INDENT_MORE, TODO, TASK_FILTER, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
+    private enum Icon { NEW, OPEN, MENU, PREV, NEXT, CLOSE, DELETE_LINE, REPLACE, REPLACE_ALL, UNDO, REDO, FIND, FIND_ALL, HASHTAG, INDENT_LESS, INDENT_MORE, TODO, TASK_FILTER, DATE, TIME, DIVIDER, MOVE_LINE_UP, MOVE_LINE_DOWN, BOTTOM, READ_ONLY, SAVE }
     private void setButtonEnabled(Button button, boolean enabled) {
         button.setEnabled(enabled); button.setAlpha(enabled ? 1f : 0.4f); button.invalidate();
     }
@@ -1423,6 +1453,15 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                     case CLOSE -> {
                         p.moveTo(ox + 7 * s, oy + 7 * s); p.lineTo(ox + 17 * s, oy + 17 * s);
                         p.moveTo(ox + 17 * s, oy + 7 * s); p.lineTo(ox + 7 * s, oy + 17 * s);
+                    }
+                    case DELETE_LINE -> {
+                        p.moveTo(ox + 3 * s, oy + 6 * s); p.lineTo(ox + 21 * s, oy + 6 * s);
+                        p.moveTo(ox + 9 * s, oy + 6 * s); p.lineTo(ox + 9 * s, oy + 3 * s);
+                        p.lineTo(ox + 15 * s, oy + 3 * s); p.lineTo(ox + 15 * s, oy + 6 * s);
+                        p.moveTo(ox + 5 * s, oy + 6 * s); p.lineTo(ox + 6 * s, oy + 21 * s);
+                        p.lineTo(ox + 18 * s, oy + 21 * s); p.lineTo(ox + 19 * s, oy + 6 * s);
+                        p.moveTo(ox + 10 * s, oy + 10 * s); p.lineTo(ox + 10 * s, oy + 17 * s);
+                        p.moveTo(ox + 14 * s, oy + 10 * s); p.lineTo(ox + 14 * s, oy + 17 * s);
                     }
                     case REPLACE -> {
                         p.moveTo(ox + 4 * s, oy + 8 * s); p.lineTo(ox + 19 * s, oy + 8 * s);

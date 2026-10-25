@@ -7,7 +7,7 @@
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
   import { filterTasks, isClosedTask } from "./taskFilter.js";
   import { indexLibrary, libraryRows, folderEntries, folderPath, descendantIds } from "./libraryTree.js";
-  import { indentation, indentUnit, adjustIndent, insertionBelow } from "./lineInsertion.js";
+  import { indentation, indentUnit, adjustIndent, insertionBelow, deletionAt } from "./lineInsertion.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -17,7 +17,7 @@
   const wrapCompartment = new Compartment();
   const guttersCompartment = new Compartment();
   const readOnlyCompartment = new Compartment();
-  const newLineInsertion = Annotation.define();
+  const lineComposerEdit = Annotation.define();
   const tasksFilterCompartment = new Compartment();
   const recentFilesKey = `textpad.editor.recentFiles:${prefix}`;
   const fonts = {
@@ -154,6 +154,7 @@
   let cursorLineBlank = $state(true);
   let cursorCol = $state(1);
   let lineCount = $state(1);
+  let documentLength = $state(0);
   let canUndo = $state(false);
   let canRedo = $state(false);
   let readOnly = $state(false);
@@ -861,6 +862,7 @@
     if (!view || !activeDoc) {
       canUndo = false;
       canRedo = false;
+      documentLength = 0;
       return;
     }
     const cursor = view.state.selection.main.head;
@@ -868,6 +870,7 @@
     cursorLine = line.number;
     cursorCol = cursor - line.from + 1;
     lineCount = view.state.doc.lines;
+    documentLength = view.state.doc.length;
     canUndo = undoDepth(view.state) > 0;
     canRedo = redoDepth(view.state) > 0;
     const sourceIndent = indentation(line.text, 0);
@@ -1011,7 +1014,7 @@
         readOnlyCompartment.of(
           readOnlyExtensions()
         ),
-        EditorState.changeFilter.of(tr => !tr.startState.readOnly || tr.annotation(newLineInsertion) === true),
+        EditorState.changeFilter.of(tr => !tr.startState.readOnly || tr.annotation(lineComposerEdit) === true),
         tasksFilterCompartment.of(getTasksFilterExtension(doc)),
         rectangularSelection(),
         highlightActiveLineGutter(),
@@ -2409,10 +2412,36 @@
     view.dispatch({
       changes: { from: insertion.from, to: insertion.to, insert: insertion.insert },
       selection: EditorSelection.cursor(insertion.cursor),
-      annotations: [newLineInsertion.of(true), isolateHistory.of("full")],
+      annotations: [lineComposerEdit.of(true), isolateHistory.of("full")],
       scrollIntoView: true,
     });
     doc.lineDraft = "";
+    lineInputEl?.focus();
+  }
+
+  async function deleteCurrentLine() {
+    const doc = activeDoc;
+    if (!canComposeLine || !view || !view.state.doc.length) return;
+    const text = view.state.doc;
+    const offset = view.state.selection.main.head;
+    const line = text.lineAt(offset);
+    if (!await confirm(`Delete line ${line.number}?`,
+      "Delete the entire current line? You can undo this after leaving read-only mode.", "Delete")) {
+      lineInputEl?.focus();
+      return;
+    }
+    if (!canComposeLine || !view) return;
+    if (activeDoc !== doc || view.state.doc !== text || view.state.selection.main.head !== offset) {
+      notice("The document changed. Please choose the line again."); return;
+    }
+    const deletion = deletionAt(text.toString(), offset);
+    doc.lineAnchor = -1;
+    view.dispatch({
+      changes: { from: deletion.from, to: deletion.to, insert: "" },
+      selection: EditorSelection.cursor(deletion.cursor),
+      annotations: [lineComposerEdit.of(true), isolateHistory.of("full")],
+      scrollIntoView: true,
+    });
     lineInputEl?.focus();
   }
 
@@ -3382,6 +3411,9 @@
             {:else}{cursorLineBlank ? "Fill line" : "Add below line"} {cursorLine} · Indent: {activeDoc.lineIndent.length} {activeDoc.lineIndent.includes("\t") ? "characters (tabs)" : "spaces"}{/if}
           </div>
           <div class="line-input-controls">
+            <button id="line-delete" type="button" class="icon-button" aria-label="Delete current line" title="Delete current line" disabled={activeDoc.tasksOnly || !documentLength} onclick={deleteCurrentLine}>
+              <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
+            </button>
             <button id="line-indent-less" type="button" aria-label="Decrease new line indentation" title="Decrease new line indentation" disabled={activeDoc.tasksOnly || !activeDoc.lineIndent} onclick={() => adjustNewLineIndent(false)}>←</button>
             <button id="line-indent-more" type="button" aria-label="Increase new line indentation" title="Increase new line indentation" disabled={activeDoc.tasksOnly} onclick={() => adjustNewLineIndent(true)}>→</button>
             <input id="line-input" type="text" aria-label="New line text" aria-describedby="line-input-status" placeholder="Add one line…" autocomplete="off" disabled={activeDoc.tasksOnly}

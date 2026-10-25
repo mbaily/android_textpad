@@ -1,11 +1,15 @@
 package org.hopto.git23069.textpad.core;
 
-/** Plans one-line additions, reusing the current blank line. Offsets use normalized LF text. */
+/** Plans line-composer edits. Offsets use normalized LF text. */
 public final class LineInsertion {
     private LineInsertion() { }
 
     public record Insertion(int offset, int end, String text) {
         public int cursor() { return offset + text.length(); }
+    }
+
+    public record Deletion(int offset, int end) {
+        public int cursor() { return offset; }
     }
 
     private static int lineStart(CharSequence text, int offset) {
@@ -75,5 +79,13 @@ public final class LineInsertion {
         }
         return blank ? new Insertion(start, end, indent + input)
                 : new Insertion(end, end, "\n" + indent + input);
+    }
+
+    /** Remove the line and its following separator, or the preceding separator at EOF. */
+    public static Deletion deletionAt(CharSequence text, int offset) {
+        int start = lineStart(text, offset), end = start;
+        while (end < text.length() && text.charAt(end) != '\n') end++;
+        return end < text.length() ? new Deletion(start, end + 1)
+                : new Deletion(Math.max(0, start - 1), end);
     }
 }

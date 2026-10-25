@@ -63,3 +63,11 @@ export function insertionBelow(text, offset, indent, input) {
   const insert = (blank ? "" : "\n") + indent + input;
   return { from, to: end, insert, cursor: from + insert.length };
 }
+
+// Remove the following separator, or the preceding separator for the final line.
+export function deletionAt(text, offset) {
+  const start = lineStart(text, offset);
+  const end = text.indexOf("\n", start);
+  const from = end < 0 ? Math.max(0, start - 1) : start;
+  return { from, to: end < 0 ? text.length : end + 1, cursor: from };
+}

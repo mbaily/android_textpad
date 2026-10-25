@@ -5,6 +5,7 @@ import android.net.Uri;
 import android.provider.DocumentsContract;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.inspector.WindowInspector;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
 import org.junit.Before;
@@ -60,6 +61,17 @@ public class EditorInstrumentedTest {
             View found = findViewWithHint(group.getChildAt(i), hint); if (found != null) return found;
         }
         return null;
+    }
+
+    private void answerLineDeletion(int buttonId) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            var windows = WindowInspector.getGlobalWindowViews();
+            View dialog = windows.get(windows.size() - 1);
+            assertEquals("Delete the entire current line? You can undo this after leaving read-only mode.",
+                    ((android.widget.TextView) dialog.findViewById(android.R.id.message)).getText().toString());
+            dialog.findViewById(buttonId).performClick();
+        });
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 
     @Test public void entryScreenShowsAnEmptyRecentListAndCanCreateADocument() throws Exception {
@@ -416,6 +428,84 @@ public class EditorInstrumentedTest {
                 button(decor, "Add line below cursor").performClick();
                 assertEquals(original + "\n  [ ] buy milk", app.current().buffer.text());
                 assertTrue(app.current().buffer.dirty());
+            });
+        }
+    }
+
+    @Test public void readOnlyComposerConfirmsLineDeletionAndKeepsTheDraftOpen() throws Exception {
+        String original = "Before\r\n  remove 😀\n  After\r\n";
+        Uri uri = seed("delete-line-composer.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                View decor = activity.getWindow().getDecorView();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(editor.getText().toString().indexOf("remove"));
+                button(decor, "Toggle read-only mode").performClick();
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                input.setText("draft 😀"); input.requestFocus();
+                View delete = button(decor, "Delete current line");
+                View less = button(decor, "Decrease new line indentation");
+                assertTrue(((ViewGroup) delete.getParent()).indexOfChild(delete)
+                        < ((ViewGroup) less.getParent()).indexOfChild(less));
+                delete.performClick();
+                assertEquals(original.replace("\r\n", "\n"), editor.getText().toString());
+            });
+            answerLineDeletion(android.R.id.button2);
+            scenario.onActivity(activity -> {
+                assertEquals(original.replace("\r\n", "\n"), app.current().buffer.text());
+                assertFalse(app.current().buffer.dirty());
+                button(activity.getWindow().getDecorView(), "Delete current line").performClick();
+                // Reloading a buffer can reset its history state to zero. Even
+                // identical text must invalidate the earlier confirmation.
+                app.current().buffer = new org.hopto.git23069.textpad.core.DocumentBuffer(
+                        TextCodec.split(original, TextCodec.Encoding.UTF8, false));
+                activity.refresh();
+            });
+            answerLineDeletion(android.R.id.button1);
+            scenario.onActivity(activity -> {
+                assertEquals(original.replace("\r\n", "\n"), app.current().buffer.text());
+                assertFalse(app.current().buffer.dirty());
+                button(activity.getWindow().getDecorView(), "Delete current line").performClick();
+            });
+            answerLineDeletion(android.R.id.button1);
+            scenario.onActivity(activity -> {
+                View decor = activity.getWindow().getDecorView();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                assertEquals("Before\n  After\n", editor.getText().toString());
+                assertEquals(7, editor.getSelectionEnd());
+                assertNull(editor.getKeyListener());
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                assertEquals("draft 😀", input.getText().toString()); assertTrue(input.hasFocus());
+                try { assertArrayEquals("Before\r\n  After\r\n".getBytes(StandardCharsets.UTF_8), app.current().buffer.snapshot().bytes()); }
+                catch (Exception e) { throw new AssertionError(e); }
+                button(decor, "Add line below cursor").performClick();
+                assertEquals("Before\n  After\n  draft 😀\n", editor.getText().toString());
+                button(decor, "Toggle read-only mode").performClick();
+                button(decor, "Undo").performClick(); assertEquals("Before\n  After\n", editor.getText().toString());
+                button(decor, "Undo").performClick();
+                try { assertArrayEquals(original.getBytes(StandardCharsets.UTF_8), app.current().buffer.snapshot().bytes()); }
+                catch (Exception e) { throw new AssertionError(e); }
+                assertFalse(app.current().buffer.dirty());
+                button(decor, "Redo").performClick();
+                editor.setSelection(editor.length());
+                button(decor, "Toggle read-only mode").performClick();
+            });
+            for (String expected : new String[]{"Before\n  After", "Before", ""}) {
+                scenario.onActivity(activity -> button(activity.getWindow().getDecorView(), "Delete current line").performClick());
+                answerLineDeletion(android.R.id.button1);
+                scenario.onActivity(activity -> {
+                    assertEquals(expected, app.current().buffer.text());
+                    assertEquals(View.VISIBLE, activity.findViewById(R.id.line_composer_body).getVisibility());
+                });
+            }
+            scenario.onActivity(activity -> {
+                View decor = activity.getWindow().getDecorView();
+                assertFalse(button(decor, "Delete current line").isEnabled());
+                ((android.widget.EditText) activity.findViewById(R.id.line_input)).setText("new");
+                button(decor, "Fill blank line").performClick();
+                assertEquals("new", app.current().buffer.text());
             });
         }
     }
