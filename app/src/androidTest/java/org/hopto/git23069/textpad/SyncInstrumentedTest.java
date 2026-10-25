@@ -132,18 +132,22 @@ public class SyncInstrumentedTest {
             app.sync.link(doc,"upgrade-file","42",hash(bytes("saved local text")));
             List<SyncManager.Binding> before=app.sync.bindings();
             String key=app.store.key(uri);
-            app.sync.prefs.edit().putString("endpoint","https://git23069.hopto.org:8443/")
-                    .putString("token","existing encrypted token").putString(key+".pendingHash","pending hash")
-                    .putString(key+".request","pending request").commit();
-            SyncManager upgraded=new SyncManager(app);
-            assertEquals(SyncHttpClient.DEFAULT_ENDPOINT,upgraded.prefs.getString("endpoint",null));
-            assertEquals("existing encrypted token",upgraded.prefs.getString("token",null));
-            assertEquals("pending hash",upgraded.prefs.getString(key+".pendingHash",null));
-            assertEquals("pending request",upgraded.prefs.getString(key+".request",null));
-            assertEquals(before,upgraded.bindings());
-            assertEquals("upgrade-file",upgraded.bindings().get(0).id());
-            assertEquals("42",upgraded.bindings().get(0).revision());
-            assertEquals(SyncHttpClient.DEFAULT_ENDPOINT,new SyncManager(app).prefs.getString("endpoint",null));
+            for(String endpoint:List.of("https://git23069.hopto.org:8443/",
+                    "https://git23069.hopto.org/android_textpad",
+                    "https://git23069.hopto.org:443/android_textpad/")) {
+                app.sync.prefs.edit().putString("endpoint",endpoint)
+                        .putString("token","existing encrypted token").putString(key+".pendingHash","pending hash")
+                        .putString(key+".request","pending request").commit();
+                SyncManager upgraded=new SyncManager(app);
+                assertEquals(SyncHttpClient.DEFAULT_ENDPOINT,upgraded.prefs.getString("endpoint",null));
+                assertEquals("existing encrypted token",upgraded.prefs.getString("token",null));
+                assertEquals("pending hash",upgraded.prefs.getString(key+".pendingHash",null));
+                assertEquals("pending request",upgraded.prefs.getString(key+".request",null));
+                assertEquals(before,upgraded.bindings());
+                assertEquals("upgrade-file",upgraded.bindings().get(0).id());
+                assertEquals("42",upgraded.bindings().get(0).revision());
+                assertEquals(SyncHttpClient.DEFAULT_ENDPOINT,new SyncManager(app).prefs.getString("endpoint",null));
+            }
         });
         assertEquals("saved local text",read(uri));
     }

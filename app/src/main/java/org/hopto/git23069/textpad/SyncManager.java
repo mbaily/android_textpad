@@ -5,6 +5,7 @@ import android.net.Uri;
 import org.hopto.git23069.textpad.core.DocumentBuffer;
 import org.hopto.git23069.textpad.core.SaveTransaction;
 import org.hopto.git23069.textpad.core.TextCodec;
+import org.hopto.git23069.textpad.core.SyncEndpoint;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,9 +37,10 @@ final class SyncManager {
 
     SyncManager(TextpadApplication app) {
         this.app=app; prefs=app.getSharedPreferences("sync",0);
-        String endpoint=prefs.getString("endpoint","").trim().replaceAll("/+$","");
-        if(endpoint.equalsIgnoreCase("https://git23069.hopto.org:8443")) {
-            prefs.edit().putString("endpoint",SyncHttpClient.DEFAULT_ENDPOINT).apply();
+        String endpoint=prefs.getString("endpoint","");
+        String migrated=SyncEndpoint.migrate(endpoint);
+        if(!endpoint.equals(migrated)) {
+            prefs.edit().putString("endpoint",migrated).apply();
             status="Server address updated. Ready to sync";
         }
     }

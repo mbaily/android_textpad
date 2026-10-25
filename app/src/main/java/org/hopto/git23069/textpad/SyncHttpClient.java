@@ -3,6 +3,7 @@ package org.hopto.git23069.textpad;
 import android.util.Base64;
 import org.hopto.git23069.textpad.core.SaveTransaction;
 import org.hopto.git23069.textpad.core.TextCodec;
+import org.hopto.git23069.textpad.core.SyncEndpoint;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -19,7 +20,7 @@ import java.util.zip.GZIPInputStream;
 import javax.net.ssl.HttpsURLConnection;
 
 final class SyncHttpClient implements RemoteApi {
-    static final String DEFAULT_ENDPOINT = "https://git23069.hopto.org:9443/android_textpad";
+    static final String DEFAULT_ENDPOINT = SyncEndpoint.DEFAULT;
     private final String endpoint, token, clientId;
     SyncHttpClient(String endpoint, String token) { this(endpoint, token, null); }
     SyncHttpClient(String endpoint, String token, String clientId) {
