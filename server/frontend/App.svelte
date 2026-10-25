@@ -49,6 +49,7 @@
   const documents = new SvelteMap();
   let files = $state([]);
   let fileListLoaded = $state(false);
+  let libraryLoadError = $state("");
   const libraryStateKey = `textpad.editor.library:${prefix}`;
   let initialLibraryState = { expanded: [], selected: null };
   try {
@@ -159,6 +160,7 @@
   let reconnectAttempts = 0;
   let dbPromise = null;
   let syncChannel = null;
+  let backgroundSyncPromise = null;
 
   const IDB_NAME = "textpad.editor.offline";
   const IDB_VERSION = 2;
@@ -1108,7 +1110,7 @@
     }
     try {
       const pendingOutbox = await idbGet("outbox", id);
-      if (pendingOutbox && !apiOnline) {
+      if (pendingOutbox) {
         const meta = { ...pendingOutbox.docMeta, pendingSync: true, pendingBody: pendingOutbox.body };
         if (!documents.has(id)) documents.set(id, createDocModel(meta));
         if (opening === id) activate(id);
@@ -1430,11 +1432,12 @@
     pendingSyncCount = outbox.length;
     if (!outbox.length) return;
     for (const item of outbox) {
-      const openDoc = documents.get(item.id);
+      let openDoc = documents.get(item.id);
       if (openDoc?.saving) continue;
       const result = await api(`/documents/${item.id}`, { method: "PUT", body: JSON.stringify(item.body) });
       if (item.body.folder_id != null && result.folder_id !== item.body.folder_id)
         throw new Error("The server could not save a pending file in its folder. The pending file is retained.");
+      libraryGeneration++;
       const storedText = typeof result.text === "string" ? result.text : item.body.text;
       await idbRemoveOutbox(item.id);
       const fullMetadata = {
@@ -1444,6 +1447,9 @@
         line_endings: result.line_endings,
       };
       await idbStoreDocument(fullMetadata);
+      const { text: _text, ...summary } = fullMetadata;
+      files = [summary, ...files.filter(file => file.id !== item.id)];
+      openDoc = documents.get(item.id);
       if (openDoc) {
         if (result.name) {
           if (openDoc.name === openDoc.savedName) openDoc.name = result.name;
@@ -1481,6 +1487,7 @@
       try {
         syncChannel?.postMessage({ type: "changed", id: item.id });
       } catch {}
+      refreshFiles().catch(failure);
     }
   }
 
@@ -1489,6 +1496,15 @@
       return navigator.locks.request("textpad.editor.outbox", runFlushOutbox);
     }
     return runFlushOutbox();
+  }
+
+  function syncInBackground() {
+    if (backgroundSyncPromise) return;
+    // A suspended tab's outbox lock or a rejected save must not block browsing.
+    const tasks = [flushOutbox(), syncErrands(), syncTagGroups()];
+    backgroundSyncPromise = Promise.allSettled(tasks.map(task => task.catch(error => {
+      if (!error.offline) failure(error);
+    }))).finally(() => { backgroundSyncPromise = null; });
   }
 
   async function cacheDocumentsInBackground(remoteFiles) {
@@ -1523,24 +1539,31 @@
       return;
     }
     polling = true;
+    libraryLoadError = "";
     const generation = libraryGeneration;
+    syncInBackground();
     try {
-      await flushOutbox();
-      await syncErrands();
-      await syncTagGroups().catch(() => {});
-      const [result, catalog] = await Promise.all([api("/documents"), loadFolders()]);
+      const [result, catalog, pending] = await Promise.all([api("/documents"), loadFolders(), idbGetAll("outbox")]);
       if (generation !== libraryGeneration) { refreshAgain = true; return; }
+      if (!Array.isArray(result.documents)) throw new Error("The server returned an invalid file list.");
       const oldLocations = new Map(files.map(file => [file.id, file.folder_id ?? null]));
       if (result.documents.some(file => oldLocations.has(file.id) && oldLocations.get(file.id) !== (file.folder_id ?? null)))
         libraryGeneration++;
       folders = catalog.folders;
       folderSupport = catalog.supported;
       if (selectedFolderId && !folders.some(folder => folder.id === selectedFolderId)) selectFolder(null);
-      files = result.documents;
+      const pendingFiles = new Map(pending.map(item => [item.id, item.fileSummary]));
+      pendingSyncCount = pending.length;
+      files = result.documents.map(remote => {
+        const local = pendingFiles.get(remote.id);
+        pendingFiles.delete(remote.id);
+        return local ? { ...remote, ...local, folder_id: remote.folder_id ?? null } : remote;
+      }).concat([...pendingFiles.values()]);
+      fileListLoaded = true;
       const appliedGeneration = libraryGeneration;
-      await Promise.all([idbStoreFolders(folders), idbSyncFileList(files)]);
+      await Promise.all([idbStoreFolders(folders), idbSyncFileList(result.documents)]);
       if (appliedGeneration !== libraryGeneration) { refreshAgain = true; return; }
-      for (const remote of files) {
+      for (const remote of result.documents) {
         const doc = documents.get(remote.id);
         if (doc) doc.folder_id = remote.folder_id ?? null;
         if (!doc || !doc.revision || doc.revision === remote.revision) continue;
@@ -1552,26 +1575,31 @@
       }
       syncEditorMetrics();
       if (hashtagsPanelOpen) runHashtagSearch();
-      cacheDocumentsInBackground(files);
+      cacheDocumentsInBackground(result.documents);
     } catch (error) {
       if (error.offline) {
-        folders = await idbGetAll("folders");
+        const cachedFolders = await idbGetAll("folders");
         const cachedFiles = await idbGetAll("files");
         const outbox = await idbGetAll("outbox");
+        if (generation !== libraryGeneration) { refreshAgain = true; return; }
         pendingSyncCount = outbox.length;
-        if (cachedFiles.length > 0 || files.length > 0) {
+        if (!fileListLoaded) {
+          folders = cachedFolders;
           if (cachedFiles.length > 0) {
             cachedFiles.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
             files = cachedFiles;
           }
+        }
+        if (fileListLoaded || files.length > 0 || folders.length > 0) {
+          fileListLoaded = true;
           syncEditorMetrics();
           if (hashtagsPanelOpen) runHashtagSearch();
           return;
         }
       }
+      libraryLoadError = error.message;
       throw error;
     } finally {
-      fileListLoaded = true;
       polling = false;
       if (refreshAgain) {
         refreshAgain = false;
@@ -2763,7 +2791,7 @@
           <p class="empty-folder small muted" style:--entry-depth={Math.min(row.depth + 1, 8)}>Empty folder</p>
         {/if}
       {:else}
-        <p class="muted small">{fileFilter ? "No matching files or folders." : "No synced files yet. Create one here, or sync a file from Android."}</p>
+        <p id="library-empty" class="muted small" role="status">{libraryLoadError ? "Files and folders could not be loaded. Use Refresh to retry." : !fileListLoaded ? "Loading files and folders…" : fileFilter ? "No matching files or folders." : "No synced files yet. Create one here, or sync a file from Android."}</p>
       {/each}
     </div>
     <div class="sidebar-footer">
@@ -2983,7 +3011,7 @@
             {/each}
           </ul>
         {:else}
-          <p id="recent-files-empty" class="recent-files-empty" role="status">{fileListLoaded ? "No recent files yet." : "Loading recent files…"}</p>
+          <p id="recent-files-empty" class="recent-files-empty" role="status">{libraryLoadError ? "Recent files could not be loaded. Use Refresh to retry." : fileListLoaded ? "No recent files yet." : "Loading recent files…"}</p>
         {/if}
       </section>
       <div id="editor-host" class="editor-host" class:hidden={!activeDoc} aria-label="Document editor" bind:this={editorHost}></div>
