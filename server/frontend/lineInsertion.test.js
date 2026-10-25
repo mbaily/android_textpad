@@ -1,6 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { indentation, indentUnit, adjustIndent, insertionBelow, deletionAt } from "./lineInsertion.js";
+import { indentation, taskPrefix, indentUnit, adjustIndent, insertionBelow, deletionAt } from "./lineInsertion.js";
+
+test("continues task states and bullets without duplicating indentation", () => {
+  for (const marker of ["[ ]", "[X]", "[x]", "[C]", "[c]"]) {
+    for (const bullet of ["", "- ", "* ", "+ "]) {
+      const text = "Heading\n \t  " + bullet + marker + " task\nplain";
+      const offset = text.indexOf("task") + 2;
+      assert.equal(taskPrefix(text, offset), bullet + "[ ] ");
+      const insertion = insertionBelow(text, offset, indentation(text, offset), taskPrefix(text, offset) + "next");
+      assert.equal(insertion.insert, "\n \t  " + bullet + "[ ] next");
+      assert.equal(taskPrefix(text, text.length), "");
+    }
+  }
+  assert.equal(taskPrefix("[ ]", -1), "[ ] ");
+  assert.equal(taskPrefix("[x]done", 100), "[ ] ");
+});
+
+test("does not infer tasks from ordinary text or other lines", () => {
+  for (const text of ["", " \t ", "notes", "- bullet", "# heading", "[?] task", "[] task",
+    "text [ ] task", "-  [ ] task", "[ ] task\n", "[ ] task\n  note"]) {
+    assert.equal(taskPrefix(text, text.length), "", text);
+  }
+});
 
 test("copies whitespace and infers nearby space steps", () => {
   const text = "root\n  first\n    nested\n  sibling\n\n    last";

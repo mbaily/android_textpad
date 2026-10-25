@@ -1,7 +1,11 @@
 package org.hopto.git23069.textpad.core;
 
+import java.util.regex.Pattern;
+
 /** Plans line-composer edits. Offsets use normalized LF text. */
 public final class LineInsertion {
+    private static final Pattern TASK_PREFIX = Pattern.compile("[ \\t]*([-*+] )?\\[[ xXcC]\\]");
+
     private LineInsertion() { }
 
     public record Insertion(int offset, int end, String text) {
@@ -22,6 +26,13 @@ public final class LineInsertion {
         int start = lineStart(text, offset), end = start;
         while (end < text.length() && (text.charAt(end) == ' ' || text.charAt(end) == '\t')) end++;
         return text.subSequence(start, end).toString();
+    }
+
+    /** Continue any task state as an open task; indentation is managed separately. */
+    public static String taskPrefix(CharSequence text, int offset) {
+        var match = TASK_PREFIX.matcher(text).region(lineStart(text, offset), text.length());
+        if (!match.lookingAt()) return "";
+        return (match.group(1) == null ? "" : match.group(1)) + "[ ] ";
     }
 
     /** Vote on nearby indentation changes; ignore blanks and large alignment offsets. */

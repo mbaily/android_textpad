@@ -601,6 +601,70 @@ public class EditorInstrumentedTest {
         }
     }
 
+    @Test public void readOnlyComposerContinuesTasksOnExpansionNavigationAndRepeatedAdds() throws Exception {
+        String original = "Heading\r\n  - [x] done\r\n\t* [c] stopped\r\n    [ ] open\r\nplain\r\n";
+        Uri uri = seed("task-continuation.txt", original.getBytes(StandardCharsets.UTF_8));
+        try (var scenario = launch(uri)) {
+            waitFor(() -> app.current() != null);
+            scenario.onActivity(activity -> {
+                View decor = activity.getWindow().getDecorView();
+                CodeEditor editor = activity.findViewById(R.id.editor);
+                editor.setSelection(editor.getText().toString().indexOf("done"));
+                button(decor, "Toggle read-only mode").performClick();
+                android.widget.EditText input = activity.findViewById(R.id.line_input);
+                View handle = activity.findViewById(R.id.line_composer_toggle);
+                assertEquals("- [ ] ", input.getText().toString());
+                assertEquals(input.length(), input.getSelectionEnd());
+                assertEquals("  ", app.currentTab().lineIndent);
+                assertFalse(app.current().buffer.dirty());
+
+                // Clearing the suggestion sticks while editing; expansion prepares it again.
+                input.setText(""); assertEquals("", input.getText().toString());
+                button(decor, "Increase new line indentation").performClick();
+                String adjustedIndent = app.currentTab().lineIndent;
+                handle.performClick(); handle.performClick();
+                assertEquals("- [ ] ", input.getText().toString());
+                assertEquals(adjustedIndent, app.currentTab().lineIndent);
+                editor.setSelection(editor.getText().toString().indexOf("stopped"));
+                assertEquals("* [ ] ", input.getText().toString());
+                assertEquals("\t", app.currentTab().lineIndent);
+                editor.setSelection(editor.getText().toString().indexOf("plain"));
+                assertEquals("", input.getText().toString());
+                editor.setSelection(editor.getText().toString().indexOf("open"));
+                assertEquals("[ ] ", input.getText().toString());
+                assertEquals("    ", app.currentTab().lineIndent);
+
+                input.append("keep this draft");
+                handle.performClick();
+                editor.setSelection(editor.getText().toString().indexOf("done"));
+                handle.performClick();
+                assertEquals("[ ] keep this draft", input.getText().toString());
+                assertEquals("  ", app.currentTab().lineIndent);
+                input.setText("");
+                editor.setSelection(editor.getText().toString().indexOf("stopped"));
+                assertEquals("* [ ] ", input.getText().toString());
+                input.append("new 😀");
+                button(decor, "Add line below cursor").performClick();
+                String expected = original.replace("\t* [c] stopped\r\n", "\t* [c] stopped\r\n\t* [ ] new 😀\r\n");
+                assertEquals(expected.replace("\r\n", "\n"), editor.getText().toString());
+                assertEquals("* [ ] ", input.getText().toString());
+                assertEquals(input.length(), input.getSelectionEnd()); assertTrue(input.hasFocus());
+                assertEquals("\t", app.currentTab().lineIndent);
+                input.append("again"); button(decor, "Add line below cursor").performClick();
+                assertEquals(expected.replace("\t* [ ] new 😀\r\n", "\t* [ ] new 😀\r\n\t* [ ] again\r\n").replace("\r\n", "\n"),
+                        editor.getText().toString());
+                assertEquals("* [ ] ", input.getText().toString());
+                button(decor, "Toggle read-only mode").performClick();
+                button(decor, "Undo").performClick();
+                assertEquals(expected.replace("\r\n", "\n"), editor.getText().toString());
+                button(decor, "Undo").performClick();
+                assertFalse(app.current().buffer.dirty());
+                try { assertArrayEquals(original.getBytes(StandardCharsets.UTF_8), app.current().buffer.snapshot().bytes()); }
+                catch (Exception e) { throw new AssertionError(e); }
+            });
+        }
+    }
+
     @Test public void readOnlyComposerKeepsDraftsAcrossTabsAndRecreationAndProtectsTaskViews() throws Exception {
         try (var scenario = launch(null)) {
             scenario.onActivity(activity -> {
@@ -617,7 +681,7 @@ public class EditorInstrumentedTest {
                 assertFalse(input.hasFocus());
                 assertEquals("draft", app.currentTab().lineDraft);
                 assertEquals("  ", app.currentTab().lineIndent);
-                app.duplicate(); assertEquals("", input.getText().toString());
+                app.duplicate(); assertEquals("[ ] ", input.getText().toString());
                 assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
                 app.selectedTab = app.tabs.get(0).id; app.refresh();
                 assertEquals("draft", input.getText().toString());

@@ -448,6 +448,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             var keyboard = getSystemService(android.view.inputmethod.InputMethodManager.class);
             if (keyboard != null) keyboard.hideSoftInputFromWindow(lineInput.getWindowToken(), 0);
         }
+        updateLineComposer(!lineComposerCollapsed);
         updateStatus();
     }
 
@@ -458,6 +459,10 @@ public final class MainActivity extends Activity implements TextpadApplication.L
     }
 
     private void updateLineComposer() {
+        updateLineComposer(false);
+    }
+
+    private void updateLineComposer(boolean refreshDraft) {
         boolean visible = app.readOnlyMode && shownTab != null && !app.filesVisible;
         lineComposer.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (!visible) return;
@@ -469,10 +474,17 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         int offset = Math.max(0, editor.getSelectionEnd());
         int line = editor.buffer.lineAt(Math.min(offset, editor.length()));
         String sourceIndent = LineInsertion.indentation(editor.getText(), offset);
+        String sourcePrefix = LineInsertion.taskPrefix(editor.getText(), offset);
         int lineEnd = line + 1 < editor.buffer.lineCount() ? editor.buffer.lineStart(line + 1) - 1 : editor.length();
         boolean blank = sourceIndent.length() == lineEnd - editor.buffer.lineStart(line);
-        if (shownTab.lineAnchor != line || !sourceIndent.equals(shownTab.lineSourceIndent)) {
+        boolean contextChanged = shownTab.lineAnchor != line || !sourceIndent.equals(shownTab.lineSourceIndent);
+        if (contextChanged) {
             shownTab.lineAnchor = line; shownTab.lineSourceIndent = sourceIndent; shownTab.lineIndent = sourceIndent;
+        }
+        if (!shownTab.tasksOnly && (contextChanged || refreshDraft || !sourcePrefix.equals(shownTab.lineSourcePrefix))) {
+            if (shownTab.lineDraft.isEmpty() || shownTab.lineDraft.equals(shownTab.lineSourcePrefix))
+                shownTab.lineDraft = sourcePrefix;
+            shownTab.lineSourcePrefix = sourcePrefix;
         }
         if (!lineInput.getText().toString().equals(shownTab.lineDraft)) {
             updatingLineInput = true; lineInput.setText(shownTab.lineDraft); lineInput.setSelection(lineInput.length()); updatingLineInput = false;
@@ -557,6 +569,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
                 if (imm != null) imm.hideSoftInputFromWindow(editor.getWindowToken(), 0);
             }
         }
+        if (app.readOnlyMode) updateLineComposer(true);
         updateStatus();
     }
 

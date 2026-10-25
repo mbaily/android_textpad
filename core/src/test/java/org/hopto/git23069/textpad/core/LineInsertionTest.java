@@ -5,6 +5,28 @@ import java.nio.charset.StandardCharsets;
 import static org.junit.Assert.*;
 
 public class LineInsertionTest {
+    @Test public void continuesTaskStatesAndBulletsWithoutDuplicatingIndentation() {
+        for (String marker : new String[]{"[ ]", "[X]", "[x]", "[C]", "[c]"}) {
+            for (String bullet : new String[]{"", "- ", "* ", "+ "}) {
+                String text = "Heading\n \t  " + bullet + marker + " task\nplain";
+                int offset = text.indexOf("task") + 2;
+                assertEquals(bullet + "[ ] ", LineInsertion.taskPrefix(text, offset));
+                var insertion = LineInsertion.below(text, offset, LineInsertion.indentation(text, offset),
+                        LineInsertion.taskPrefix(text, offset) + "next");
+                assertEquals("\n \t  " + bullet + "[ ] next", insertion.text());
+                assertEquals("", LineInsertion.taskPrefix(text, text.length()));
+            }
+        }
+        assertEquals("[ ] ", LineInsertion.taskPrefix("[ ]", -1));
+        assertEquals("[ ] ", LineInsertion.taskPrefix("[x]done", 100));
+    }
+
+    @Test public void doesNotInferTasksFromOrdinaryTextOrOtherLines() {
+        for (String text : new String[]{"", " \t ", "notes", "- bullet", "# heading", "[?] task", "[] task",
+                "text [ ] task", "-  [ ] task", "[ ] task\n", "[ ] task\n  note"})
+            assertEquals(text, "", LineInsertion.taskPrefix(text, text.length()));
+    }
+
     @Test public void copiesWhitespaceAndInfersNearbySpaceSteps() {
         String text = "root\n  first\n    nested\n  sibling\n\n    last";
         assertEquals("    ", LineInsertion.indentation(text, text.indexOf("nested") + 2));

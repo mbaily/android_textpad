@@ -1,4 +1,4 @@
-// Keep the bounded indentation heuristic in sync with core/LineInsertion.java.
+// Keep line-composer heuristics in sync with core/LineInsertion.java.
 function lineStart(text, offset) {
   let start = Math.max(0, Math.min(offset, text.length));
   while (start > 0 && text[start - 1] !== "\n") start--;
@@ -10,6 +10,12 @@ export function indentation(text, offset) {
   let end = start;
   while (end < text.length && (text[end] === " " || text[end] === "\t")) end++;
   return text.slice(start, end);
+}
+
+// Continue any task state as an open task; indentation is managed separately.
+export function taskPrefix(text, offset) {
+  const match = /^[ \t]*([-*+] )?\[[ xXcC]\]/.exec(text.slice(lineStart(text, offset)));
+  return match ? (match[1] || "") + "[ ] " : "";
 }
 
 export function indentUnit(text, offset, fallback = 4) {

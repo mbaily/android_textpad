@@ -7,7 +7,7 @@
   import { search, SearchQuery, setSearchQuery, openSearchPanel, closeSearchPanel } from "@codemirror/search";
   import { filterTasks, isClosedTask } from "./taskFilter.js";
   import { indexLibrary, libraryRows, folderEntries, folderPath, descendantIds } from "./libraryTree.js";
-  import { indentation, indentUnit, adjustIndent, insertionBelow, deletionAt } from "./lineInsertion.js";
+  import { indentation, taskPrefix, indentUnit, adjustIndent, insertionBelow, deletionAt } from "./lineInsertion.js";
 
   const prefix = document.body.dataset.prefix || "";
   const apiBase = `${prefix}/editor/api`;
@@ -858,7 +858,7 @@
     socket.onerror = () => socket.close();
   }
 
-  function syncEditorMetrics() {
+  function syncEditorMetrics(refreshDraft = false) {
     if (!view || !activeDoc) {
       canUndo = false;
       canRedo = false;
@@ -874,11 +874,17 @@
     canUndo = undoDepth(view.state) > 0;
     canRedo = redoDepth(view.state) > 0;
     const sourceIndent = indentation(line.text, 0);
+    const sourcePrefix = taskPrefix(line.text, 0);
     cursorLineBlank = sourceIndent.length === line.length;
-    if (activeDoc.lineAnchor !== line.number || activeDoc.lineSourceIndent !== sourceIndent) {
+    const contextChanged = activeDoc.lineAnchor !== line.number || activeDoc.lineSourceIndent !== sourceIndent;
+    if (contextChanged) {
       activeDoc.lineAnchor = line.number;
       activeDoc.lineSourceIndent = sourceIndent;
       activeDoc.lineIndent = sourceIndent;
+    }
+    if (readOnly && !activeDoc.tasksOnly && (contextChanged || refreshDraft || activeDoc.lineSourcePrefix !== sourcePrefix)) {
+      if (!activeDoc.lineDraft || activeDoc.lineDraft === activeDoc.lineSourcePrefix) activeDoc.lineDraft = sourcePrefix;
+      activeDoc.lineSourcePrefix = sourcePrefix;
     }
   }
 
@@ -1110,6 +1116,7 @@
       lineDraft: "",
       lineIndent: "",
       lineSourceIndent: null,
+      lineSourcePrefix: null,
       lineAnchor: -1,
     });
     const initialState = makeState(doc, metadata.text);
@@ -1396,6 +1403,7 @@
     next.lineDraft = doc.lineDraft;
     next.lineIndent = doc.lineIndent;
     next.lineSourceIndent = doc.lineSourceIndent;
+    next.lineSourcePrefix = doc.lineSourcePrefix;
     next.lineAnchor = doc.lineAnchor;
     const bounds = diffBounds(before.toString(), metadata.text);
     const nextSelection = EditorSelection.range(
@@ -2372,6 +2380,7 @@
         doc.state = doc.state.update({ effects: effect }).state;
       }
     }
+    if (readOnly) syncEditorMetrics(true);
     if (view && !readOnly) view.focus();
   }
 
@@ -2382,6 +2391,7 @@
       lineInputEl?.blur();
       event.currentTarget.focus();
     }
+    if (!lineComposerCollapsed) syncEditorMetrics(true);
     view?.requestMeasure();
   }
 
@@ -2409,13 +2419,13 @@
       notice("The document is too large", true); return;
     }
     doc.lineAnchor = -1;
+    doc.lineDraft = "";
     view.dispatch({
       changes: { from: insertion.from, to: insertion.to, insert: insertion.insert },
       selection: EditorSelection.cursor(insertion.cursor),
       annotations: [lineComposerEdit.of(true), isolateHistory.of("full")],
       scrollIntoView: true,
     });
-    doc.lineDraft = "";
     lineInputEl?.focus();
   }
 
