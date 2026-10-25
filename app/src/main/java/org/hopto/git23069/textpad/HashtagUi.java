@@ -28,6 +28,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -51,6 +52,8 @@ final class HashtagUi {
     private List<FileResult> currentResults = List.of();
     private boolean searching;
     private List<String> errandsTags;
+    private List<TagGroup> groups;
+    private String selectedGroupId = "";
 
     private AlertDialog dialog;
     private Button searchTabBtn, errandsTabBtn, lineModeBtn, fileModeBtn;
@@ -65,6 +68,7 @@ final class HashtagUi {
         this.activity = activity;
         this.app = app;
         this.errandsTags = app.settings.errandsHashtags();
+        this.groups = app.settings.tagGroups();
     }
 
     private boolean alive() {
@@ -82,7 +86,7 @@ final class HashtagUi {
 
         // Header row
         LinearLayout header = row();
-        TextView title = label("Hashtags & Errands", 18, TEXT);
+        TextView title = label("Hashtags & Tag groups", 18, TEXT);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         Button folderBtn = pillButton("Folders…", false, v -> showFoldersDialog());
@@ -93,7 +97,7 @@ final class HashtagUi {
         LinearLayout tabsRow = row();
         tabsRow.setPadding(0, dp(8), 0, dp(8));
         searchTabBtn = pillButton("Search", !errandsTab, v -> switchTab(false));
-        errandsTabBtn = pillButton(errandsTabLabel(), errandsTab, v -> switchTab(true));
+        errandsTabBtn = pillButton("Tag groups", errandsTab, v -> switchTab(true));
         LinearLayout.LayoutParams tabLp1 = new LinearLayout.LayoutParams(0, dp(38), 1);
         tabLp1.setMarginEnd(dp(4));
         LinearLayout.LayoutParams tabLp2 = new LinearLayout.LayoutParams(0, dp(38), 1);
@@ -172,12 +176,17 @@ final class HashtagUi {
 
         // Search local files first; settings synchronization shares the I/O executor.
         runSearch();
-        app.sync.syncErrandsInBackground(() -> {
+        app.sync.syncHashtagSettingsInBackground(() -> {
             if (!alive() || dialog == null || !dialog.isShowing()) return;
             List<String> syncedTags = app.settings.errandsHashtags();
-            if (errandsTags.equals(syncedTags)) return;
+            List<TagGroup> syncedGroups = app.settings.tagGroups();
+            if (errandsTags.equals(syncedTags) && groups.equals(syncedGroups)) return;
             errandsTags = syncedTags;
-            errandsTabBtn.setText(errandsTabLabel());
+            groups = syncedGroups;
+            if (!selectedGroupId.isEmpty() && selectedGroup() == null) {
+                selectedGroupId = "";
+                editingErrands = false;
+            }
             if (errandsTab && !editingErrands) {
                 rebuildModeControls();
                 runSearch();
@@ -194,20 +203,114 @@ final class HashtagUi {
     }
 
     private String errandsTabLabel() {
-        int count = errandsTags.size();
-        return count > 0 ? "Errands (" + count + ")" : "Errands";
+        int count = selectedTags().size();
+        return selectedName() + (count > 0 ? " (" + count + ")" : "");
+    }
+
+    private TagGroup selectedGroup() {
+        for (TagGroup group : groups) if (group.id().equals(selectedGroupId)) return group;
+        return null;
+    }
+
+    private String selectedName() {
+        TagGroup group = selectedGroup();
+        return group == null ? "Errands" : group.name();
+    }
+
+    private List<String> selectedTags() {
+        TagGroup group = selectedGroup();
+        return group == null ? errandsTags : group.hashtags();
+    }
+
+    private void chooseGroup() {
+        List<TagGroup> choices = new ArrayList<>(groups);
+        choices.add(new TagGroup("", "Errands", errandsTags, "", false, false, ""));
+        choices.sort(TagGroup.ORDER);
+        String[] names = choices.stream().map(g -> g.name() + " (" + g.hashtags().size() + ")").toArray(String[]::new);
+        new AlertDialog.Builder(activity).setTitle("Tag groups")
+                .setItems(names, (d, which) -> {
+                    selectedGroupId = choices.get(which).id();
+                    switchTab(true);
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void nameGroup(boolean create) {
+        TagGroup original = selectedGroup();
+        if (!create && original == null) return;
+        EditText input = new EditText(activity);
+        input.setId(R.id.tag_group_name);
+        input.setSingleLine(true);
+        input.setHint("Group name");
+        input.setText(create ? "" : original.name());
+        AlertDialog naming = new AlertDialog.Builder(activity).setTitle(create ? "New tag group" : "Rename group")
+                .setView(input).setNegativeButton("Cancel", null).setPositiveButton(create ? "Create" : "Rename", null).create();
+        naming.setOnShowListener(d -> naming.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            try {
+                String name = TagGroup.normalizeName(input.getText().toString());
+                for (TagGroup group : groups) {
+                    if ((create || !group.id().equals(original.id())) && group.name().equalsIgnoreCase(name))
+                        throw new IllegalArgumentException("A tag group with that name already exists.");
+                }
+                TagGroup group = create ? new TagGroup(UUID.randomUUID().toString(), name, List.of(), "", false, false, "") : original;
+                group = group.edit(name, group.hashtags());
+                app.settings.saveTagGroup(group);
+                groups = app.settings.tagGroups();
+                selectedGroupId = group.id();
+                errandsTab = true;
+                editingErrands = create;
+                stylePill(searchTabBtn, false);
+                stylePill(errandsTabBtn, true);
+                naming.dismiss();
+                rebuildModeControls();
+                runSearch();
+                syncGroups();
+            } catch (IllegalArgumentException error) { input.setError(error.getMessage()); }
+        }));
+        naming.show();
+        input.requestFocus();
+    }
+
+    private void deleteGroup() {
+        TagGroup group = selectedGroup();
+        if (group == null) return;
+        new AlertDialog.Builder(activity).setTitle("Delete tag group?")
+                .setMessage("Delete “" + group.name() + "”? Your documents and their hashtags are kept.")
+                .setNegativeButton("Cancel", null).setPositiveButton("Delete", (d, which) -> {
+                    app.settings.saveTagGroup(group.delete());
+                    groups = app.settings.tagGroups();
+                    selectedGroupId = "";
+                    editingErrands = false;
+                    rebuildModeControls();
+                    runSearch();
+                    syncGroups();
+                }).show();
+    }
+
+    private void syncGroups() {
+        app.sync.syncHashtagSettingsInBackground(() -> {
+            if (!alive() || dialog == null || !dialog.isShowing()) return;
+            List<String> before = selectedTags();
+            errandsTags = app.settings.errandsHashtags();
+            groups = app.settings.tagGroups();
+            if (!selectedGroupId.isEmpty() && selectedGroup() == null) {
+                selectedGroupId = "";
+                editingErrands = false;
+            }
+            if (errandsTab && !editingErrands) rebuildModeControls();
+            if (!before.equals(selectedTags())) runSearch();
+        });
     }
 
     private void switchTab(boolean toErrands) {
         this.errandsTab = toErrands;
-        if (toErrands && errandsTags.isEmpty()) {
+        if (toErrands && selectedTags().isEmpty()) {
             this.editingErrands = true;
         } else {
             this.editingErrands = false;
         }
         stylePill(searchTabBtn, !errandsTab);
         stylePill(errandsTabBtn, errandsTab);
-        errandsTabBtn.setText(errandsTabLabel());
+        errandsTabBtn.setText("Tag groups");
         rebuildModeControls();
         runSearch();
     }
@@ -253,12 +356,24 @@ final class HashtagUi {
             });
             modeContainer.addView(chipList(queryChips));
         } else {
+            LinearLayout groupRow = row();
+            Button chooser = pillButton(errandsTabLabel() + " ▾", false, v -> chooseGroup());
+            chooser.setId(R.id.tag_group_selector);
+            chooser.setSingleLine(true);
+            chooser.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            chooser.setContentDescription("Select tag group: " + selectedName());
+            groupRow.addView(chooser, new LinearLayout.LayoutParams(0, dp(38), 1));
+            Button create = pillButton("New tag group", false, v -> nameGroup(true));
+            create.setId(R.id.tag_group_new);
+            groupRow.addView(create, new LinearLayout.LayoutParams(-2, dp(38)));
+            modeContainer.addView(groupRow);
+
             LinearLayout box = column();
             box.setBackground(rounded(SURFACE, 8, BORDER));
             box.setPadding(dp(10), dp(8), dp(10), dp(8));
 
             LinearLayout boxHeader = row();
-            TextView subtitle = label("Errands hashtags (matches any)", 12, MUTED);
+            TextView subtitle = label(selectedName() + " hashtags (matches any)", 12, MUTED);
             boxHeader.addView(subtitle, new LinearLayout.LayoutParams(0, -2, 1));
             if (!editingErrands) {
                 Button editBtn = pillButton("Edit", false, v -> {
@@ -268,10 +383,19 @@ final class HashtagUi {
                 boxHeader.addView(editBtn, new LinearLayout.LayoutParams(-2, dp(30)));
             }
             box.addView(boxHeader);
+            if (!selectedGroupId.isEmpty() && !editingErrands) {
+                LinearLayout actions = row();
+                actions.addView(pillButton("Rename group", false, v -> nameGroup(false)));
+                actions.addView(pillButton("Delete group", false, v -> deleteGroup()));
+                box.addView(actions);
+            }
+            TagGroup group = selectedGroup();
+            if (group != null && group.dirty()) box.addView(label("Saved on device · pending sync", 11, MUTED));
 
-            List<String> currentErrands = errandsTags;
+            List<String> currentErrands = selectedTags();
             if (editingErrands) {
                 errandsEditInput = new EditText(activity);
+                errandsEditInput.setId(R.id.tag_group_hashtags);
                 errandsEditInput.setHint("#chemist #bunnings #postoffice #groceries");
                 errandsEditInput.setTextColor(TEXT);
                 errandsEditInput.setHintTextColor(MUTED);
@@ -308,7 +432,7 @@ final class HashtagUi {
                     editingErrands = false;
                     rebuildModeControls();
                 });
-                Button saveBtn = pillButton("Save Errands", true, v -> saveErrands());
+                Button saveBtn = pillButton(selectedGroupId.isEmpty() ? "Save Errands" : "Save hashtags", true, v -> saveErrands());
                 LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(-2, dp(34));
                 cLp.setMarginEnd(dp(6));
                 actionsRow.addView(cancelBtn, cLp);
@@ -317,7 +441,7 @@ final class HashtagUi {
             } else if (!currentErrands.isEmpty()) {
                 box.addView(chipList(new TagChipAdapter(currentErrands, Set.copyOf(currentErrands), null)));
             } else {
-                TextView emptyMsg = label("No errands hashtags configured yet. Tap Edit to add tags like #chemist or #bunnings.", 12, MUTED);
+                TextView emptyMsg = label("No hashtags in this group yet. Tap Edit to add hashtags.", 12, MUTED);
                 emptyMsg.setPadding(0, dp(6), 0, dp(2));
                 box.addView(emptyMsg);
             }
@@ -328,13 +452,20 @@ final class HashtagUi {
     private void saveErrands() {
         String raw = errandsEditInput != null ? errandsEditInput.getText().toString() : "";
         List<String> parsed = Hashtags.parseTagList(raw);
-        app.settings.setErrandsHashtags(parsed, app.settings.errandsUpdatedAt(), true);
-        errandsTags = parsed;
+        if (selectedGroupId.isEmpty()) {
+            app.settings.setErrandsHashtags(parsed, app.settings.errandsUpdatedAt(), true);
+            errandsTags = parsed;
+        } else {
+            TagGroup group = selectedGroup();
+            if (group == null) return;
+            app.settings.saveTagGroup(group.edit(group.name(), parsed));
+            groups = app.settings.tagGroups();
+        }
         editingErrands = false;
-        errandsTabBtn.setText(errandsTabLabel());
+        errandsTabBtn.setText("Tag groups");
         rebuildModeControls();
         runSearch();
-        app.sync.syncErrandsInBackground(null);
+        syncGroups();
     }
 
     private void updateDiscoveredChips() {
@@ -405,7 +536,7 @@ final class HashtagUi {
     private void runSearch() {
         final int gen = searchGen.incrementAndGet();
         final List<String> targetTags = errandsTab
-                ? errandsTags
+                ? selectedTags()
                 : Hashtags.parseTagList(searchQuery);
         final boolean hideDone = this.hideCompleted;
 
@@ -500,7 +631,7 @@ final class HashtagUi {
         if (resultsList == null) return;
 
         List<String> targetTags = errandsTab
-                ? errandsTags
+                ? selectedTags()
                 : Hashtags.parseTagList(searchQuery);
 
         if (searching) {
@@ -508,7 +639,7 @@ final class HashtagUi {
             return;
         }
         if (errandsTab && targetTags.isEmpty()) {
-            resultsAdapter.showMessage("Save your errands hashtags above to view matching lines or files.");
+            resultsAdapter.showMessage("Save hashtags in this group above to view matching lines or files.");
             return;
         }
         if (!errandsTab && targetTags.isEmpty()) {

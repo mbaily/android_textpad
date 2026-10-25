@@ -198,7 +198,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         redoButton = iconButton(Icon.REDO, TEXT, "Redo", v -> history(true));
         findButton = iconButton(Icon.FIND, TEXT, "Find in file", v -> showFind(false));
         findAllButton = iconButton(Icon.FIND_ALL, TEXT, "Find in open files", v -> showFind(true));
-        hashtagsButton = iconButton(Icon.HASHTAG, TEXT, "Hashtags & Errands", v -> showHashtags(false));
+        hashtagsButton = iconButton(Icon.HASHTAG, TEXT, "Hashtags & Tag groups", v -> showHashtags(false));
         indentLessButton = iconButton(Icon.INDENT_LESS, TEXT, "Decrease indentation", v -> indent(false));
         indentMoreButton = iconButton(Icon.INDENT_MORE, TEXT, "Increase indentation", v -> indent(true));
         todoButton = iconButton(Icon.TODO, TEXT, "Toggle todo", v -> toggleTodo());
@@ -534,7 +534,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
 
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        String[] actions = {"New document", "Open file…", "Recent files…", "Hashtags & Errands…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit"};
+        String[] actions = {"New document", "Open file…", "Recent files…", "Hashtags & Tag groups…", "Save", "Save As…", "Save to existing file…", "Move / rename…", "Duplicate tab", "Word wrap", "Line numbers", "Encoding…", "Reload from file…", "Backups…", "Settings…", "Document details…", "Sync…", "Open with encoding…", "Exit"};
         for (int i = 0; i < actions.length; i++) menu.getMenu().add(0, i, i, actions[i]);
         menu.getMenu().findItem(9).setCheckable(true).setChecked(app.settings.wrap());
         menu.getMenu().findItem(10).setCheckable(true).setChecked(app.settings.lineNumbers());

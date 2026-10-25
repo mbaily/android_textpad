@@ -59,6 +59,7 @@ public class SyncInstrumentedTest {
         app=(TextpadApplication)InstrumentationRegistry.getInstrumentation().getTargetContext().getApplicationContext(); api=new FakeApi();
         main(() -> {
             assertFalse(app.sync.busy); app.tabs.clear(); app.selectedTab=-1; app.events.clear();
+            app.settings.prefs.edit().remove("tagGroups").commit();
             app.sync.prefs.edit().clear().commit(); app.sync.testApi=api; app.sync.rerun=false;
         });
     }

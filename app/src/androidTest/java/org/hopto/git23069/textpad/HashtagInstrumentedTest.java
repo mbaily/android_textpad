@@ -7,6 +7,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CheckBox;
 import android.widget.TextView;
+import android.widget.EditText;
+import android.view.inspector.WindowInspector;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -70,6 +72,47 @@ public class HashtagInstrumentedTest {
     }
 
     private void click(String value) { text(dialog.getWindow().getDecorView(), value).performClick(); }
+
+    private View popup() {
+        List<View> windows = WindowInspector.getGlobalWindowViews();
+        return windows.get(windows.size() - 1);
+    }
+
+    @Test public void namedGroupsCreateRenameSearchAndDeleteWithoutChangingDocuments() throws Exception {
+        try (var scenario = launch()) {
+            scenario.onActivity(activity -> {
+                app.newDocument();
+                ((CodeEditor) activity.findViewById(R.id.editor)).getText().append("[ ] Call #calls\n[X] Done #calls\n");
+                dialog = new HashtagUi(activity, app).show(true);
+                dialog.findViewById(R.id.tag_group_new).performClick();
+                ((EditText) popup().findViewById(R.id.tag_group_name)).setText("Work");
+                popup().findViewById(android.R.id.button1).performClick();
+                ((EditText) dialog.findViewById(R.id.tag_group_hashtags)).setText("#CALLS #calls");
+                click("Save hashtags");
+                assertEquals(List.of("calls"), app.settings.tagGroups().get(0).hashtags());
+            });
+            waitFor(() -> list(R.id.hashtag_results).getAdapter().getItemCount() == 2);
+            main(() -> {
+                click("Rename group");
+                ((EditText) popup().findViewById(R.id.tag_group_name)).setText("alpha");
+                popup().findViewById(android.R.id.button1).performClick();
+                assertEquals("alpha", app.settings.tagGroups().get(0).name());
+                dialog.findViewById(R.id.tag_group_selector).performClick();
+            });
+            waitFor(() -> text(popup(), "alpha (1)") != null);
+            main(() -> {
+                android.widget.ListView options = (android.widget.ListView) text(popup(), "alpha (1)").getParent();
+                assertEquals("alpha (1)", options.getAdapter().getItem(0));
+                assertEquals("Errands (0)", options.getAdapter().getItem(1));
+                options.performItemClick(text(popup(), "alpha (1)"), 0, options.getAdapter().getItemId(0));
+                click("Delete group");
+                popup().findViewById(android.R.id.button1).performClick();
+                assertTrue(app.settings.tagGroups().isEmpty());
+                assertEquals("[ ] Call #calls\n[X] Done #calls\n", app.current().buffer.text());
+                dialog.dismiss();
+            });
+        }
+    }
 
     @Test public void largeErrandsListRecyclesChipsAndFullLinesAndOpensScrolledResults() throws Exception {
         List<String> tags = new ArrayList<>();
@@ -156,7 +199,7 @@ public class HashtagInstrumentedTest {
             waitFor(() -> list(R.id.hashtag_results).getAdapter().getItemCount() == 2);
             main(() -> {
                 assertNotNull(text(dialog.getWindow().getDecorView(), "#tag_949"));
-                click("Errands (949)");
+                click("Tag groups");
                 assertFalse(((CheckBox) dialog.findViewById(R.id.hashtag_hide_completed)).isChecked());
                 dialog.dismiss();
             });

@@ -18,5 +18,8 @@ interface RemoteApi {
     record Errands(List<String> hashtags, String updatedAt) {}
     default Errands getErrands() throws IOException { return new Errands(List.of(), ""); }
     default Errands putErrands(List<String> hashtags) throws IOException { return new Errands(hashtags, ""); }
+    default List<TagGroup> getTagGroups() throws IOException { throw new IOException("Tag groups are unavailable on this server."); }
+    default TagGroup putTagGroup(TagGroup group) throws IOException { throw new IOException("Tag groups are unavailable on this server."); }
+    default void deleteTagGroup(String id) throws IOException { throw new IOException("Tag groups are unavailable on this server."); }
 }
 

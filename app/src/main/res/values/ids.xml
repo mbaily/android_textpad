@@ -6,4 +6,8 @@
     <item name="hashtag_results" type="id" />
     <item name="hashtag_chips" type="id" />
     <item name="hashtag_hide_completed" type="id" />
+    <item name="tag_group_selector" type="id" />
+    <item name="tag_group_new" type="id" />
+    <item name="tag_group_name" type="id" />
+    <item name="tag_group_hashtags" type="id" />
 </resources>

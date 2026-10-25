@@ -93,6 +93,23 @@
     }
   } catch {}
 
+  let initialTagGroups = [];
+  try {
+    const saved = JSON.parse(localStorage.getItem("textpad.editor.tagGroups") || "[]");
+    if (Array.isArray(saved)) initialTagGroups = saved.filter(g => typeof g.id === "string" && typeof g.name === "string" && Array.isArray(g.hashtags));
+  } catch {}
+  let tagGroups = $state(initialTagGroups);
+  let selectedGroupId = $state("");
+  let selectedTagGroup = $derived(tagGroups.find(g => g.id === selectedGroupId && !g.deleted));
+  let activeGroupName = $derived(selectedTagGroup?.name || "Errands");
+  let activeGroupTags = $derived(selectedTagGroup?.hashtags || errandsTags);
+  let sortedTagGroups = $derived([
+    { id: "", name: "Errands", hashtags: errandsTags }, ...tagGroups.filter(g => !g.deleted)
+  ].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id)));
+  let tagGroupSyncPromise = null;
+  let tagGroupSyncAgain = false;
+  let hashtagSearchGeneration = 0;
+
   let hashtagsPanelOpen = $state(false);
   let hashtagsTab = $state("search");
   let hashtagQuery = $state("");
@@ -490,7 +507,7 @@
   function handleModalSubmit(event) {
     event.preventDefault();
     const primary = modalState?.actions?.find((a) => a.primary);
-    if (primary) finishModal(primary.value);
+    if (primary) resolveModalAction(primary.value);
   }
 
   async function confirm(title, message, label = "Continue") {
@@ -1238,6 +1255,7 @@
     try {
       await flushOutbox();
       await syncErrands();
+      await syncTagGroups().catch(() => {});
       const result = await api("/documents");
       files = result.documents;
       await idbSyncFileList(files);
@@ -1349,6 +1367,120 @@
     }
   }
 
+  function saveLocalTagGroups(groups) {
+    tagGroups = groups;
+    try { localStorage.setItem("textpad.editor.tagGroups", JSON.stringify(groups)); } catch {}
+  }
+
+  function updateTagGroup(group) {
+    saveLocalTagGroups([...tagGroups.filter(g => g.id !== group.id), {
+      ...group, dirty: true, change_id: crypto.randomUUID(),
+    }]);
+  }
+
+  async function syncTagGroups() {
+    if (tagGroupSyncPromise) {
+      tagGroupSyncAgain = true;
+      return tagGroupSyncPromise;
+    }
+    tagGroupSyncPromise = (async () => {
+      do {
+        tagGroupSyncAgain = false;
+        let firstError = null;
+        for (const group of tagGroups.filter(g => g.dirty)) {
+          try {
+            const saved = await api(`/tag-groups/${encodeURIComponent(group.id)}`, group.deleted
+              ? { method: "DELETE" }
+              : { method: "PUT", body: JSON.stringify({ name: group.name, hashtags: group.hashtags }) });
+            if (group.deleted ? saved.deleted !== true : saved.id !== group.id || saved.name !== group.name || JSON.stringify(saved.hashtags) !== JSON.stringify(group.hashtags)) {
+              throw new Error("The server did not save the complete tag group. Your local changes are retained.");
+            }
+            // An edit made during this request remains pending.
+            const current = tagGroups.find(g => g.id === group.id);
+            if (current?.change_id === group.change_id) {
+              saveLocalTagGroups(group.deleted ? tagGroups.filter(g => g.id !== group.id)
+                : tagGroups.map(g => g.id === group.id ? { ...saved, dirty: false } : g));
+            }
+          } catch (error) { firstError ||= error; }
+        }
+        const remote = await api("/tag-groups");
+        if (!Array.isArray(remote.groups)) throw new Error("The server returned invalid tag groups.");
+        const merged = new Map(remote.groups.map(g => [g.id, { ...g, dirty: false }]));
+        for (const group of tagGroups) if (group.dirty) merged.set(group.id, group);
+        saveLocalTagGroups([...merged.values()]);
+        if (selectedGroupId && !tagGroups.some(g => g.id === selectedGroupId && !g.deleted)) selectTagGroup("");
+        if (firstError) throw firstError;
+      } while (tagGroupSyncAgain);
+    })();
+    try { await tagGroupSyncPromise; }
+    finally { tagGroupSyncPromise = null; }
+  }
+
+  async function syncGroupChange() {
+    try {
+      await syncTagGroups();
+      syncChannel?.postMessage({ type: "changed", id: "tag-groups" });
+    } catch (error) {
+      if (error.offline) notice("Saved tag group changes offline. They will sync when reconnected.");
+      else failure(error);
+    }
+  }
+
+  function selectTagGroup(id) {
+    selectedGroupId = id;
+    editingErrands = (id ? tagGroups.find(g => g.id === id)?.hashtags.length : errandsTags.length) === 0;
+    errandsInput = "";
+    errandsSettingsOpen = false;
+    runHashtagSearch();
+  }
+
+  async function nameTagGroup(create) {
+    const original = selectedTagGroup;
+    if (!create && !original) return;
+    const result = await openModal({
+      type: "tagGroupName", title: create ? "New tag group" : "Rename group", filename: create ? "" : original.name,
+      actions: [{ label: "Cancel", value: false }, { label: create ? "Create" : "Rename", value: true, primary: true }],
+    });
+    if (!result) return;
+    const name = (result.filename || "").trim().normalize("NFC");
+    if (!name || [...name].length > 100 || /\p{Cc}/u.test(name)) {
+      notice("Use a tag group name of 1–100 characters without control characters.", true);
+      return;
+    }
+    if (name.toLowerCase() === "errands" || tagGroups.some(g => !g.deleted && (create || g.id !== original.id) && g.name.toLowerCase() === name.toLowerCase())) {
+      notice("A tag group with that name already exists.", true);
+      return;
+    }
+    const group = create ? { id: crypto.randomUUID(), hashtags: [], updated_at: "" } : original;
+    updateTagGroup({ ...group, name });
+    selectedGroupId = group.id;
+    hashtagsTab = "errands";
+    if (create) {
+      editingErrands = true;
+      errandsInput = "";
+      errandsSettingsOpen = true;
+    }
+    runHashtagSearch();
+    await syncGroupChange();
+  }
+
+  async function deleteTagGroup() {
+    const group = selectedTagGroup;
+    if (!group || !await confirm("Delete tag group?", `Delete “${group.name}”? Your documents and their hashtags are kept.`, "Delete")) return;
+    updateTagGroup({ ...group, deleted: true });
+    selectTagGroup("");
+    await syncGroupChange();
+  }
+
+  async function saveActiveGroup() {
+    if (!selectedGroupId) return saveErrandsFromInput();
+    if (!selectedTagGroup) return;
+    updateTagGroup({ ...selectedTagGroup, hashtags: parseTagListJs(errandsInput) });
+    editingErrands = false;
+    runHashtagSearch();
+    await syncGroupChange();
+  }
+
   function toggleQueryHashtag(tag) {
     const current = parseTagListJs(hashtagQuery);
     const next = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
@@ -1399,7 +1531,8 @@
   }
 
   async function runHashtagSearch() {
-    const activeTargets = hashtagsTab === "errands" ? errandsTags : parseTagListJs(hashtagQuery);
+    const generation = ++hashtagSearchGeneration;
+    const activeTargets = hashtagsTab === "errands" ? activeGroupTags : parseTagListJs(hashtagQuery);
     const targetsSet = new Set(activeTargets);
     const hideCompleted = hashtagHideCompleted;
     hashtagSearching = true;
@@ -1470,12 +1603,13 @@
         }
       }
 
+      if (generation !== hashtagSearchGeneration) return;
       discoveredHashtags = discoveredList;
       hashtagResults = results;
     } catch (error) {
       failure(error);
     } finally {
-      hashtagSearching = false;
+      if (generation === hashtagSearchGeneration) hashtagSearching = false;
     }
   }
 
@@ -1485,7 +1619,7 @@
     hashtagsPanelOpen = true;
     errandsSettingsOpen = false;
     requestAnimationFrame(() => document.getElementById("hashtags-panel")?.scrollTo(0, 0));
-    if (tab === "errands" && errandsTags.length === 0) {
+    if (tab === "errands" && activeGroupTags.length === 0) {
       editingErrands = true;
       errandsInput = "";
     }
@@ -2122,7 +2256,7 @@
 
   function resolveModalAction(actionValue) {
     if (!modalState) return;
-    if (modalState.type === "newFile" || modalState.type === "renameFile") {
+    if (modalState.type === "newFile" || modalState.type === "renameFile" || modalState.type === "tagGroupName") {
       finishModal(actionValue ? { filename: modalState.filename } : null);
     } else if (modalState.type === "encoding") {
       finishModal(actionValue ? { action: actionValue, encoding: modalState.encoding, bom: modalState.bom } : null);
@@ -2424,7 +2558,7 @@
       <button id="find-all" class="icon-button" title="Find in open files (Ctrl+Shift+F)" aria-label="Find in open files" disabled={!activeDoc} onclick={() => openFind(true)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h10"/><path d="M4 10h6"/><path d="M4 14h5"/><circle cx="15.5" cy="14.5" r="4.5"/><path d="m19 18 3 3"/></svg>
       </button>
-      <button id="hashtags" class="icon-button" class:active={hashtagsPanelOpen} aria-pressed={String(hashtagsPanelOpen)} title="Hashtags & Errands" aria-label="Hashtags & Errands" onclick={() => hashtagsPanelOpen ? closeHashtagsPanel() : openHashtagsPanel(hashtagsTab)}>
+      <button id="hashtags" class="icon-button" class:active={hashtagsPanelOpen} aria-pressed={String(hashtagsPanelOpen)} title="Hashtags & Tag groups" aria-label="Hashtags & Tag groups" onclick={() => hashtagsPanelOpen ? closeHashtagsPanel() : openHashtagsPanel(hashtagsTab)}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
       </button>
       <button id="indent-less" class="icon-button" title="Decrease indentation" aria-label="Decrease indentation" disabled={!activeDoc || readOnly} onclick={() => { indentLess(view); view.focus(); }}>
@@ -2632,9 +2766,9 @@
     </div>
   </aside>
 
-  <aside id="hashtags-panel" class="history-panel hashtags-panel" class:hidden={!hashtagsPanelOpen} aria-label="Hashtags and Errands">
+  <aside id="hashtags-panel" class="history-panel hashtags-panel" class:hidden={!hashtagsPanelOpen} aria-label="Hashtags and Tag groups">
     <div class="history-heading">
-      <h2>Hashtags &amp; Errands</h2>
+      <h2>Hashtags &amp; Tag groups</h2>
       <div>
         <button id="refresh-hashtags" class="icon-button" title="Refresh hashtag search" aria-label="Refresh hashtag search" onclick={runHashtagSearch}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
@@ -2658,13 +2792,13 @@
         aria-selected={String(hashtagsTab === "errands")}
         onclick={() => {
           hashtagsTab = "errands";
-          if (errandsTags.length === 0) {
+          if (activeGroupTags.length === 0) {
             editingErrands = true;
             errandsInput = "";
           }
           runHashtagSearch();
         }}
-      >Errands{errandsTags.length ? ` (${errandsTags.length})` : ""}</button>
+      >Tag groups</button>
     </div>
 
     <div class="hashtag-controls">
@@ -2718,31 +2852,46 @@
         {/if}
         {@render hashtagFilters()}
       {:else}
+        <div class="tag-group-picker">
+          <select id="tag-group-selector" aria-label="Tag group" value={selectedGroupId} onchange={event => selectTagGroup(event.currentTarget.value)}>
+            {#each sortedTagGroups as group (group.id)}
+              <option value={group.id}>{group.name} ({group.hashtags.length})</option>
+            {/each}
+          </select>
+          <button id="new-tag-group" class="text-button small" onclick={() => nameTagGroup(true)}>New tag group</button>
+        </div>
         <details id="errands-settings" class="errands-settings" bind:open={errandsSettingsOpen}>
           <summary>
-            Errands settings
-            <span class="small muted">{errandsTags.length ? `${errandsTags.length} hashtags` : "Add hashtags"}</span>
+            {activeGroupName} settings
+            <span class="small muted">{activeGroupTags.length ? `${activeGroupTags.length} hashtags` : "Add hashtags"}</span>
           </summary>
           <div class="errands-settings-body">
             <div class="errands-box">
               <div class="errands-box-header">
-                <span class="small muted">Errands hashtags (matches any)</span>
+                <span class="small muted">{activeGroupName} hashtags (matches any)</span>
                 {#if !editingErrands}
                   <button
                     id="edit-errands"
                     type="button"
                     class="text-button small"
                     onclick={() => {
-                      errandsInput = formatTagListJs(errandsTags);
+                      errandsInput = formatTagListJs(activeGroupTags);
                       editingErrands = true;
                     }}
                   >Edit</button>
                 {/if}
               </div>
+              {#if selectedTagGroup && !editingErrands}
+                <div class="tag-group-actions">
+                  <button id="rename-tag-group" class="text-button small" onclick={() => nameTagGroup(false)}>Rename group</button>
+                  <button id="delete-tag-group" class="text-button small" onclick={deleteTagGroup}>Delete group</button>
+                </div>
+              {/if}
+              {#if selectedTagGroup?.dirty}<p class="small muted">Saved on device · pending sync</p>{/if}
               {#if editingErrands}
                 <textarea
                   id="errands-textarea"
-                  aria-label="Errands hashtags"
+                  aria-label={`${activeGroupName} hashtags`}
                   placeholder="#chemist #bunnings #postoffice #groceries"
                   bind:value={errandsInput}
                 ></textarea>
@@ -2767,16 +2916,16 @@
                 {/if}
                 <div class="errands-actions">
                   <button type="button" class="text-button small" onclick={() => (editingErrands = false)}>Cancel</button>
-                  <button id="save-errands" type="button" class="primary small" onclick={saveErrandsFromInput}>Save Errands</button>
+                  <button id="save-errands" type="button" class="primary small" onclick={saveActiveGroup}>{selectedGroupId ? "Save hashtags" : "Save Errands"}</button>
                 </div>
-              {:else if errandsTags.length > 0}
+              {:else if activeGroupTags.length > 0}
                 <div class="tag-chips">
-                  {#each errandsTags as tag (tag)}
+                  {#each activeGroupTags as tag (tag)}
                     <span class="tag-chip active">#{tag}</span>
                   {/each}
                 </div>
               {:else}
-                <p class="small muted">No errands hashtags configured yet. Add tags like #chemist or #bunnings to see all your errands in one place.</p>
+                <p class="small muted">No hashtags in this group yet. Add hashtags to view matching lines or files.</p>
               {/if}
             </div>
             {@render hashtagFilters()}
@@ -2788,8 +2937,8 @@
     <div id="hashtag-results" class="hashtag-results" aria-live="polite">
       {#if hashtagSearching}
         <p class="small muted">Searching open &amp; synced files…</p>
-      {:else if hashtagsTab === "errands" && errandsTags.length === 0}
-        <p class="small muted">Expand Errands settings to add hashtags and view matching lines or files.</p>
+      {:else if hashtagsTab === "errands" && activeGroupTags.length === 0}
+        <p class="small muted">Expand {activeGroupName} settings to add hashtags and view matching lines or files.</p>
       {:else if hashtagsTab === "search" && parseTagListJs(hashtagQuery).length === 0}
         <p class="small muted">Select or type one or more hashtags above to search across open and synced files.</p>
       {:else if hashtagResults.length === 0}
@@ -2846,6 +2995,9 @@
         <label for="modal-filename">Filename</label>
         <input id="modal-filename" maxlength="255" aria-label="Filename" bind:value={modalState.filename}>
         <p>The file joins your synced documents when you save it.</p>
+      {:else if modalState?.type === "tagGroupName"}
+        <label for="modal-group-name">Group name</label>
+        <input id="modal-group-name" maxlength="100" aria-label="Group name" bind:value={modalState.filename}>
       {:else if modalState?.type === "renameFile"}
         <label for="modal-rename">Filename</label>
         <input id="modal-rename" maxlength="255" aria-label="Filename" bind:value={modalState.filename}>

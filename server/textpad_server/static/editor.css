@@ -29,6 +29,10 @@
 .errands-settings .errands-box{padding:0;border:0;background:transparent}
 .errands-settings textarea{width:100%;min-height:84px;resize:vertical;font:13px/1.5 var(--editor-font);background:#101613;color:#e3e8df;border:1px solid #3b493f;border-radius:5px;padding:8px 10px}
 .errands-actions{display:flex;justify-content:flex-end;gap:10px}
+.tag-group-picker{display:flex;gap:6px;align-items:center}
+.tag-group-picker select{flex:1;min-width:0;width:0;padding:7px 8px;font-size:12px}
+.tag-group-picker button{flex-shrink:0}
+.tag-group-actions{display:flex;gap:10px;flex-wrap:wrap}
 .hashtag-filter-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .hashtag-filter-row label.inline{display:inline-flex;align-items:center;gap:6px;margin:0;font-size:11px;cursor:pointer}
 .tab-main{display:flex;gap:7px;align-items:center;min-width:0;flex:1;background:transparent!important;padding:1px 0;color:inherit;font-size:12px}.tab-close{padding:0;background:transparent;flex:none}

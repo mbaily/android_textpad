@@ -172,6 +172,8 @@ The keyboard smoke test requires both Chrome and Playwright WebKit. It checks sc
 
 The errands pane scrolls as a whole, with its hashtag list, match mode, and Hide filter inside **Errands settings**, collapsed by default. Its browser check covers a 950-tag list, wheel scrolling, result navigation, settings editing, and desktop, tablet, mobile, and short viewports.
 
+The **Tag groups** selector includes Errands and user-created groups in alphabetical order. Groups support creation, rename, hashtag editing, and deletion with local offline persistence and per-group synchronization. `PYTHONPATH=server python3 server/tests/browser_tag_groups_smoke.py` checks 950-tag groups, alphabetical CRUD, line/file matching, closed-task filtering, live remote creation/deletion, offline edits/deletions across reloads, reconnection retries, and the mobile selector layout.
+
 `LiveSyncInstrumentedTest` is an optional real Android-to-HTTPS contract test. Normal runs skip it. To opt in, supply `files/live-sync-test.json` (token and a fresh disposable `document_id`) and `files/live-sync-ca.crt` to the test application's private directory, then run that class with instrumentation argument `liveTextpadServer=true`. It trusts only the supplied public CA for that test, preserves hostname verification, checks Unicode/UTF-16 bytes, history and retry ordering, automatic WebSocket pulls, deferred dirty buffers, and a real HTTPS background-worker pull, and removes its local credential files afterward. Remove only its known disposable document from the server after verification.
 
 ## Live updates and background work

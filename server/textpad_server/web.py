@@ -500,6 +500,25 @@ def create_app(test_config=None):
             raise ValueError("Send a JSON errands object.")
         return jsonify(store.put_errands(payload.get("hashtags")))
 
+    @app.get("/api/v1/tag-groups")
+    @app.get("/editor/api/tag-groups")
+    def get_tag_groups():
+        return jsonify(groups=store.tag_groups())
+
+    @app.put("/api/v1/tag-groups/<group_id>")
+    @app.put("/editor/api/tag-groups/<group_id>")
+    def put_tag_group(group_id):
+        payload = request.get_json()
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON tag group object.")
+        return jsonify(store.put_tag_group(group_id, payload.get("name"), payload.get("hashtags")))
+
+    @app.delete("/api/v1/tag-groups/<group_id>")
+    @app.delete("/editor/api/tag-groups/<group_id>")
+    def delete_tag_group(group_id):
+        store.delete_tag_group(group_id)
+        return jsonify(deleted=True)
+
     @app.post("/api/v1/hashtags")
     @app.post("/editor/api/hashtags")
     def browser_hashtags():

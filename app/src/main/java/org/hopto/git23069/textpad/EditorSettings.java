@@ -6,8 +6,11 @@ import android.net.Uri;
 import org.hopto.git23069.textpad.core.Hashtags;
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 final class EditorSettings {
     static final int[] AUTOSAVE_SECONDS = {0, 30, 60, 120, 180, 300, 480, 600, 900};
@@ -40,6 +43,65 @@ final class EditorSettings {
                 .putString("errandsUpdatedAt", updatedAt == null ? "" : updatedAt)
                 .putBoolean("errandsDirty", dirty)
                 .apply();
+    }
+
+    synchronized List<TagGroup> tagGroups() {
+        List<TagGroup> groups = new ArrayList<>(allTagGroups());
+        groups.removeIf(TagGroup::deleted);
+        groups.sort(TagGroup.ORDER);
+        return groups;
+    }
+
+    synchronized List<TagGroup> allTagGroups() {
+        List<TagGroup> groups = new ArrayList<>();
+        try {
+            JSONArray array = new JSONArray(prefs.getString("tagGroups", "[]"));
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject json = array.getJSONObject(i);
+                List<String> tags = new ArrayList<>();
+                JSONArray items = json.getJSONArray("hashtags");
+                for (int j = 0; j < items.length(); j++) tags.add(items.getString(j));
+                groups.add(new TagGroup(json.getString("id"), json.getString("name"), tags,
+                        json.optString("updated_at"), json.optBoolean("dirty"), json.optBoolean("deleted"),
+                        json.optString("change_id")));
+            }
+        } catch (JSONException ignored) {}
+        return groups;
+    }
+
+    synchronized void saveTagGroup(TagGroup group) {
+        List<TagGroup> groups = allTagGroups();
+        groups.removeIf(existing -> existing.id().equals(group.id()));
+        groups.add(group);
+        writeTagGroups(groups);
+    }
+
+    synchronized void acknowledgeTagGroup(TagGroup sent, TagGroup saved) {
+        List<TagGroup> groups = allTagGroups();
+        for (int i = 0; i < groups.size(); i++) {
+            if (!groups.get(i).equals(sent)) continue;
+            if (saved == null) groups.remove(i);
+            else groups.set(i, saved);
+            writeTagGroups(groups);
+            return;
+        }
+    }
+
+    synchronized void mergeTagGroups(List<TagGroup> remote) {
+        Map<String, TagGroup> merged = new LinkedHashMap<>();
+        for (TagGroup group : remote) merged.put(group.id(), group);
+        for (TagGroup group : allTagGroups()) if (group.dirty()) merged.put(group.id(), group);
+        writeTagGroups(new ArrayList<>(merged.values()));
+    }
+
+    private void writeTagGroups(List<TagGroup> groups) {
+        JSONArray array = new JSONArray();
+        try {
+            for (TagGroup group : groups) array.put(new JSONObject().put("id", group.id()).put("name", group.name())
+                    .put("hashtags", new JSONArray(group.hashtags())).put("updated_at", group.updatedAt())
+                    .put("dirty", group.dirty()).put("deleted", group.deleted()).put("change_id", group.changeId()));
+        } catch (JSONException e) { throw new IllegalStateException(e); }
+        prefs.edit().putString("tagGroups", array.toString()).apply();
     }
 
     List<Uri> searchTrees() {

@@ -455,6 +455,62 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual([tags[0], tags[-1]], match['matched_tags'])
                 self.assertEqual([1, 2], [line['line_number'] for line in match['lines']])
 
+    def test_tag_groups_share_crud_between_android_and_browser_without_changing_errands(self):
+        self.assertEqual(401, self.client.get('/api/v1/tag-groups').status_code)
+        self.assertEqual(401, self.client.put('/api/v1/tag-groups/home', json={}).status_code)
+        self.login()
+        csrf = {'X-CSRF-Token': self.csrf}
+        self.assertEqual(403, self.client.put('/editor/api/tag-groups/home', json={}).status_code)
+        self.assertEqual(403, self.client.delete('/editor/api/tag-groups/home').status_code)
+        self.client.put('/api/v1/errands', headers=self.headers, json={'hashtags': ['chemist']})
+        tags = [f'tag_{i}' for i in range(950)]
+        home = self.client.put('/editor/api/tag-groups/home', headers=csrf,
+                               json={'name': ' Home ', 'hashtags': tags + ['#TAG_949']})
+        self.assertEqual(200, home.status_code)
+        self.assertEqual('Home', home.json['name'])
+        self.assertEqual(tags, home.json['hashtags'])
+        self.assertTrue(home.json['updated_at'])
+        self.assertEqual([home.json], self.client.get('/api/v1/tag-groups', headers=self.headers).json['groups'])
+        same = self.client.put('/api/v1/tag-groups/home', headers=self.headers,
+                               json={'name': 'Home', 'hashtags': tags})
+        self.assertEqual(home.json, same.json)
+        renamed = self.client.put('/api/v1/tag-groups/home', headers=self.headers,
+                                  json={'name': 'Work', 'hashtags': '#calls #EMAIL #Calls'})
+        self.assertEqual(['calls', 'email'], renamed.json['hashtags'])
+        self.assertEqual([renamed.json], self.client.get('/editor/api/tag-groups').json['groups'])
+        self.assertEqual(200, self.client.delete('/editor/api/tag-groups/home', headers=csrf).status_code)
+        self.assertEqual(200, self.client.delete('/api/v1/tag-groups/home', headers=self.headers).status_code)
+        self.assertEqual([], self.client.get('/api/v1/tag-groups', headers=self.headers).json['groups'])
+        self.assertEqual(['chemist'], self.client.get('/api/v1/errands', headers=self.headers).json['hashtags'])
+
+    def test_tag_groups_have_no_group_count_cap_and_sort_without_case(self):
+        store = self.app.extensions['store']
+        names = ['zebra', 'alpha', 'Home', 'beta'] + [f'Group {i:03d}' for i in range(220)]
+        for i, name in enumerate(names):
+            store.put_tag_group(f'group-{i}', name, [])
+        result = self.client.get('/api/v1/tag-groups', headers=self.headers).json['groups']
+        self.assertEqual(sorted(names, key=str.casefold), [group['name'] for group in result])
+        # A different group can be edited without sending the rest of the collection.
+        store.put_tag_group('group-0', 'Aardvark', ['shared'])
+        store.put_tag_group('group-1', 'alpha', ['shared'])
+        self.assertEqual(len(names), len(store.tag_groups()))
+        reopened = Store(self.app.config['DATABASE'])
+        self.assertEqual(store.tag_groups(), reopened.tag_groups())
+
+    def test_tag_group_names_validate_and_duplicates_never_overwrite_other_groups(self):
+        def put(group_id, name, hashtags=None):
+            return self.client.put('/api/v1/tag-groups/' + group_id, headers=self.headers,
+                                   json={'name': name, 'hashtags': hashtags or []})
+        for name in ['', '   ', 'a' * 101, 'Errands', 'ERRANDS', 'line\nbreak', None, 42]:
+            self.assertEqual(400, put('invalid', name).status_code, name)
+        first = put('first', 'Café', ['tag']).json
+        self.assertEqual(409, put('second', 'CAFE\u0301').status_code)
+        second = put('second', 'Other').json
+        self.assertEqual(409, put('second', 'café').status_code)
+        self.assertEqual([first, second], self.client.get('/api/v1/tag-groups', headers=self.headers).json['groups'])
+        self.assertEqual(400, put('invalid', 'Invalid tags', [1]).status_code)
+        self.assertEqual(400, self.client.put('/api/v1/tag-groups/x', headers=self.headers, json=[]).status_code)
+
     def test_hashtags_hide_completed_includes_cancelled_tasks_and_bullets(self):
         self.login()
         text = ("[ ] Open #errands\r\n\t[C] Cancelled #errands #cancelled_only\r\n"

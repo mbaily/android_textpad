@@ -40,7 +40,7 @@ def main():
         for width, height in [(1440, 600), (820, 500), (390, 560), (390, 280)]:
             page.set_viewport_size({"width": width, "height": height})
             page.locator("#hashtags").click()
-            page.get_by_role("tab", name="Errands (950)", exact=True).click()
+            page.get_by_role("tab", name="Tag groups", exact=True).click()
             expect(settings).to_have_js_property("open", False)
             expect(summary).to_contain_text("950 hashtags")
             expect(page.locator("#edit-errands")).to_be_hidden()
@@ -96,13 +96,13 @@ def main():
         assert response.ok
         page.reload()
         page.locator("#hashtags").click()
-        page.get_by_role("tab", name="Errands", exact=True).click()
+        page.get_by_role("tab", name="Tag groups", exact=True).click()
         expect(settings).to_have_js_property("open", False)
         expect(page.locator("#hashtag-results")).to_contain_text("Expand Errands settings")
         summary.click()
         page.locator("#errands-textarea").fill("#chemist")
         page.locator("#save-errands").click()
-        expect(page.get_by_role("tab", name="Errands (1)", exact=True)).to_be_visible()
+        expect(page.locator('#tag-group-selector option:checked')).to_have_text('Errands (1)')
         assert not errors, errors
         browser.close()
     print("Browser errands checks passed: collapsed settings, 950 tags, wheel scrolling, desktop/tablet/mobile/short viewports, editing, filters, and result navigation")

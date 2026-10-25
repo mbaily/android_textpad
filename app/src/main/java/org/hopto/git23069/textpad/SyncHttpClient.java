@@ -65,6 +65,40 @@ final class SyncHttpClient implements RemoteApi {
         }
         return new Errands(tags, json.optString("updated_at", ""));
     }
+    @Override public List<TagGroup> getTagGroups() throws IOException {
+        try {
+            JSONArray array = request("GET", "/api/v1/tag-groups", null).getJSONArray("groups");
+            List<TagGroup> groups = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) groups.add(parseTagGroup(array.getJSONObject(i)));
+            return groups;
+        } catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned invalid tag groups.", e); }
+    }
+
+    @Override public TagGroup putTagGroup(TagGroup group) throws IOException {
+        try {
+            TagGroup saved = parseTagGroup(request("PUT", "/api/v1/tag-groups/" + segment(group.id()),
+                    new JSONObject().put("name", group.name()).put("hashtags", new JSONArray(group.hashtags()))));
+            if (!saved.id().equals(group.id()) || !saved.name().equals(group.name()) || !saved.hashtags().equals(group.hashtags()))
+                throw new IOException("The server did not save the complete tag group. Your local changes are retained.");
+            return saved;
+        } catch (JSONException | IllegalArgumentException e) { throw new IOException("The server returned an invalid tag group.", e); }
+    }
+
+    @Override public void deleteTagGroup(String id) throws IOException {
+        try {
+            if (!request("DELETE", "/api/v1/tag-groups/" + segment(id), null).getBoolean("deleted"))
+                throw new IOException("The server did not delete the tag group.");
+        } catch (JSONException e) { throw new IOException("The server returned an invalid tag group deletion.", e); }
+    }
+
+    private TagGroup parseTagGroup(JSONObject json) throws JSONException {
+        JSONArray array = json.getJSONArray("hashtags");
+        List<String> tags = new ArrayList<>();
+        for (int i = 0; i < array.length(); i++) tags.add(array.getString(i));
+        return new TagGroup(segment(json.getString("id")), TagGroup.normalizeName(json.getString("name")),
+                tags, json.getString("updated_at"), false, false, "");
+    }
+
     private String path(String id) { return "/api/v1/documents/"+segment(id); }
     private String segment(String value) {
         if (!value.matches("[A-Za-z0-9_-]{1,128}")) throw new IllegalArgumentException("Invalid server document or revision ID.");

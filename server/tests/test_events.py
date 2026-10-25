@@ -72,6 +72,23 @@ class EventsTests(unittest.TestCase):
         reconnect = self.connect()
         self.assertEqual(accepted['revision'],json.loads(reconnect.receive(timeout=3))['cursor'])
 
+    def test_tag_group_writes_and_deletes_notify_connected_clients(self):
+        ws = self.connect()
+        ws.receive(timeout=3)
+        store = self.app.extensions['store']
+        group = store.put_tag_group('home', 'Home', ['supplies'])
+        first = json.loads(ws.receive(timeout=3))
+        self.assertEqual({'type': 'changed', 'cursor': store.change_cursor()}, first)
+        self.assertTrue(first['cursor'].isascii() and first['cursor'].isdigit())
+        store.put_tag_group('home', 'Home', group['hashtags'])
+        self.assertIsNone(ws.receive(timeout=0.2))
+        store.delete_tag_group('home')
+        deleted = json.loads(ws.receive(timeout=3))
+        self.assertEqual(store.change_cursor(), deleted['cursor'])
+        self.assertNotEqual(first['cursor'], deleted['cursor'])
+        store.delete_tag_group('home')
+        self.assertIsNone(ws.receive(timeout=0.2))
+
     def test_idle_connections_do_not_repeatedly_read_sqlite(self):
         store = self.app.extensions['store']
         with patch.object(store,'change_cursor',wraps=store.change_cursor) as read:

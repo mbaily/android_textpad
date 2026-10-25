@@ -151,7 +151,13 @@ final class SyncManager {
     private CompletableFuture<Boolean> syncAll(boolean report,BooleanSupplier stopped,boolean fromWorker) {
         if (busy) { rerun=true; if (report) app.notice("Sync", "A sync is already running. Another pass is queued."); return running!=null&&!running.isDone()?running:CompletableFuture.completedFuture(true); }
         List<Binding> bindings=bindings();
-        if (bindings.isEmpty()) { if (report) app.notice("Sync", "No local files are marked for sync."); return CompletableFuture.completedFuture(false); }
+        if (bindings.isEmpty()) {
+            CompletableFuture<Boolean> completion = syncHashtagSettingsInBackground(null);
+            if (report) completion.thenAccept(retry -> app.main.post(() -> app.notice("Sync", retry
+                    ? "Hashtag settings are still pending. Check your server settings and connection."
+                    : "Hashtag settings synced. No local files are marked for sync.")));
+            return completion;
+        }
         final RemoteApi remoteApi;
         try { remoteApi=api(); }
         catch (Exception e) { status=e.getMessage(); if (report) app.notice("Sync settings",status); return CompletableFuture.completedFuture(false); }
@@ -235,6 +241,7 @@ final class SyncManager {
                     } catch (Exception e) { errors.add(binding.name+": "+message(e)); }
                 }
                 syncErrands(remoteApi);
+                if (syncTagGroups(remoteApi)) errors.add("Tag groups are still pending. Check your server settings and connection.");
             } catch (Exception e) { errors.add(message(e)); }
             String summary=uploaded+" uploaded · "+downloaded+" downloaded · "+deferred+" pending";
             if (mergedCount > 0) summary+=" · "+mergedCount+" merged";
@@ -264,11 +271,38 @@ final class SyncManager {
             }
         } catch (Exception ignored) {}
     }
-    void syncErrandsInBackground(Runnable onComplete) {
+    CompletableFuture<Boolean> syncHashtagSettingsInBackground(Runnable onComplete) {
+        CompletableFuture<Boolean> completion = new CompletableFuture<>();
         app.io.execute(() -> {
-            try { syncErrands(api()); } catch (Exception ignored) {}
-            if (onComplete != null) app.main.post(onComplete);
+            boolean retry = false;
+            try {
+                RemoteApi remoteApi = api();
+                syncErrands(remoteApi);
+                retry = syncTagGroups(remoteApi);
+            } catch (Exception ignored) { retry = true; }
+            boolean result = retry;
+            app.main.post(() -> {
+                if (onComplete != null) onComplete.run();
+                completion.complete(result);
+            });
         });
+        return completion;
+    }
+    boolean syncTagGroups(RemoteApi remoteApi) {
+        for (TagGroup group : app.settings.allTagGroups()) {
+            if (!group.dirty()) continue;
+            try {
+                if (group.deleted()) {
+                    remoteApi.deleteTagGroup(group.id());
+                    app.settings.acknowledgeTagGroup(group, null);
+                } else {
+                    app.settings.acknowledgeTagGroup(group, remoteApi.putTagGroup(group));
+                }
+            } catch (Exception ignored) {} // Keep this group's pending change for retry.
+        }
+        try { app.settings.mergeTagGroups(remoteApi.getTagGroups()); }
+        catch (Exception ignored) { return !app.settings.allTagGroups().isEmpty(); }
+        return app.settings.allTagGroups().stream().anyMatch(TagGroup::dirty);
     }
     static String message(Exception e) { return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(); }
 }

@@ -196,7 +196,7 @@ def main():
         assert response.ok
         page.reload()
         page.locator("#hashtags").click()
-        page.get_by_role("tab", name="Errands (1)", exact=True).click()
+        page.get_by_role("tab", name="Tag groups", exact=True).click()
         expect(page.locator("#errands-settings")).to_have_js_property("open", False)
         page.locator("#errands-settings > summary").click()
         hide_closed = page.get_by_label("Hide [X] / [C]", exact=True)
@@ -205,7 +205,7 @@ def main():
         hide_closed.uncheck()
         expect(results).to_have_count(9)
         page.get_by_role("tab", name="Search", exact=True).click()
-        page.get_by_role("tab", name="Errands (1)", exact=True).click()
+        page.get_by_role("tab", name="Tag groups", exact=True).click()
         expect(hide_closed).not_to_be_checked()
         expect(results).to_have_count(9)
 

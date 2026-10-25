@@ -575,7 +575,9 @@ class Store:
         # The high-water mark survives history removal and works across Gunicorn workers.
         with closing(self.connect()) as db:
             row = db.execute("SELECT seq FROM sqlite_sequence WHERE name='revisions'").fetchone()
-            return str(row[0]) if row else "0"
+            groups = db.execute("SELECT value FROM settings WHERE key='tag_groups_version'").fetchone()
+            # Keep the numeric event contract used by older CLI clients.
+            return str((row[0] if row else 0) + (int(groups[0]) if groups else 0))
 
     def backup(self, destination):
         destination = Path(destination)
@@ -621,6 +623,67 @@ class Store:
         if changed and self.on_commit is not None:
             self.on_commit()
         return {"hashtags": tags, "updated_at": now_iso}
+
+    def tag_groups(self):
+        with closing(self.connect()) as db:
+            rows = db.execute("SELECT key, value, updated_at FROM settings WHERE key LIKE 'tag-group:%'").fetchall()
+        groups = [dict(id=row["key"][10:], **json.loads(row["value"]), updated_at=row["updated_at"]) for row in rows]
+        return sorted(groups, key=lambda group: (group["name"].casefold(), group["id"]))
+
+    def put_tag_group(self, group_id, name, hashtags):
+        identifier(group_id)
+        if not isinstance(name, str):
+            raise ValueError("Give the tag group a name.")
+        name = unicodedata.normalize("NFC", name.strip())
+        if not name or len(name) > 100 or any(unicodedata.category(c) == "Cc" for c in name):
+            raise ValueError("Use a tag group name of 1–100 characters without control characters.")
+        if name.casefold() == "errands":
+            raise ValueError("Errands is already a built-in tag group. Choose another name.")
+        name.encode("utf-8", errors="strict")
+        tags = normalize_hashtags(hashtags)
+        encoded = json.dumps(dict(name=name, hashtags=tags))
+        key = "tag-group:" + group_id
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for row in db.execute("SELECT key, value FROM settings WHERE key LIKE 'tag-group:%'"):
+                    if row["key"] != key and json.loads(row["value"])["name"].casefold() == name.casefold():
+                        raise RequestConflict("A tag group with that name already exists.")
+                existing = db.execute("SELECT value, updated_at FROM settings WHERE key=?", (key,)).fetchone()
+                if existing and existing["value"] == encoded:
+                    db.rollback()
+                    return dict(id=group_id, name=name, hashtags=tags, updated_at=existing["updated_at"])
+                updated_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                db.execute("INSERT OR REPLACE INTO settings VALUES(?,?,?)", (key, encoded, updated_at))
+                self._tag_groups_changed(db, updated_at)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+        if self.on_commit is not None:
+            self.on_commit()
+        return dict(id=group_id, name=name, hashtags=tags, updated_at=updated_at)
+
+    @staticmethod
+    def _tag_groups_changed(db, updated_at):
+        db.execute("""INSERT INTO settings VALUES('tag_groups_version','1',?)
+                      ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1, updated_at=excluded.updated_at""",
+                   (updated_at,))
+
+    def delete_tag_group(self, group_id):
+        identifier(group_id)
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                changed = db.execute("DELETE FROM settings WHERE key=?", ("tag-group:" + group_id,)).rowcount
+                if changed:
+                    self._tag_groups_changed(db, datetime.now(timezone.utc).isoformat(timespec="microseconds"))
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+        if changed and self.on_commit is not None:
+            self.on_commit()
 
     def search_hashtags(self, tags=None, hide_completed=False, exclude_ids=()):
         targets = set(normalize_hashtags(tags)) if tags else set()
