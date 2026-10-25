@@ -392,7 +392,7 @@ public class EditorInstrumentedTest {
                 assertEquals("  ", app.currentTab().lineIndent);
                 assertEquals(View.GONE, activity.findViewById(R.id.line_composer_body).getVisibility());
                 View handle = activity.findViewById(R.id.line_composer_toggle);
-                int stripHeight = Math.round(7 * activity.getResources().getDisplayMetrics().density);
+                int stripHeight = Math.round(13 * activity.getResources().getDisplayMetrics().density);
                 assertEquals(stripHeight, handle.getHeight());
                 assertEquals(stripHeight, ((View) handle.getParent()).getHeight());
                 assertEquals("Expand Add one line", activity.findViewById(R.id.line_composer_toggle).getContentDescription());

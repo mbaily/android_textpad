@@ -368,7 +368,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
         lineComposerToggle.setText(""); lineComposerToggle.setMinHeight(0); lineComposerToggle.setMinimumHeight(0);
         lineComposerToggle.setPadding(0, 0, 0, 0); lineComposerToggle.setBackground(lineComposerHandle());
         lineComposerToggle.setOnClickListener(v -> toggleLineComposer());
-        lineComposer.addView(lineComposerToggle, new LinearLayout.LayoutParams(-1, dp(7)));
+        lineComposer.addView(lineComposerToggle, new LinearLayout.LayoutParams(-1, dp(13)));
         lineComposerBody = column(); lineComposerBody.setId(R.id.line_composer_body);
         lineComposerBody.setPadding(dp(12), dp(6), dp(12), dp(6));
         lineInputStatus = label("", 11, MUTED); lineInputStatus.setId(R.id.line_input_status);

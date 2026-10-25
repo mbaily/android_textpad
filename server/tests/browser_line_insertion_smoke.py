@@ -61,13 +61,13 @@ def main(browser_name="chromium"):
         disclosure = page.locator("#line-composer-toggle")
         expect(disclosure).to_have_attribute("aria-expanded", "true")
         expect(disclosure).to_have_attribute("aria-label", "Add one line")
-        assert disclosure.bounding_box()["height"] == 7
+        assert disclosure.bounding_box()["height"] == 10
         expanded_height = page.locator("#editor-host").bounding_box()["height"]
         disclosure.click()
         expect(disclosure).to_have_attribute("aria-expanded", "false")
         expect(new_line).to_be_hidden()
         expect(page.locator("#line-input-status")).to_be_hidden()
-        assert page.locator("#line-composer").bounding_box()["height"] == 7
+        assert page.locator("#line-composer").bounding_box()["height"] == 10
         assert page.locator("#editor-host").bounding_box()["height"] > expanded_height
         expect(lines).to_have_text(original.replace("\r\n", "\n").split("\n"))
         page.locator("#toggle-readonly").click()
