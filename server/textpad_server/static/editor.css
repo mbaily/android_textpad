@@ -9,7 +9,7 @@
 .line-composer-toggle{display:flex;align-items:center;justify-content:center;width:100%;height:10px;min-height:10px;padding:0;border:0;border-radius:0;background:#263128;color:var(--green);line-height:0}
 .line-composer-toggle:hover{background:#354831;color:#c4e7af}
 .line-composer-toggle svg{width:12px;height:5px;flex:none}
-.line-composer-toggle[aria-expanded="false"] svg{transform:rotate(180deg)}
+.line-composer-toggle[aria-expanded="true"] svg{transform:rotate(180deg)}
 #line-composer-body{padding:8px 14px}
 .line-input-status{font-size:11px;color:var(--muted);margin-bottom:5px}
 .line-input-controls{display:flex;align-items:center;gap:6px;min-width:0}

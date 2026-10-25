@@ -426,7 +426,7 @@ public final class MainActivity extends Activity implements TextpadApplication.L
             @Override public void draw(Canvas canvas) {
                 canvas.drawRect(getBounds(), background);
                 float x = getBounds().exactCenterX(), y = getBounds().exactCenterY();
-                float direction = lineComposerCollapsed ? 1 : -1, halfHeight = dp(3) / 2f;
+                float direction = lineComposerCollapsed ? -1 : 1, halfHeight = dp(3) / 2f;
                 chevron.reset(); chevron.moveTo(x - dp(4), y - direction * halfHeight);
                 chevron.lineTo(x, y + direction * halfHeight);
                 chevron.lineTo(x + dp(4), y - direction * halfHeight);
