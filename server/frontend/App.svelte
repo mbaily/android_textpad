@@ -446,6 +446,7 @@
   function showFiles() {
     captureViewState();
     filesView = true;
+    updateFileUrl();
     fullscreenRevision = false;
     revealFolder(selectedFolderId);
     closeSidebarOnMobile();
@@ -1183,11 +1184,20 @@
     } catch {}
   }
 
+  function updateFileUrl() {
+    const doc = active ? documents.get(active) : null;
+    const address = new URL(window.location.href);
+    if (!filesView && doc?.revision) address.searchParams.set("file", doc.id);
+    else address.searchParams.delete("file");
+    if (address.href !== window.location.href) window.history.replaceState(window.history.state, "", address);
+  }
+
   function activate(id, showEditor = true) {
     const wasBrowsing = filesView;
     captureViewState();
     if (showEditor) filesView = false;
     active = id;
+    updateFileUrl();
     const doc = id ? documents.get(id) ?? null : null;
     viewDocument = doc;
     if (doc) revealFolder(doc.folder_id);
@@ -1540,6 +1550,7 @@
       throw error;
     } finally {
       doc.saving = false;
+      updateFileUrl();
       syncEditorMetrics();
       if (doc.remoteChanged && !doc.dirty && !doc.pending) refreshFiles().catch(failure);
     }
@@ -1670,6 +1681,7 @@
         if (result.merged_newer_revision && !openDoc.dirty && typeof result.text === "string") {
           applyCleanDocMetadata(openDoc, fullMetadata);
         }
+        if (active === openDoc.id) updateFileUrl();
       }
       if (result.merged_newer_revision) {
         notice("Merged offline edits with a newer server revision. Both versions remain in History.");
@@ -2970,6 +2982,11 @@
     refreshFiles().catch(failure);
     syncErrands().catch(() => {});
     connectEvents();
+    const linkedFile = new URL(window.location.href).searchParams.get("file");
+    if (linkedFile !== null) {
+      if (/^[A-Za-z0-9_-]{1,128}$/.test(linkedFile)) openFile(linkedFile);
+      else notice("This file link has an invalid file ID.", true);
+    }
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register(`${prefix}/editor/sw.js`, { scope: `${prefix}/editor/` }).catch(() => {});
     }

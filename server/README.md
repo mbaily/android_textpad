@@ -27,6 +27,8 @@ ssh <user>@<your-server> 'sudo cat /etc/android-textpad/api-token'
 
 The editor supports desktop and mobile layouts. It lists the files stored in the server's SQLite database. Open files in tabs, create files, edit and rename them, search/replace, undo/redo, change font/wrapping/line-number settings, download saved bytes, and preview or restore older revisions. The sidebar toggle beside the tabs hides or shows the file list and remembers your choice in that browser. On phones, the tabs and horizontally scrollable toolbar stay above the software keyboard; tapping toolbar actions keeps the editor focused. **Connect Android** supplies the endpoint and API token for the app's sync settings.
 
+Opening a saved file updates the address to `/android_textpad/editor/?file=<document_id>`. Copy that URL to bookmark or link to the file; it opens automatically, including after sign-in or an offline reload when the file is cached. Links use the file's stable ID and survive renames and folder moves. New files receive a link after their first server save. Switching to **Files** or an unsaved new document, or closing the last tab, removes the file parameter. Links require the usual sign-in and show the latest saved contents; they do not include unsaved edits.
+
 The editor fixes the page body and disables page scrolling, with document scrolling contained inside CodeMirror, to reduce the initial iOS keyboard scroll-jump. VisualViewport sizing and positioning remain as a fallback when iOS still pans the visible area. The native keyboard animation needs verification on a physical iPhone.
 
 The todo button adds `[ ]` to plain lines and cycles `[ ]` → `[X]` → `[C]` → `[ ]`, matching Android. `[C]` means cancelled; lowercase `[c]` and `[x]` and list bullets are accepted. The uncompleted-tasks view hides completed/cancelled rows except when needed as context for an open subtask. Hashtag and errands search's **Hide [X] / [C]** option excludes both closed states from open buffers, offline cached files, and server results. The existing API field `hide_completed` covers both states; task markers remain ordinary document text and require no database migration.
@@ -169,6 +171,7 @@ PYTHONPATH=server python3 server/tests/browser_composer_scroll_smoke.py --browse
 PYTHONPATH=server python3 server/tests/browser_tasks_smoke.py
 PYTHONPATH=server python3 server/tests/browser_errands_smoke.py
 PYTHONPATH=server python3 server/tests/browser_recents_smoke.py
+PYTHONPATH=server python3 server/tests/browser_file_links_smoke.py
 PYTHONPATH=server python3 server/tests/browser_folders_smoke.py
 PYTHONPATH=server python3 server/tests/browser_files_smoke.py
 PYTHONPATH=server python3 server/tests/browser_library_recovery_smoke.py

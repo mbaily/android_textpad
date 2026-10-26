@@ -167,6 +167,42 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(401,self.client.get("/api/v1/documents").status_code)
         self.assertEqual(200,self.client.get("/api/v1/documents",headers=self.headers).status_code)
 
+    def test_file_link_survives_redirects_and_failed_sign_in(self):
+        response = self.client.get("/editor?file=test-file")
+        self.assertEqual("/editor/?file=test-file", response.location)
+        response = self.client.get(response.location)
+        self.assertEqual("/editor/login?file=test-file", response.location)
+        page = self.client.get(response.location)
+        self.assertIn(b'name="file" value="test-file"', page.data)
+        csrf = re.search(rb'name="csrf" value="([a-f0-9]+)"', page.data).group(1).decode()
+        form = {"csrf": csrf, "credential": "wrong-password", "file": "test-file"}
+        failed = self.client.post("/editor/login", data=form)
+        self.assertEqual(401, failed.status_code)
+        self.assertIn(b'name="file" value="test-file"', failed.data)
+        form["credential"] = self.token
+        response = self.client.post("/editor/login", data=form)
+        self.assertEqual(303, response.status_code)
+        self.assertEqual("/editor/?file=test-file", response.location)
+        self.assertEqual(200, self.client.get(response.location).status_code)
+
+    def test_file_link_redirects_use_public_prefix_and_reject_invalid_ids(self):
+        app = create_app({**self.app.config, "PUBLIC_URL": "http://localhost/android_textpad"})
+        client = app.test_client()
+        self.assertEqual("/android_textpad/editor/?file=test-file",
+                         client.get("/editor?file=test-file").location)
+        self.assertEqual("/android_textpad/editor/login?file=test-file",
+                         client.get("/editor/?file=test-file").location)
+        for invalid in ("https://example.com", "//example.com", "../test-file", "a" * 129):
+            client = self.app.test_client()
+            response = client.get("/editor/", query_string={"file": invalid})
+            self.assertEqual("/editor/login", response.location)
+            page = client.get("/editor/login")
+            csrf = re.search(rb'name="csrf" value="([a-f0-9]+)"', page.data).group(1).decode()
+            response = client.post("/editor/login", data={
+                "csrf": csrf, "credential": self.token, "file": invalid,
+            })
+            self.assertEqual("/editor/", response.location)
+
     def test_api_roundtrip_revisions_and_old_request_replay(self):
         raw=b"\xef\xbb\xbf"+"😀 café\r\nالعربية\n".encode()
         first=self.upload(raw).json

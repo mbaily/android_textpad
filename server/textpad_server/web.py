@@ -13,7 +13,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from flask import Flask, jsonify, redirect, render_template, request, send_file, session
 from flask_sock import Sock
@@ -283,9 +283,20 @@ def create_app(test_config=None):
             raise ValueError("Send a JSON errands object.")
         return jsonify(store.put_errands(payload.get("hashtags")))
 
+    def linked_file_id():
+        value = request.values.get("file", "")
+        try:
+            return identifier(value)
+        except ValueError:
+            return ""
+
+    def file_query():
+        file_id = linked_file_id()
+        return "?" + urlencode({"file": file_id}) if file_id else ""
+
     @app.get("/editor")
     def editor_redirect():
-        return redirect(public("/editor/"), code=302)
+        return redirect(public("/editor/") + file_query(), code=302)
 
     @app.route("/editor/login", methods=["GET", "POST"])
     def login():
@@ -307,7 +318,7 @@ def create_app(test_config=None):
                     session["auth"] = auth_value
                     session["csrf"] = secrets.token_hex(24)
                     session.permanent = True
-                    return redirect(public("/editor/"), code=303)
+                    return redirect(public("/editor/") + file_query(), code=303)
                 failures = attempt[0] + 1 if attempt and now - attempt[1] < 600 else 1
                 started = attempt[1] if attempt and now - attempt[1] < 600 else now
                 db.execute("INSERT OR REPLACE INTO login_attempts VALUES(?,?,?)", (address,failures,started))
@@ -317,12 +328,12 @@ def create_app(test_config=None):
     def render_login(error=None):
         request.csp_nonce = secrets.token_urlsafe(18)
         return render_template("login.html", prefix=prefix, csrf=csrf_token(), error=error,
-                               separate_password="BROWSER_PASSWORD" in app.config)
+                               separate_password="BROWSER_PASSWORD" in app.config, file_id=linked_file_id())
 
     @app.get("/editor/")
     def editor():
         if not signed_in():
-            return redirect(public("/editor/login"), code=303)
+            return redirect(public("/editor/login") + file_query(), code=303)
         request.csp_nonce = secrets.token_urlsafe(18)
         return render_template("editor.html", prefix=prefix, csrf=csrf_token(), nonce=request.csp_nonce)
 
