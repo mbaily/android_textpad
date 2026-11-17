@@ -27,3 +27,4 @@ server/textpad_server/static/textpad-sync-README.txt
 server/textpad_server/static/textpad-tasks-vim.zip
 server/textpad_server/static/textpad-tasks-vim.zip.sha256
 server/textpad_server/static/textpad-tasks-vim-README.txt
+.deploy-host

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 textpad_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-textpad_host="<user>@<your-server>"
+textpad_host="${TEXTPAD_DEPLOY_HOST:-$(cat "$textpad_root/.deploy-host" 2>/dev/null || true)}"
+if [[ -z "$textpad_host" ]]; then
+    printf '%s\n' 'Set TEXTPAD_DEPLOY_HOST or write user@host to .deploy-host' >&2
+    exit 1
+fi
 python3 "$textpad_root/scripts/package-downloads.py" "$@"
 textpad_stage="$(ssh -o BatchMode=yes -o ConnectTimeout=15 "$textpad_host" 'mktemp -d /tmp/textpad-downloads.XXXXXXXX')"
 if [[ ! "$textpad_stage" =~ ^/tmp/textpad-downloads\.[a-zA-Z0-9]+$ ]]; then

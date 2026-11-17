@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 textpad_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-textpad_host="<user>@<your-server>"
+textpad_host="${TEXTPAD_DEPLOY_HOST:-$(cat "$textpad_root/.deploy-host" 2>/dev/null || true)}"
+if [[ -z "$textpad_host" ]]; then
+    printf '%s\n' 'Set TEXTPAD_DEPLOY_HOST or write user@host to .deploy-host' >&2
+    exit 1
+fi
 textpad_python="${TEXTPAD_BUILD_PYTHON:-$HOME/.cache/android-textpad/server-venv/bin/python}"
 if [[ ! -x "$textpad_python" ]]; then
     printf '%s\n' 'Create a Python 3.13 virtual environment and install server/requirements.lock, then set TEXTPAD_BUILD_PYTHON.' >&2
